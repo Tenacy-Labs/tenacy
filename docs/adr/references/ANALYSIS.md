@@ -14,6 +14,7 @@
 > - §4 — Six proposed adjustments (A1–A6), awaiting the Decider's ruling.
 > - §5 — Synthesis: value density, not length, is the variable the field is arguing about; our objective is the arbiter.
 > - §6 — Takeaways: the architecture holds; the risks are named; the loop-milestone checklist is sharpened.
+> - §7 — Corpus disposition: no body edited; one forward amendment ADR proposed; novelty claims strengthened.
 
 *An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
@@ -277,14 +278,55 @@ failure mode. A1 is the cheapest insurance: one profile plus a label rule. A5 st
 until the renderer's template logs supply evidence.
 
 
+## §7 Effects on the ADR corpus
+
+House rule respected: accepted ADR bodies are never retro-edited. The analysis therefore lands as
+this annex (plus `references/`) and, upon ruling, as one forward amendment — not as edits to the
+twelve. Disposition by document:
+
+- **0000 foundation, 0001 plugins — unaffected.** No source contradicts substrate or plugin model.
+- **0002 placement (mean-variance) — reinforced (R1).** Manus's hand-tuned cache discipline is the
+  unpriced version of the same objective. Pending: A4 (tool-mutation pricing clause).
+- **0002b forecasting — reinforced (R8).** Power-law decay now carries a 35-year ancestry
+  (Anderson & Schooler; ACE habituation). Pending: A1 (error-evidence profile), A2 (rot density
+  record fields).
+- **0002c ContextItem interface — reinforced.** ACE's bullets (identifier + helpful/harmful
+  counters + content) and Memory-R1's memory-bank entries are convergent evidence for items with
+  value inputs. No change.
+- **0002d lens algebra — reinforced (R7).** Context-Folding's branch/return shows providers
+  natively support focus-then-release. Pending: A5 stays a design note in future-work until
+  template logs supply evidence.
+- **0002e ledger — reinforced (R9).** Hawkeye's learn-from-oracle is the replay harness's
+  published precedent. Pending: A3 (named divergence class for provider usage-field semantics).
+- **0002f conversation/goals lenses — strongly reinforced (R2, R3).** Journal-plus-expand found
+  independently twice; goals-pinning independently validated. Pending: A1, A6.
+- **0002g ctx.* API — reinforced (K7).** Retrieve-broadly-filter-late validates candidates with
+  recoverable paths; proposer/applier split (LLM proposes, deterministic code applies, solver
+  single writer) is the pattern Zep and Memory-R1 both arrived at. No change.
+- **0002h search — reinforced (R6).** No change.
+- **0003 analysis/tuning — sequencing validated (T2).** Refit pipeline now has three field
+  analogues (152-pair RL, learn-from-oracle, contrastive mining); honesty boundary matches
+  cost-counterfactual precedent. A2/A6 observability fields belong in the lettered sub-ADRs.
+
+**What strengthened: the novelty claims.** Post-review, still unclaimed in the literature: the
+mean-variance solver over the whole render, per-item hazard forecasting, forecast-substitutes-for-
+subscription, expected-vs-realized cache divergence classes, and re-expansion-as-realized-lossiness
+feeding calibration. The corpus's contribution statement can stand as written.
+
+**Proposed vehicle:** one lettered amendment ADR consolidating whichever of A1–A6 are accepted
+(single ruling session, single document), citing this analysis entry-by-entry; 0003's lettered
+sub-ADRs inherit the observability fields (A2, A3, A6) where they live naturally.
+
+
 **Index**
 
-- §1 Method and scope — line 20
-- §2 What is reinforced — line 34
-- §3 What to keep in mind as we implement — line 108
-- §4 What to adjust — proposals awaiting ruling — line 179
-- §5 Synthesis: the field is arguing about value density, and our objective is the arbiter — line 219
-- §6 Takeaways and plan impact — line 232
+- §1 Method and scope — line 21
+- §2 What is reinforced — line 35
+- §3 What to keep in mind as we implement — line 109
+- §4 What to adjust — proposals awaiting ruling — line 180
+- §5 Synthesis: the field is arguing about value density, and our objective is the arbiter — line 220
+- §6 Takeaways and plan impact — line 233
+- §7 Effects on the ADR corpus — line 281
 
 - §1 — The optimizer-not-accumulator framing is externally confirmed; nobody else prices it end-to-end. — line 11
 - §2 — Ten reinforcements, from KV-cache economics to replay-as-learn-from-oracle. — line 12
@@ -292,3 +334,4 @@ until the renderer's template logs supply evidence.
 - §4 — Six proposed adjustments (A1–A6), awaiting the Decider's ruling. — line 14
 - §5 — Synthesis: value density, not length, is the variable the field is arguing about; our objective is the arbiter. — line 15
 - §6 — Takeaways: the architecture holds; the risks are named; the loop-milestone checklist is sharpened. — line 16
+- §7 — Corpus disposition: no body edited; one forward amendment ADR proposed; novelty claims strengthened. — line 17
