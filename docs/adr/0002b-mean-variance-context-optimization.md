@@ -16,16 +16,14 @@
 
 **Key points**
 
-- Portfolio framing: items compete for the window under budget as assets compete for capital — §1, line 41
-- Expected value: constant base μ₀ with power-law recency decay (1+Δt)^−α — §2, line 60
-- Change forecasts: per-item hazard; the forecast is load-bearing when validation returns unknown — §3, line 72
-- Risk is ordered, not pairwise — the zones (identity/foundational/episodic/transient) fall out of position — §4, line 81
-- Block + deltas: copy-on-write prompt representation — append-cheap, rewrite-priced — §5, line 96
-- Solver discipline: marginal moves with hysteresis margins — no thrash — §6, line 115
+- Portfolio framing: items compete for the window under budget as assets compete for capital — §1
+- Expected value: constant base μ₀ with power-law recency decay (1+Δt)^−α — §2
+- Change forecasts: per-item hazard; the forecast is load-bearing when validation returns unknown — §3
+- Risk is ordered, not pairwise — the zones (identity/foundational/episodic/transient) fall out of position — §4
+- Block + deltas: copy-on-write prompt representation — append-cheap, rewrite-priced — §5
+- Solver discipline: marginal moves with hysteresis margins — no thrash — §6
 
-**Contents** — Context 30 · Decision 39 · Consequences 131 · Risks / research areas 141
-
-*(Line anchors are valid as of this revision.)*
+*An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
 ## Context
 
@@ -149,3 +147,26 @@ decision audit — each accepted move with its expected-value rationale.
   by construction, v3 must prove its per-turn cost before adoption.
 - **Power-law fit** — assumed heavy tail is empirically motivated but
   unverified in our workload; the journal will confirm or correct it.
+
+
+---
+
+**Index** — line anchors as of this revision.
+
+*Update this index whenever the file is edited.*
+
+Sections:
+
+- Context — line 28
+- Decision — line 37
+- Consequences — line 129
+- Risks / research areas — line 139
+
+Key points:
+
+- Portfolio framing: items compete for the window under budget as assets compete for capital — §1 — line 39
+- Expected value: constant base μ₀ with power-law recency decay (1+Δt)^−α — §2 — line 58
+- Change forecasts: per-item hazard; the forecast is load-bearing when validation returns unknown — §3 — line 70
+- Risk is ordered, not pairwise — the zones (identity/foundational/episodic/transient) fall out of position — §4 — line 79
+- Block + deltas: copy-on-write prompt representation — append-cheap, rewrite-priced — §5 — line 94
+- Solver discipline: marginal moves with hysteresis margins — no thrash — §6 — line 113

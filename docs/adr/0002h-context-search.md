@@ -14,16 +14,14 @@
 
 **Key points**
 
-- Scope: the store (including the invisible context) + the journal verbatim; world files and the namespace stay cell-side — §1, line 38
-- Journal search is the recovery path from 0002f summarization; the fidelity disutility is discounted by retrieval availability — §1, line 38
-- Surface: ctx.search(regex) / ctx.find(semantic); results carry representation/rendered/recoverable; value channel at handle policy; search never mutates — §2, line 59
-- Lexical v1: deterministic regex over text + metadata; ships with the loop milestone — §3, line 88
-- Semantic v2: embeddings as DAG artifacts keyed (item, representation, modelVersion); async; costs ledgered — §4, line 94
-- Searches are journaled behavioral signals — weak class, no automatic value bump — §5, line 111
+- Scope: the store (including the invisible context) + the journal verbatim; world files and the namespace stay cell-side — §1
+- Journal search is the recovery path from 0002f summarization; the fidelity disutility is discounted by retrieval availability — §1
+- Surface: ctx.search(regex) / ctx.find(semantic); results carry representation/rendered/recoverable; value channel at handle policy; search never mutates — §2
+- Lexical v1: deterministic regex over text + metadata; ships with the loop milestone — §3
+- Semantic v2: embeddings as DAG artifacts keyed (item, representation, modelVersion); async; costs ledgered — §4
+- Searches are journaled behavioral signals — weak class, no automatic value bump — §5
 
-**Contents** — Context 28 · Decision 36 · Consequences 121 · Risks / research areas 134
-
-*(Line anchors are valid as of this revision.)*
+*An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
 ## Context
 
@@ -145,3 +143,26 @@ ruling (the self-conditioning guard of ADR-0002e applies).
 - **Ranking trust** — early semantic ranking with a weak embedding
   model may mislead more than help; v1 lexical is the honest floor, v2
   earns its place by corpus evidence (the 0003 discipline).
+
+
+---
+
+**Index** — line anchors as of this revision.
+
+*Update this index whenever the file is edited.*
+
+Sections:
+
+- Context — line 26
+- Decision — line 34
+- Consequences — line 119
+- Risks / research areas — line 132
+
+Key points:
+
+- Scope: the store (including the invisible context) + the journal verbatim; world files and the namespace stay cell-side — §1 — line 36
+- Journal search is the recovery path from 0002f summarization; the fidelity disutility is discounted by retrieval availability — §1 — line 36
+- Surface: ctx.search(regex) / ctx.find(semantic); results carry representation/rendered/recoverable; value channel at handle policy; search never mutates — §2 — line 57
+- Lexical v1: deterministic regex over text + metadata; ships with the loop milestone — §3 — line 86
+- Semantic v2: embeddings as DAG artifacts keyed (item, representation, modelVersion); async; costs ledgered — §4 — line 92
+- Searches are journaled behavioral signals — weak class, no automatic value bump — §5 — line 109

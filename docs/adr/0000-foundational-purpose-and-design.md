@@ -11,14 +11,12 @@
 
 **Key points**
 
-- Five pillars combined: everything-is-a-plugin (DeepSeek); measured speed/memory budgets (jcode: ~21ms cold start, 6.7MB/worker); code-first agency in TypeScript under a strict gate (prime-agent); ACP/OpenCode/A2A spoken natively — as plugins; pi-small core with an OMP-style reference distribution as proof — Decision, line 43
-- Derived principles: mechanisms in kernel / policy in plugins; code-first typed turns; measured budgets over vibes; untrusted cells over a trusted coordinator; narrow `ops.*` as graduation insurance; journal audit-only, snapshots the sole recovery — Principles, line 91
-- The identity is the combination — each pillar constrains the others (plugin overhead inside budgets, protocols as plugins, the gate enforces plugin ABIs) — Consequences, line 105
-- Rejected: adopting any single chassis (prime-agent evaluated and declined), merging codebases, bespoke external protocols, batteries in the kernel — Rejected, line 122
+- Five pillars combined: everything-is-a-plugin (DeepSeek); measured speed/memory budgets (jcode: ~21ms cold start, 6.7MB/worker); code-first agency in TypeScript under a strict gate (prime-agent); ACP/OpenCode/A2A spoken natively — as plugins; pi-small core with an OMP-style reference distribution as proof — Decision
+- Derived principles: mechanisms in kernel / policy in plugins; code-first typed turns; measured budgets over vibes; untrusted cells over a trusted coordinator; narrow `ops.*` as graduation insurance; journal audit-only, snapshots the sole recovery — Principles
+- The identity is the combination — each pillar constrains the others (plugin overhead inside budgets, protocols as plugins, the gate enforces plugin ABIs) — Consequences
+- Rejected: adopting any single chassis (prime-agent evaluated and declined), merging codebases, bespoke external protocols, batteries in the kernel — Rejected
 
-**Contents** — Context 23 · Decision 43 · Driving design principles (derived) 91 · Consequences 105 · Rejected alternatives 122
-
-*(Line anchors are valid as of this revision.)*
+*An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
 ## Context
 
@@ -129,3 +127,25 @@ matures.
   die.
 - **Batteries in the kernel** — rejected; the reference distribution carries
   the batteries, so the core never accretes them.
+
+
+---
+
+**Index** — line anchors as of this revision.
+
+*Update this index whenever the file is edited.*
+
+Sections:
+
+- Context — line 21
+- Decision — line 41
+- Driving design principles (derived) — line 89
+- Consequences — line 103
+- Rejected alternatives — line 120
+
+Key points:
+
+- Five pillars combined: everything-is-a-plugin (DeepSeek); measured speed/memory budgets (jcode: ~21ms cold start, 6.7MB/worker); code-first agency in TypeScript under a strict gate (prime-agent); ACP/OpenCode/A2A spoken natively — as plugins; pi-small core with an OMP-style reference distribution as proof — Decision — line 41
+- Derived principles: mechanisms in kernel / policy in plugins; code-first typed turns; measured budgets over vibes; untrusted cells over a trusted coordinator; narrow `ops.*` as graduation insurance; journal audit-only, snapshots the sole recovery — Principles — line 89
+- The identity is the combination — each pillar constrains the others (plugin overhead inside budgets, protocols as plugins, the gate enforces plugin ABIs) — Consequences — line 103
+- Rejected: adopting any single chassis (prime-agent evaluated and declined), merging codebases, bespoke external protocols, batteries in the kernel — Rejected — line 120

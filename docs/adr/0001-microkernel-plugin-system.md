@@ -12,17 +12,15 @@
 
 **Key points**
 
-- Plugins run on the coordinator, never inside agent VMs — capability-checked envelope stubs; workers stay compiler-free (6.7MB marginal) — §1, line 52
-- Plugins ship ambient `.d.ts`; the cell gate enforces the ABI — plugin misuse surfaces as ordinary diagnostics at authoring time — §2, line 61
-- Contract by interface + structural typing; a base class would be optional sugar only — §3, line 70
-- The kernel alone owns capability grants — a plugin system whose plugins can bypass mediation is theater — §4, line 77
-- Capability map: mcp, skills, agents, scheduler, memory — dreaming = scheduler × memory composition, no kernel changes — §5, line 84
-- Non-negotiable kernel residents: turn execution, persistence + snapshot-only recovery, cell gate, routing, swarm, Commons, grants — litmus: rewrite-in-Rust — Kernel residents, line 123
-- Sequencing: agent loop → loader + grants → mcp (first plugin) → memory (second) → freeze the API — Sequencing, line 148
+- Plugins run on the coordinator, never inside agent VMs — capability-checked envelope stubs; workers stay compiler-free (6.7MB marginal) — §1
+- Plugins ship ambient `.d.ts`; the cell gate enforces the ABI — plugin misuse surfaces as ordinary diagnostics at authoring time — §2
+- Contract by interface + structural typing; a base class would be optional sugar only — §3
+- The kernel alone owns capability grants — a plugin system whose plugins can bypass mediation is theater — §4
+- Capability map: mcp, skills, agents, scheduler, memory — dreaming = scheduler × memory composition, no kernel changes — §5
+- Non-negotiable kernel residents: turn execution, persistence + snapshot-only recovery, cell gate, routing, swarm, Commons, grants — litmus: rewrite-in-Rust — Kernel residents
+- Sequencing: agent loop → loader + grants → mcp (first plugin) → memory (second) → freeze the API — Sequencing
 
-**Contents** — Context 27 · Decision 45 · Proposed contract 94 · What stays in the kernel (non-negotiable) 123 · Consequences 132 · Sequencing 148 · Rejected alternatives 157
-
-*(Line anchors are valid as of this revision.)*
+*An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
 ## Context
 
@@ -164,3 +162,30 @@ declarations, so declarations are review-gated like code).
   interface + structural typing achieves the contract without it.
 - **Freezing the ABI before two real consumers exist** — freezing a seam
   against hypotheticals is how the wrong seam gets frozen.
+
+
+---
+
+**Index** — line anchors as of this revision.
+
+*Update this index whenever the file is edited.*
+
+Sections:
+
+- Context — line 25
+- Decision — line 43
+- Proposed contract — line 92
+- What stays in the kernel (non-negotiable) — line 121
+- Consequences — line 130
+- Sequencing — line 146
+- Rejected alternatives — line 155
+
+Key points:
+
+- Plugins run on the coordinator, never inside agent VMs — capability-checked envelope stubs; workers stay compiler-free (6.7MB marginal) — §1 — line 50
+- Plugins ship ambient `.d.ts`; the cell gate enforces the ABI — plugin misuse surfaces as ordinary diagnostics at authoring time — §2 — line 59
+- Contract by interface + structural typing; a base class would be optional sugar only — §3 — line 68
+- The kernel alone owns capability grants — a plugin system whose plugins can bypass mediation is theater — §4 — line 75
+- Capability map: mcp, skills, agents, scheduler, memory — dreaming = scheduler × memory composition, no kernel changes — §5 — line 82
+- Non-negotiable kernel residents: turn execution, persistence + snapshot-only recovery, cell gate, routing, swarm, Commons, grants — litmus: rewrite-in-Rust — Kernel residents — line 121
+- Sequencing: agent loop → loader + grants → mcp (first plugin) → memory (second) → freeze the API — Sequencing — line 146

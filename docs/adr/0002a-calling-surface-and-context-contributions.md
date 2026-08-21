@@ -13,15 +13,13 @@
 
 **Key points**
 
-- Compat skin: trained-convention naming (read_file-style) mapped onto lens behavior — zero retraining cost — §1, line 40
-- Two-channel rule: values return to code, observations to context — never both — §2, line 50
-- The lease: coordinator-side authoring of context contributions with token accounting — §3, line 70
-- mtime protocol: validate-without-invalidate — cheap freshness checks before re-reads — §4, line 97
-- Trivial-query collapse: cheap queries skip the model entirely — §5, line 112
+- Compat skin: trained-convention naming (read_file-style) mapped onto lens behavior — zero retraining cost — §1
+- Two-channel rule: values return to code, observations to context — never both — §2
+- The lease: coordinator-side authoring of context contributions with token accounting — §3
+- mtime protocol: validate-without-invalidate — cheap freshness checks before re-reads — §4
+- Trivial-query collapse: cheap queries skip the model entirely — §5
 
-**Contents** — Context 26 · Decision 38 · Consequences 124 · Risks 137
-
-*(Line anchors are valid as of this revision.)*
+*An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
 ## Context
 
@@ -143,3 +141,25 @@ must not lose; only successful trivia collapse.
   capability boundary; coordinator-side only; surfaces review-gated.
 - **Over-collapse** — hiding exchanges the model needed. Defaults are
   conservative; collapse is opted into per-method by policy.
+
+
+---
+
+**Index** — line anchors as of this revision.
+
+*Update this index whenever the file is edited.*
+
+Sections:
+
+- Context — line 24
+- Decision — line 36
+- Consequences — line 122
+- Risks — line 135
+
+Key points:
+
+- Compat skin: trained-convention naming (read_file-style) mapped onto lens behavior — zero retraining cost — §1 — line 38
+- Two-channel rule: values return to code, observations to context — never both — §2 — line 48
+- The lease: coordinator-side authoring of context contributions with token accounting — §3 — line 68
+- mtime protocol: validate-without-invalidate — cheap freshness checks before re-reads — §4 — line 95
+- Trivial-query collapse: cheap queries skip the model entirely — §5 — line 110

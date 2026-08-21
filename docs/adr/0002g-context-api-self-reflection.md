@@ -15,14 +15,12 @@
 
 **Key points**
 
-- Surface: inspect (including the invisible context), item, why (ledger trace); promote/demote (value bumps); watch (refresh toggle) — §1, line 40
-- Signals, not overrides: the solver stays single writer of render — determinism and replay survive; the budget is honored (promote may evict elsewhere) — §2, line 78
-- Inspection exposes the store behind the render; why serves the ledger's audit trail to the model — one ledger, three audiences — §3, line 94
-- Standing constraints: coordinator-side, capability-scoped; autonomous default (never calling ctx.* behaves identically); no self-flooding — §4, line 104
+- Surface: inspect (including the invisible context), item, why (ledger trace); promote/demote (value bumps); watch (refresh toggle) — §1
+- Signals, not overrides: the solver stays single writer of render — determinism and replay survive; the budget is honored (promote may evict elsewhere) — §2
+- Inspection exposes the store behind the render; why serves the ledger's audit trail to the model — one ledger, three audiences — §3
+- Standing constraints: coordinator-side, capability-scoped; autonomous default (never calling ctx.* behaves identically); no self-flooding — §4
 
-**Contents** — Context 27 · Decision 38 · Consequences 118 · Risks / research areas 133
-
-*(Line anchors are valid as of this revision.)*
+*An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
 ## Context
 
@@ -141,3 +139,24 @@ One ledger, three audiences: the model, the analyst, the tuner.
 - **Explanations as prompts** — ctx.why exposes forecast internals to
   the model; wording must inform, not persuade (the model should not
   optimize for the optimizer).
+
+
+---
+
+**Index** — line anchors as of this revision.
+
+*Update this index whenever the file is edited.*
+
+Sections:
+
+- Context — line 25
+- Decision — line 36
+- Consequences — line 116
+- Risks / research areas — line 131
+
+Key points:
+
+- Surface: inspect (including the invisible context), item, why (ledger trace); promote/demote (value bumps); watch (refresh toggle) — §1 — line 38
+- Signals, not overrides: the solver stays single writer of render — determinism and replay survive; the budget is honored (promote may evict elsewhere) — §2 — line 76
+- Inspection exposes the store behind the render; why serves the ledger's audit trail to the model — one ledger, three audiences — §3 — line 92
+- Standing constraints: coordinator-side, capability-scoped; autonomous default (never calling ctx.* behaves identically); no self-flooding — §4 — line 102

@@ -18,16 +18,14 @@
 
 **Key points**
 
-- The loop: typed cells over persistent state, context contributions, dreaming/maintenance turns — §1, line 50
-- Optimizer, not accumulator: render decides what enters the window; dropped ≠ destroyed — store and journal retain truth — §2, line 72
-- Lens objects (worked example: file views) — focusable, validatable, priced views over external state — §3, line 108
-- Objective function: expected value − cache cost − rot — three-term economics per item per turn — §4, line 138
-- Everything is code: model-facing surfaces are materialized, typed, review-gated modules in the namespace — §5, line 165
-- Kernel as medium, kernel as tool — the RLM framing; ctx.* later completes it (ADR-0002g) — §6, line 194
+- The loop: typed cells over persistent state, context contributions, dreaming/maintenance turns — §1
+- Optimizer, not accumulator: render decides what enters the window; dropped ≠ destroyed — store and journal retain truth — §2
+- Lens objects (worked example: file views) — focusable, validatable, priced views over external state — §3
+- Objective function: expected value − cache cost − rot — three-term economics per item per turn — §4
+- Everything is code: model-facing surfaces are materialized, typed, review-gated modules in the namespace — §5
+- Kernel as medium, kernel as tool — the RLM framing; ctx.* later completes it (ADR-0002g) — §6
 
-**Contents** — Context 32 · Decision 48 · Consequences 201 · Rejected alternatives 219
-
-*(Line anchors are valid as of this revision.)*
+*An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
 ## Context
 
@@ -228,3 +226,26 @@ operating children — the swarm API, already built) and protocol adapters
   shrinks to one RPC envelope.
 - **Compaction as a first-class event/plugin** — dissolved into store
   maintenance (dreaming) + render-time curation.
+
+
+---
+
+**Index** — line anchors as of this revision.
+
+*Update this index whenever the file is edited.*
+
+Sections:
+
+- Context — line 30
+- Decision — line 46
+- Consequences — line 199
+- Rejected alternatives — line 217
+
+Key points:
+
+- The loop: typed cells over persistent state, context contributions, dreaming/maintenance turns — §1 — line 48
+- Optimizer, not accumulator: render decides what enters the window; dropped ≠ destroyed — store and journal retain truth — §2 — line 70
+- Lens objects (worked example: file views) — focusable, validatable, priced views over external state — §3 — line 106
+- Objective function: expected value − cache cost − rot — three-term economics per item per turn — §4 — line 136
+- Everything is code: model-facing surfaces are materialized, typed, review-gated modules in the namespace — §5 — line 163
+- Kernel as medium, kernel as tool — the RLM framing; ctx.* later completes it (ADR-0002g) — §6 — line 192

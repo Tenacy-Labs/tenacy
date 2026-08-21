@@ -17,17 +17,15 @@
 
 **Key points**
 
-- Primary family: file view, kernel namespace, code-on-disk, directory — world-lenses over distinct substrates — §1, line 43
-- One algebra — focus/expand/release, idempotent re-expand — across all backends — §2, line 60
-- Namespace lens: recursive over path prefixes; subscribes to commons commit diffs — no second event system — §3, line 76
-- Code lens: symbol-anchored ranges — line shifts do not invalidate untouched symbols — §4, line 92
-- Live views: events coalesce to one committed delta per lens per turn; render stays pure; churn can demote live to polled — §5, line 108
-- Sequence-legibility contract: identity stability, marked deltas, tail change-notices, unchanged-stamps — §6, line 131
-- Update toggle (live/polled/frozen): declarative relevance signal feeding value; optimizer-authored flips never feed decay — §7, line 148
+- Primary family: file view, kernel namespace, code-on-disk, directory — world-lenses over distinct substrates — §1
+- One algebra — focus/expand/release, idempotent re-expand — across all backends — §2
+- Namespace lens: recursive over path prefixes; subscribes to commons commit diffs — no second event system — §3
+- Code lens: symbol-anchored ranges — line shifts do not invalidate untouched symbols — §4
+- Live views: events coalesce to one committed delta per lens per turn; render stays pure; churn can demote live to polled — §5
+- Sequence-legibility contract: identity stability, marked deltas, tail change-notices, unchanged-stamps — §6
+- Update toggle (live/polled/frozen): declarative relevance signal feeding value; optimizer-authored flips never feed decay — §7
 
-**Contents** — Context 32 · Decision 41 · Consequences 190 · Risks / research areas 205
-
-*(Line anchors are valid as of this revision.)*
+*An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
 ## Context
 
@@ -212,3 +210,27 @@ optimizer flips are cost decisions.
   must cover update *sequences*, not just static renders.
 - **Namespace lens scope creep** — "view the namespace" can balloon into
   a debugger; v1 is structure + leaf delegation, nothing more.
+
+
+---
+
+**Index** — line anchors as of this revision.
+
+*Update this index whenever the file is edited.*
+
+Sections:
+
+- Context — line 30
+- Decision — line 39
+- Consequences — line 188
+- Risks / research areas — line 203
+
+Key points:
+
+- Primary family: file view, kernel namespace, code-on-disk, directory — world-lenses over distinct substrates — §1 — line 41
+- One algebra — focus/expand/release, idempotent re-expand — across all backends — §2 — line 58
+- Namespace lens: recursive over path prefixes; subscribes to commons commit diffs — no second event system — §3 — line 74
+- Code lens: symbol-anchored ranges — line shifts do not invalidate untouched symbols — §4 — line 90
+- Live views: events coalesce to one committed delta per lens per turn; render stays pure; churn can demote live to polled — §5 — line 106
+- Sequence-legibility contract: identity stability, marked deltas, tail change-notices, unchanged-stamps — §6 — line 129
+- Update toggle (live/polled/frozen): declarative relevance signal feeding value; optimizer-authored flips never feed decay — §7 — line 146

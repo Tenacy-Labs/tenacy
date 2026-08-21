@@ -12,17 +12,15 @@
 
 **Key points**
 
-- Offline mirror: query/extract → reports → review → refit → versioned parameter sets; read-only over the ledger — §1, line 40
-- Replay harness: deterministic re-render under chosen params — cost-counterfactual only, never behavior-counterfactual — §2, line 62
-- Six audits: cache belief, value forecast, hazard, rot, decision (thrash), cost — reliability-scored, corpus-carded — §3, line 77
-- Refit pipeline: fit diagnostics + prior-divergence guards; review-gated adoption — §4, line 100
-- Synthetic workload generator: planted ground truth validates the estimators; never silently merged with real corpora — §5, line 110
-- Baselines (accumulator control, v1 analytic floor, incumbent render) + live A/B — the only source of behavior claims — §6, line 122
-- Sequencing: instrument-first — ledger write path, reports 1/6, replay skeleton ship with the loop milestone — §8, line 151
+- Offline mirror: query/extract → reports → review → refit → versioned parameter sets; read-only over the ledger — §1
+- Replay harness: deterministic re-render under chosen params — cost-counterfactual only, never behavior-counterfactual — §2
+- Six audits: cache belief, value forecast, hazard, rot, decision (thrash), cost — reliability-scored, corpus-carded — §3
+- Refit pipeline: fit diagnostics + prior-divergence guards; review-gated adoption — §4
+- Synthetic workload generator: planted ground truth validates the estimators; never silently merged with real corpora — §5
+- Baselines (accumulator control, v1 analytic floor, incumbent render) + live A/B — the only source of behavior claims — §6
+- Sequencing: instrument-first — ledger write path, reports 1/6, replay skeleton ship with the loop milestone — §8
 
-**Contents** — Context 27 · Decision 38 · Consequences 161 · Risks / research areas 174
-
-*(Line anchors are valid as of this revision.)*
+*An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
 ## Context
 
@@ -182,3 +180,27 @@ round-robin); it is the only source of behavior claims.
 - **Tool sprawl** — six reports and four utilities invite over-building
   ahead of data; the sequence in §8 is load-bearing (instrument first,
   fit later).
+
+
+---
+
+**Index** — line anchors as of this revision.
+
+*Update this index whenever the file is edited.*
+
+Sections:
+
+- Context — line 25
+- Decision — line 36
+- Consequences — line 159
+- Risks / research areas — line 172
+
+Key points:
+
+- Offline mirror: query/extract → reports → review → refit → versioned parameter sets; read-only over the ledger — §1 — line 38
+- Replay harness: deterministic re-render under chosen params — cost-counterfactual only, never behavior-counterfactual — §2 — line 60
+- Six audits: cache belief, value forecast, hazard, rot, decision (thrash), cost — reliability-scored, corpus-carded — §3 — line 75
+- Refit pipeline: fit diagnostics + prior-divergence guards; review-gated adoption — §4 — line 98
+- Synthetic workload generator: planted ground truth validates the estimators; never silently merged with real corpora — §5 — line 108
+- Baselines (accumulator control, v1 analytic floor, incumbent render) + live A/B — the only source of behavior claims — §6 — line 120
+- Sequencing: instrument-first — ledger write path, reports 1/6, replay skeleton ship with the loop milestone — §8 — line 149

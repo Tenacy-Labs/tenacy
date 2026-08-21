@@ -19,16 +19,14 @@
 
 **Key points**
 
-- Four orthogonal axes; instances are points in the space, not special cases — §1, line 45
-- Validity interface: materialize / validate → fresh|stale|unknown / horizon → deterministic|distribution|stable — §2, line 60
-- Placement is a pure decision function: re-derive per turn, cache-and-validate, or promote to stable — §3, line 81
-- Load-bearing rules: horizon is a hint; forecast matters when validate is unknown; subscriptions retire forecasts — §4, line 96
-- Derived items compose as a DAG; leaf validation covers the subtree — §5, line 118
-- Worked instances: the clock (collapses to a stateless derivation) and the file lens (cache-and-validate) — §6, line 127
+- Four orthogonal axes; instances are points in the space, not special cases — §1
+- Validity interface: materialize / validate → fresh|stale|unknown / horizon → deterministic|distribution|stable — §2
+- Placement is a pure decision function: re-derive per turn, cache-and-validate, or promote to stable — §3
+- Load-bearing rules: horizon is a hint; forecast matters when validate is unknown; subscriptions retire forecasts — §4
+- Derived items compose as a DAG; leaf validation covers the subtree — §5
+- Worked instances: the clock (collapses to a stateless derivation) and the file lens (cache-and-validate) — §6
 
-**Contents** — Context 33 · Decision 43 · Consequences 142 · Risks 155
-
-*(Line anchors are valid as of this revision.)*
+*An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
 ## Context
 
@@ -163,3 +161,26 @@ fall out as the correlated-risk case of ADR-0002b §4.
 - **"Unknown" decay** — an unprobed `"unknown"` silently becomes
   trust-forever; the policy default must price validation against stale
   risk, not default to skipping the probe.
+
+
+---
+
+**Index** — line anchors as of this revision.
+
+*Update this index whenever the file is edited.*
+
+Sections:
+
+- Context — line 31
+- Decision — line 41
+- Consequences — line 140
+- Risks — line 153
+
+Key points:
+
+- Four orthogonal axes; instances are points in the space, not special cases — §1 — line 43
+- Validity interface: materialize / validate → fresh|stale|unknown / horizon → deterministic|distribution|stable — §2 — line 58
+- Placement is a pure decision function: re-derive per turn, cache-and-validate, or promote to stable — §3 — line 79
+- Load-bearing rules: horizon is a hint; forecast matters when validate is unknown; subscriptions retire forecasts — §4 — line 94
+- Derived items compose as a DAG; leaf validation covers the subtree — §5 — line 116
+- Worked instances: the clock (collapses to a stateless derivation) and the file lens (cache-and-validate) — §6 — line 125

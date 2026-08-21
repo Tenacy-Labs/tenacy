@@ -15,15 +15,13 @@
 
 **Key points**
 
-- Self-lens category: conversation (the observed past) and goals (the declared future) — in-process, perfectly observable — §1, line 41
-- Conversation representations: VERBATIM/SUMMARY/MERGED, chosen by the solver under transform cost + standing fidelity-loss disutility — §2, line 53
-- Lossy in render, never in store; re-expansion after summarization is journaled realized lossiness — §2, line 53
-- Goals: hierarchical, horizon-stratified; mutation only via goals.* tool; foundational pinned placement — §3, line 101
-- First per-kind value-profile override: active goals exempt from power-law decay — lifecycle-bounded; zombie-goal risk flagged — §3, line 101
+- Self-lens category: conversation (the observed past) and goals (the declared future) — in-process, perfectly observable — §1
+- Conversation representations: VERBATIM/SUMMARY/MERGED, chosen by the solver under transform cost + standing fidelity-loss disutility — §2
+- Lossy in render, never in store; re-expansion after summarization is journaled realized lossiness — §2
+- Goals: hierarchical, horizon-stratified; mutation only via goals.* tool; foundational pinned placement — §3
+- First per-kind value-profile override: active goals exempt from power-law decay — lifecycle-bounded; zombie-goal risk flagged — §3
 
-**Contents** — Context 28 · Decision 39 · Consequences 127 · Risks / research areas 146
-
-*(Line anchors are valid as of this revision.)*
+*An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
 ## Context
 
@@ -157,3 +155,25 @@ stays pure and golden-testable.
   by re-expansion statistics.
 - **Transform call discipline** — summarization must never run on the
   render hot path; dreaming-turn scheduling with a budget, journaled.
+
+
+---
+
+**Index** — line anchors as of this revision.
+
+*Update this index whenever the file is edited.*
+
+Sections:
+
+- Context — line 26
+- Decision — line 37
+- Consequences — line 125
+- Risks / research areas — line 144
+
+Key points:
+
+- Self-lens category: conversation (the observed past) and goals (the declared future) — in-process, perfectly observable — §1 — line 39
+- Conversation representations: VERBATIM/SUMMARY/MERGED, chosen by the solver under transform cost + standing fidelity-loss disutility — §2 — line 51
+- Lossy in render, never in store; re-expansion after summarization is journaled realized lossiness — §2 — line 51
+- Goals: hierarchical, horizon-stratified; mutation only via goals.* tool; foundational pinned placement — §3 — line 99
+- First per-kind value-profile override: active goals exempt from power-law decay — lifecycle-bounded; zombie-goal risk flagged — §3 — line 99

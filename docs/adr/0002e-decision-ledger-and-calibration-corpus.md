@@ -18,14 +18,12 @@
 
 **Key points**
 
-- Records: per-turn layout and cache beliefs; per-item forecast + three-term utility + decision/margin; per-call expected-vs-realized cache with divergence class — §1, line 43
-- Principles: decomposition enables attribution; rejected moves are logged; unreported outcomes are null, never fabricated — §2, line 97
-- Corpus → offline refit → versioned parameter sets pinned in every entry → prior-divergence-guarded adoption — §3, line 118
-- Cost discipline: async appends off the render hot path; raw fidelity is the corpus — §4, line 136
+- Records: per-turn layout and cache beliefs; per-item forecast + three-term utility + decision/margin; per-call expected-vs-realized cache with divergence class — §1
+- Principles: decomposition enables attribution; rejected moves are logged; unreported outcomes are null, never fabricated — §2
+- Corpus → offline refit → versioned parameter sets pinned in every entry → prior-divergence-guarded adoption — §3
+- Cost discipline: async appends off the render hot path; raw fidelity is the corpus — §4
 
-**Contents** — Context 30 · Decision 41 · Consequences 144 · Risks / research areas 159
-
-*(Line anchors are valid as of this revision.)*
+*An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
 ## Context
 
@@ -168,3 +166,24 @@ views, never replaces the raw append.
 - **Provider report heterogeneity** — normalization must not launder
   uncertainty; raw reports ride alongside normalized beliefs precisely
   so later analysis can re-derive.
+
+
+---
+
+**Index** — line anchors as of this revision.
+
+*Update this index whenever the file is edited.*
+
+Sections:
+
+- Context — line 28
+- Decision — line 39
+- Consequences — line 142
+- Risks / research areas — line 157
+
+Key points:
+
+- Records: per-turn layout and cache beliefs; per-item forecast + three-term utility + decision/margin; per-call expected-vs-realized cache with divergence class — §1 — line 41
+- Principles: decomposition enables attribution; rejected moves are logged; unreported outcomes are null, never fabricated — §2 — line 95
+- Corpus → offline refit → versioned parameter sets pinned in every entry → prior-divergence-guarded adoption — §3 — line 116
+- Cost discipline: async appends off the render hot path; raw fidelity is the corpus — §4 — line 134
