@@ -50,6 +50,7 @@ awaiting ruling).
 
 ## Surveys & living indexes
 
+- [Knapsack Solvers — Survey & Performance Review](knapsack-solvers-survey.md) — *ADR-0005 (primary), ADR-0002b, ADR-0004. MCKP canon (Pisinger/Martello–Toth/Kellerer et al.), online/incremental variants matching ADR-0005's coupled-cost and cross-turn deviations, knapsack×LLM-inference papers (incl. independent OS-MCKP corroboration), and OSS implementations — with a performance review mapping techniques onto `src/optimizer/solver.ts`.*
 - [Memory for Autonomous LLM Agents — survey (2026)](memory-survey-2026.md) — *ADR-0002 (landscape), ADR-0003 (benchmarks)*
 - [Choosing How to Remember: Adaptive Memory Structures for LLM Agents](adaptive-memory-structures.md) — *ADR-0002, ADR-0003*
 - [Agent-Memory-Paper-List (living index)](agent-memory-paper-list.md) — *All ADR-0002/0003 (discovery)*
