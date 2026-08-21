@@ -220,9 +220,11 @@ export class FileLensItem {
     const compact = `⟨file ${this.target}: ${this.ranges.length} range(s), ${this.ranges.map(([a, b]) => `${a}-${b}`).join(",")}⟩`;
     const opts: RenderOption[] = [];
     if (this.baseBlockTurn < 0) {
-      // no base yet: FULL is the (only) additive first write
+      // No base yet: FULL is the ONLY first write. A content-free compact
+      // header is not a representation of unseen data — offering it let the
+      // solver drop bytes the model had never received (caught live by
+      // glm-5.2 refusing to answer from an empty lens).
       opts.push(opt("full", ["stable"], "FULL", full, true));
-      opts.push(opt("compact-full", ["stable"], "FULL", compact, false));
     } else {
       // base exists: deltas are the additive path; re-consolidation is a rewrite
       opts.push(opt("base+delta", ["stable"], "BASE+DELTA", this.#deltaText(), true));

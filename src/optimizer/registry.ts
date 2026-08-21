@@ -18,6 +18,7 @@ import type { ModelResponse, Provider } from "./providers.ts";
 import { PrefixCacheSim } from "./providers.ts";
 import type { Block } from "./types.ts";
 import type { UsageReport } from "./cache-model.ts";
+import { loadHarnessConfig } from "./harness-config.ts";
 
 export interface ProviderSpec {
   name: string;
@@ -179,17 +180,26 @@ export function buildProvider(
   if (spec === undefined) {
     throw new Error(`unknown provider "${name}" — registered: ${Object.keys(REGISTRY).join(", ")}`);
   }
-  const apiKey = opts.apiKey ?? process.env[spec.envKey] ?? "";
+  // credential resolution: explicit > env > harness config file (gitignored)
+  const cfg = loadHarnessConfig();
+  const cfgProvider = cfg?.providers[name];
+  const apiKey =
+    opts.apiKey ??
+    process.env[spec.envKey] ??
+    cfgProvider?.apiKey ??
+    "";
   if (apiKey === "") {
-    throw new Error(`${spec.envKey} not set — ${name} is bring-your-own-key`);
+    throw new Error(`${spec.envKey} not set and no harness config entry for "${name}" — bring-your-own-key`);
   }
-  const model = opts.model ?? spec.defaultModel;
-  return providerFromWire(model, spec.build({ apiKey, model, baseUrl: opts.baseUrl }));
+  const model = opts.model ?? cfgProvider?.model ?? spec.defaultModel;
+  const baseUrl = opts.baseUrl ?? cfgProvider?.baseUrl;
+  return providerFromWire(model, spec.build({ apiKey, model, baseUrl }));
 }
 
 /** Which providers have keys present (UI listing) — never returns keys. */
 export function availableProviders(): string[] {
+  const cfg = loadHarnessConfig();
   return Object.values(REGISTRY)
-    .filter((s) => (process.env[s.envKey] ?? "") !== "")
+    .filter((s) => (process.env[s.envKey] ?? "") !== "" || (cfg?.providers[s.name]?.apiKey ?? "") !== "")
     .map((s) => s.name);
 }
