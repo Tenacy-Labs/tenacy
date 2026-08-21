@@ -4,8 +4,9 @@
 - **Date:** 2026-08-21
 - **Deciders:** Daniel Eisner (rulings), Robby (analysis)
 - **Parent:** ADR-0002 · **Sibling:** ADR-0002a
-- **Refined by:** ADR-0002c (change forecasts become the horizon half of
-  the generic item-source interface; §3 taxonomy generalized there)
+- **Extended by:** ADR-0002d (the lens family and live views); the
+  decision audit of §6 and the calibration inputs of §2 are specified as
+  the decision ledger and corpus by ADR-0002e
 
 ## Context
 

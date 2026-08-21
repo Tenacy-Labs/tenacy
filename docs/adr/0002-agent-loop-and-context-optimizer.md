@@ -6,7 +6,9 @@
 - **Parent:** ADR-0000 · **Relates to:** ADR-0001
 - **Extended by:** ADR-0002d (the lens family — kernel namespace,
   code-on-disk, directory — and live views; §3's "future lenses" partly
-  specified there)
+  specified there); ADR-0002e (the InvalidationLedger of §4 subsumed
+  into the decision ledger with per-step forecast/computation/cache
+  detail)
 - **Input:** prime-agent loop study (packages/agent/src/agent-loop.ts, read 2026-08-21)
 
 ## Context
