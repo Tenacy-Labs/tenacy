@@ -4,6 +4,8 @@
 - **Date:** 2026-08-21
 - **Deciders:** Daniel Eisner (rulings), Robby (analysis)
 - **Parent:** ADR-0002 · **Ancestors:** ADR-0002b, ADR-0002d
+- **Evaluated by:** ADR-0003 (reports, replay harness, refit pipeline
+  over the ledger corpus this ADR defines)
 - **Input:** this session — ruling that every render step records, in
   detail: per-component utility forecasts, the objective computation
   breakdown, cache beliefs, and expected-vs-realized cache hits and cost;
