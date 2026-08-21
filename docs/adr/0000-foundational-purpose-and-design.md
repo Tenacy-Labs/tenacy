@@ -5,6 +5,21 @@
 - **Deciders:** Daniel Eisner (ruling), Robby (analysis)
 - **Supersedes:** nothing — this is the root. ADR-0001 is the first child.
 
+---
+
+**Summary.** The root decision: agent-kernel is built from scratch as a synthesis of the five best ideas from existing harnesses — plugin-everything architecture, jcode-class economics, code-first agency, open protocols as plugins, and a pi-small core with batteries included by example.
+
+**Key points**
+
+- Five pillars combined: everything-is-a-plugin (DeepSeek); measured speed/memory budgets (jcode: ~21ms cold start, 6.7MB/worker); code-first agency in TypeScript under a strict gate (prime-agent); ACP/OpenCode/A2A spoken natively — as plugins; pi-small core with an OMP-style reference distribution as proof — Decision, line 43
+- Derived principles: mechanisms in kernel / policy in plugins; code-first typed turns; measured budgets over vibes; untrusted cells over a trusted coordinator; narrow `ops.*` as graduation insurance; journal audit-only, snapshots the sole recovery — Principles, line 91
+- The identity is the combination — each pillar constrains the others (plugin overhead inside budgets, protocols as plugins, the gate enforces plugin ABIs) — Consequences, line 105
+- Rejected: adopting any single chassis (prime-agent evaluated and declined), merging codebases, bespoke external protocols, batteries in the kernel — Rejected, line 122
+
+**Contents** — Context 23 · Decision 43 · Driving design principles (derived) 91 · Consequences 105 · Rejected alternatives 122
+
+*(Line anchors are valid as of this revision.)*
+
 ## Context
 
 The current crop of agentic frameworks each got one thing profoundly right

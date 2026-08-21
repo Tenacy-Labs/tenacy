@@ -6,6 +6,24 @@
 - **Parent:** ADR-0000 · **Evaluates:** the ADR-0002 family
   (0002, 0002a–0002e)
 
+---
+
+**Summary.** The analysis and tuning layer: replay harness, six audit reports, refit pipeline, synthetic workload generator, and baselines/live A/B — the instruments that evaluate and tune the 0002 optimizer from its decision corpus.
+
+**Key points**
+
+- Offline mirror: query/extract → reports → review → refit → versioned parameter sets; read-only over the ledger — §1, line 40
+- Replay harness: deterministic re-render under chosen params — cost-counterfactual only, never behavior-counterfactual — §2, line 62
+- Six audits: cache belief, value forecast, hazard, rot, decision (thrash), cost — reliability-scored, corpus-carded — §3, line 77
+- Refit pipeline: fit diagnostics + prior-divergence guards; review-gated adoption — §4, line 100
+- Synthetic workload generator: planted ground truth validates the estimators; never silently merged with real corpora — §5, line 110
+- Baselines (accumulator control, v1 analytic floor, incumbent render) + live A/B — the only source of behavior claims — §6, line 122
+- Sequencing: instrument-first — ledger write path, reports 1/6, replay skeleton ship with the loop milestone — §8, line 151
+
+**Contents** — Context 27 · Decision 38 · Consequences 161 · Risks / research areas 174
+
+*(Line anchors are valid as of this revision.)*
+
 ## Context
 
 The 0002 family built an online optimizer and named its closed loops —

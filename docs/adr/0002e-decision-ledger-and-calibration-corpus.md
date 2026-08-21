@@ -12,6 +12,21 @@
   and that these logs, collected across many runs, become the corpus used
   to tune forecasts and utility calculations.
 
+---
+
+**Summary.** The decision ledger: every render step records its forecasts, objective breakdown, and cache beliefs against realized outcomes — an append-only journal corpus that later tunes the optimizer's parameters.
+
+**Key points**
+
+- Records: per-turn layout and cache beliefs; per-item forecast + three-term utility + decision/margin; per-call expected-vs-realized cache with divergence class — §1, line 43
+- Principles: decomposition enables attribution; rejected moves are logged; unreported outcomes are null, never fabricated — §2, line 97
+- Corpus → offline refit → versioned parameter sets pinned in every entry → prior-divergence-guarded adoption — §3, line 118
+- Cost discipline: async appends off the render hot path; raw fidelity is the corpus — §4, line 136
+
+**Contents** — Context 30 · Decision 41 · Consequences 144 · Risks / research areas 159
+
+*(Line anchors are valid as of this revision.)*
+
 ## Context
 
 The calibration loops were named but not specified: ADR-0002 §4's

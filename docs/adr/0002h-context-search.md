@@ -8,6 +8,23 @@
   search over the context: both regex-based and semantic
   (embedding-vector) retrieval.
 
+---
+
+**Summary.** Context search — regex and semantic retrieval over the two corpora cells cannot reach (the store and the journal): the discovery half of ctx.*, and the recovery path from summarization.
+
+**Key points**
+
+- Scope: the store (including the invisible context) + the journal verbatim; world files and the namespace stay cell-side — §1, line 38
+- Journal search is the recovery path from 0002f summarization; the fidelity disutility is discounted by retrieval availability — §1, line 38
+- Surface: ctx.search(regex) / ctx.find(semantic); results carry representation/rendered/recoverable; value channel at handle policy; search never mutates — §2, line 59
+- Lexical v1: deterministic regex over text + metadata; ships with the loop milestone — §3, line 88
+- Semantic v2: embeddings as DAG artifacts keyed (item, representation, modelVersion); async; costs ledgered — §4, line 94
+- Searches are journaled behavioral signals — weak class, no automatic value bump — §5, line 111
+
+**Contents** — Context 28 · Decision 36 · Consequences 121 · Risks / research areas 134
+
+*(Line anchors are valid as of this revision.)*
+
 ## Context
 
 ADR-0002g gave the model declarative manipulation (`promote`, `demote`,

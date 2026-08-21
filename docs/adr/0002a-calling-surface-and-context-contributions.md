@@ -7,6 +7,22 @@
 - **Refined by:** ADR-0002c (the mtime protocol is instance two of the
   generic item-source interface; §4 maps to validate/cache-and-validate)
 
+---
+
+**Summary.** The calling surface: a trained-convention compatibility skin over kernel-native lenses, the two-channel rule for results, the lease for context contributions, mtime validation without invalidation, and trivial-query collapse.
+
+**Key points**
+
+- Compat skin: trained-convention naming (read_file-style) mapped onto lens behavior — zero retraining cost — §1, line 40
+- Two-channel rule: values return to code, observations to context — never both — §2, line 50
+- The lease: coordinator-side authoring of context contributions with token accounting — §3, line 70
+- mtime protocol: validate-without-invalidate — cheap freshness checks before re-reads — §4, line 97
+- Trivial-query collapse: cheap queries skip the model entirely — §5, line 112
+
+**Contents** — Context 26 · Decision 38 · Consequences 124 · Risks 137
+
+*(Line anchors are valid as of this revision.)*
+
 ## Context
 
 ADR-0002 made the context a projection: a typed store rendered by an

@@ -6,6 +6,24 @@
 - **Sequence:** plugin loader lands *after* the agent loop (see Sequencing)
 - **Parent:** ADR-0000 (foundational purpose and driving design)
 
+---
+
+**Summary.** The microkernel ruling: every capability beyond the core mechanism set is a coordinator-side plugin under a `Plugin` interface — cells get typed stubs, the kernel keeps only mechanisms, and the Rust-graduation litmus tests every PR.
+
+**Key points**
+
+- Plugins run on the coordinator, never inside agent VMs — capability-checked envelope stubs; workers stay compiler-free (6.7MB marginal) — §1, line 52
+- Plugins ship ambient `.d.ts`; the cell gate enforces the ABI — plugin misuse surfaces as ordinary diagnostics at authoring time — §2, line 61
+- Contract by interface + structural typing; a base class would be optional sugar only — §3, line 70
+- The kernel alone owns capability grants — a plugin system whose plugins can bypass mediation is theater — §4, line 77
+- Capability map: mcp, skills, agents, scheduler, memory — dreaming = scheduler × memory composition, no kernel changes — §5, line 84
+- Non-negotiable kernel residents: turn execution, persistence + snapshot-only recovery, cell gate, routing, swarm, Commons, grants — litmus: rewrite-in-Rust — Kernel residents, line 123
+- Sequencing: agent loop → loader + grants → mcp (first plugin) → memory (second) → freeze the API — Sequencing, line 148
+
+**Contents** — Context 27 · Decision 45 · Proposed contract 94 · What stays in the kernel (non-negotiable) 123 · Consequences 132 · Sequencing 148 · Rejected alternatives 157
+
+*(Line anchors are valid as of this revision.)*
+
 ## Context
 
 The kernel now provides turn execution, journal/snapshot persistence with

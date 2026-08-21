@@ -10,6 +10,23 @@
   value profiles — §2's power law is the default profile, not a law
   (goals are the first decay-exempt kind)
 
+---
+
+**Summary.** Context as a multi-horizon portfolio: power-law value decay, change forecasts, ordered (zonal) risk, a block-plus-delta copy-on-write representation, and a hysteresis-disciplined solver.
+
+**Key points**
+
+- Portfolio framing: items compete for the window under budget as assets compete for capital — §1, line 41
+- Expected value: constant base μ₀ with power-law recency decay (1+Δt)^−α — §2, line 60
+- Change forecasts: per-item hazard; the forecast is load-bearing when validation returns unknown — §3, line 72
+- Risk is ordered, not pairwise — the zones (identity/foundational/episodic/transient) fall out of position — §4, line 81
+- Block + deltas: copy-on-write prompt representation — append-cheap, rewrite-priced — §5, line 96
+- Solver discipline: marginal moves with hysteresis margins — no thrash — §6, line 115
+
+**Contents** — Context 30 · Decision 39 · Consequences 131 · Risks / research areas 141
+
+*(Line anchors are valid as of this revision.)*
+
 ## Context
 
 ADR-0002 §4 priced individual render decisions with a three-term utility.

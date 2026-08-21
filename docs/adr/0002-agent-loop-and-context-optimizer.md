@@ -12,6 +12,23 @@
   ctx.* is the agent operating its own context)
 - **Input:** prime-agent loop study (packages/agent/src/agent-loop.ts, read 2026-08-21)
 
+---
+
+**Summary.** The agent loop and the context optimizer: render is a per-turn economic decision over a persistent store — a projection of what the model needs now, not an accumulator of everything that happened.
+
+**Key points**
+
+- The loop: typed cells over persistent state, context contributions, dreaming/maintenance turns — §1, line 50
+- Optimizer, not accumulator: render decides what enters the window; dropped ≠ destroyed — store and journal retain truth — §2, line 72
+- Lens objects (worked example: file views) — focusable, validatable, priced views over external state — §3, line 108
+- Objective function: expected value − cache cost − rot — three-term economics per item per turn — §4, line 138
+- Everything is code: model-facing surfaces are materialized, typed, review-gated modules in the namespace — §5, line 165
+- Kernel as medium, kernel as tool — the RLM framing; ctx.* later completes it (ADR-0002g) — §6, line 194
+
+**Contents** — Context 32 · Decision 48 · Consequences 201 · Rejected alternatives 219
+
+*(Line anchors are valid as of this revision.)*
+
 ## Context
 
 The loop milestone arrived with three facts on the table. First, the

@@ -9,6 +9,21 @@
   semantic retrieval over store and journal, making locate-then-promote
   usable; journal search is the recovery path from summarization)
 
+---
+
+**Summary.** The ctx.* API — the model's self-reflection surface: explore the context behind the render (inspect/item/why) and manipulate it declaratively (promote/demote/watch); available in the spirit of RLM, never required for correct operation.
+
+**Key points**
+
+- Surface: inspect (including the invisible context), item, why (ledger trace); promote/demote (value bumps); watch (refresh toggle) — §1, line 40
+- Signals, not overrides: the solver stays single writer of render — determinism and replay survive; the budget is honored (promote may evict elsewhere) — §2, line 78
+- Inspection exposes the store behind the render; why serves the ledger's audit trail to the model — one ledger, three audiences — §3, line 94
+- Standing constraints: coordinator-side, capability-scoped; autonomous default (never calling ctx.* behaves identically); no self-flooding — §4, line 104
+
+**Contents** — Context 27 · Decision 38 · Consequences 118 · Risks / research areas 133
+
+*(Line anchors are valid as of this revision.)*
+
 ## Context
 
 Ruling this session ties the 0002 family together: the kernel exposes a

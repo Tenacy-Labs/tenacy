@@ -9,6 +9,22 @@
   "compaction") and the goals & objectives lens (hierarchy, horizons,
   tool-gated updates, foundational placement, decay exemption).
 
+---
+
+**Summary.** Self-lenses: the conversation lens (verbatim/summary/merged representations priced by mean-variance — the system's only compaction, utility-driven) and the goals lens (tool-gated, foundational, decay-exempt while active).
+
+**Key points**
+
+- Self-lens category: conversation (the observed past) and goals (the declared future) — in-process, perfectly observable — §1, line 41
+- Conversation representations: VERBATIM/SUMMARY/MERGED, chosen by the solver under transform cost + standing fidelity-loss disutility — §2, line 53
+- Lossy in render, never in store; re-expansion after summarization is journaled realized lossiness — §2, line 53
+- Goals: hierarchical, horizon-stratified; mutation only via goals.* tool; foundational pinned placement — §3, line 101
+- First per-kind value-profile override: active goals exempt from power-law decay — lifecycle-bounded; zombie-goal risk flagged — §3, line 101
+
+**Contents** — Context 28 · Decision 39 · Consequences 127 · Risks / research areas 146
+
+*(Line anchors are valid as of this revision.)*
+
 ## Context
 
 ADR-0002d's lens family watches the world (files, code, directories,

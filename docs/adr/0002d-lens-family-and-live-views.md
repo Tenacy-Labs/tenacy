@@ -11,6 +11,24 @@
   implementations and live views, with the render contract for change
   legibility.
 
+---
+
+**Summary.** The lens family — file, kernel namespace, tree-sitter code, directory — one expand algebra over four substrates; plus live views (watcher-driven updates committed at turn boundaries) under a sequence-legibility render contract, with a model-authored update toggle.
+
+**Key points**
+
+- Primary family: file view, kernel namespace, code-on-disk, directory — world-lenses over distinct substrates — §1, line 43
+- One algebra — focus/expand/release, idempotent re-expand — across all backends — §2, line 60
+- Namespace lens: recursive over path prefixes; subscribes to commons commit diffs — no second event system — §3, line 76
+- Code lens: symbol-anchored ranges — line shifts do not invalidate untouched symbols — §4, line 92
+- Live views: events coalesce to one committed delta per lens per turn; render stays pure; churn can demote live to polled — §5, line 108
+- Sequence-legibility contract: identity stability, marked deltas, tail change-notices, unchanged-stamps — §6, line 131
+- Update toggle (live/polled/frozen): declarative relevance signal feeding value; optimizer-authored flips never feed decay — §7, line 148
+
+**Contents** — Context 32 · Decision 41 · Consequences 190 · Risks / research areas 205
+
+*(Line anchors are valid as of this revision.)*
+
 ## Context
 
 ADR-0002 §3 designed the file lens as the worked example and deferred

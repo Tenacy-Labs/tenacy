@@ -13,6 +13,23 @@
   **example instances of a generic interface to be designed**, not the
   design itself.
 
+---
+
+**Summary.** The generic item interface: every context source — clock, file lens, remote API — is a point in a four-axis space (observability, forecastability, materialization cost, subscribability) behind one validity/horizon/placement protocol.
+
+**Key points**
+
+- Four orthogonal axes; instances are points in the space, not special cases — §1, line 45
+- Validity interface: materialize / validate → fresh|stale|unknown / horizon → deterministic|distribution|stable — §2, line 60
+- Placement is a pure decision function: re-derive per turn, cache-and-validate, or promote to stable — §3, line 81
+- Load-bearing rules: horizon is a hint; forecast matters when validate is unknown; subscriptions retire forecasts — §4, line 96
+- Derived items compose as a DAG; leaf validation covers the subtree — §5, line 118
+- Worked instances: the clock (collapses to a stateless derivation) and the file lens (cache-and-validate) — §6, line 127
+
+**Contents** — Context 33 · Decision 43 · Consequences 142 · Risks 155
+
+*(Line anchors are valid as of this revision.)*
+
 ## Context
 
 ADR-0002a §4 gave file lenses an mtime validation protocol; ADR-0002b §3
