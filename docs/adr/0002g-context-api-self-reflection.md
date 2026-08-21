@@ -5,6 +5,9 @@
 - **Deciders:** Daniel Eisner (rulings), Robby (analysis)
 - **Parent:** ADR-0002 (§6 — kernel as medium, kernel as tool)
 - **Ancestors:** ADR-0002a §2, ADR-0002d §7, ADR-0002e, ADR-0002f
+- **Extended by:** ADR-0002h (search — the discovery half: regex and
+  semantic retrieval over store and journal, making locate-then-promote
+  usable; journal search is the recovery path from summarization)
 
 ## Context
 
