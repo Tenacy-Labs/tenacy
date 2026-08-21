@@ -4,6 +4,8 @@
 - **Date:** 2026-08-21
 - **Deciders:** Daniel Eisner (rulings), Robby (analysis)
 - **Parent:** ADR-0002
+- **Refined by:** ADR-0002c (the mtime protocol is instance two of the
+  generic item-source interface; §4 maps to validate/cache-and-validate)
 
 ## Context
 

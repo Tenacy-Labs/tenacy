@@ -4,6 +4,8 @@
 - **Date:** 2026-08-21
 - **Deciders:** Daniel Eisner (rulings), Robby (analysis)
 - **Parent:** ADR-0002 · **Sibling:** ADR-0002a
+- **Refined by:** ADR-0002c (change forecasts become the horizon half of
+  the generic item-source interface; §3 taxonomy generalized there)
 
 ## Context
 
