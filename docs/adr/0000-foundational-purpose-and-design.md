@@ -15,8 +15,11 @@ code-first agency — the model *programming* its own stateful workspace
 rather than jabbing JSON tool calls — changes what agents can do. The open
 protocol ecosystem (ACP, the OpenCode/openchamber protocol family, A2A)
 demonstrated that agent harnesses need not be walled gardens.
+pi demonstrated that a tiny, simple, foundational core can be immediately
+useful — and OMP demonstrated that batteries-included richness can ride on
+top of such a core as assembled examples rather than core machinery.
 
-None of them combines all four. Building on any single one means inheriting
+None of them combines all five. Building on any single one means inheriting
 its compromises. We evaluated reusing prime-agent as chassis directly and
 rejected it; we studied jcode's architecture as reference rather than
 merging codebases. The decision, therefore, is a synthesis harness built
@@ -24,7 +27,7 @@ from scratch, taking the best feature from each.
 
 ## Decision
 
-**agent-kernel is a single harness that combines the four proven ideas:**
+**agent-kernel is a single harness that combines the five best ideas:**
 
 1. **Kernel/plugin decomposition (DeepSeek's insight): everything is a
    plugin.** The kernel provides only mechanisms — turn execution,
@@ -50,14 +53,25 @@ from scratch, taking the best feature from each.
    signal. Recovery is snapshot-only; replay does not exist; side effects
    stay exactly-once ("forgetting is recoverable, repeating is not").
 
-4. **Standards-based compatibility at the core.** The harness's
+4. **Standards-based compatibility.** The harness's
    outward-facing surfaces speak open protocols natively — ACP for
    client/editor integration, the OpenCode/openchamber protocol family, A2A
    for agent-to-agent interop — so agent-kernel agents interoperate with the
    wider ecosystem from day one rather than through bespoke bridges. The
-   *commitment* to standards is constitutional; the adapters themselves are
-   plugins (ADR-0001), which is what keeps the core small while the
-   protocol surface stays open.
+   commitment is constitutional — the kernel's envelope/turn model must
+   never preclude these protocols — and **the protocols themselves are
+   implemented as plugins** (ADR-0001): no protocol code lives in the
+   kernel. This is what keeps the core small while the protocol surface
+   stays open.
+
+5. **Simple foundational availability (pi's insight), batteries-included by
+   example (OMP's).** The kernel core stays pi-small: minimal enough to
+   hold in one head, immediately useful on its own, admitting no capability
+   that fails the plugin litmus test. Richness ships as a reference
+   distribution — batteries-included, OMP-style assembled agents (skills,
+   memory, protocols, scheduling pre-wired) built entirely from plugins
+   with zero kernel changes. The distribution is the proof of the plugin
+   thesis.
 
 ## Driving design principles (derived)
 
@@ -77,11 +91,13 @@ from scratch, taking the best feature from each.
 
 The framework's identity is the *combination*: plugin-everywhere
 architecture running at jcode-class economics, where the agent works
-code-first under a strict type gate, and every external surface is an open
-protocol. Each pillar constrains the others — plugin overhead must fit
+code-first under a strict type gate, every external surface is an open
+protocol, and the whole arrives as a pi-simple core plus a
+batteries-included reference distribution. Each pillar constrains the others — plugin overhead must fit
 inside the performance budgets; protocol adapters must be plugins, not
 kernel residents; the type gate must enforce plugin ABIs, which is why
-plugins ship `.d.ts` to the gate.
+plugins ship `.d.ts` to the gate; and the core must never accrete what the
+distribution can assemble.
 
 **Sequencing remains as ADR-0001 records it:** agent loop, plugin loader,
 MCP plugin, memory plugin, freeze the plugin API. Protocol adapters (ACP,
@@ -96,3 +112,5 @@ matures.
   ideas, own the implementation.
 - **Bespoke external protocols** — rejected; walled gardens are how harnesses
   die.
+- **Batteries in the kernel** — rejected; the reference distribution carries
+  the batteries, so the core never accretes them.
