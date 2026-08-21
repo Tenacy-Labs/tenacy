@@ -13,6 +13,7 @@
 > - §3 — Ten implementation warnings with their sources and the ADR each touches.
 > - §4 — Six proposed adjustments (A1–A6), awaiting the Decider's ruling.
 > - §5 — Synthesis: value density, not length, is the variable the field is arguing about; our objective is the arbiter.
+> - §6 — Takeaways: the architecture holds; the risks are named; the loop-milestone checklist is sharpened.
 
 *An index of sections and key points, with line anchors, appears at the end of this file. If you edit this file, update that index to match.*
 
@@ -228,16 +229,66 @@ is to make it the explicit, journaled, tunable quantity — and the literature a
 estimation problem is tractable, the failure modes are known and named, and the pieces exist
 scattered, awaiting assembly.
 
+## §6 Takeaways and plan impact
+
+**T1. The architecture survives contact; the ruling needed is small.** No proposal from §4 touches
+structure — all six (A1–A6) are parameterization, observability, or default stance. This is the
+meta-finding: 29 sources, including a production system at scale, and the design held.
+
+**T2. Instrument-first is now evidence-backed, and the ledger is the enabler.** Every adaptation
+mechanism the field validated consumes records: Memory-R1's outcome-driven rewards (152 pairs
+sufficed), Hawkeye's learn-from-oracle, ACON's contrastive failure mining. Corollary: widen the
+ledger at write time rather than backfill — raw usage fields (A3), zone histograms (A2), template
+logs (A5), lossiness events (A6).
+
+**T3. The risk register moved from unknown to named.** Three clusters: provider accounting
+semantics (K1–K2), lossy-transform failures (K6, K9), LLM-authored store mutations (K7). The
+design's structural defenses — single writer, deterministic render, journal, signals-not-overrides
+— already cover the third cluster; the first two need the observability and defaults queued in
+A2/A3/A6.
+
+**T4. Spend craft on the differentiated core; buy boring commodity parts.** The assembly —
+forecast-priced placement, journaled ledger, calibration against realized outcomes — is the
+contribution. Embedding search and summarization are representations, not the product, and should
+use proven implementations.
+
+**T5. The success metric has a name: value density.** Realized value per unit of realized,
+cache-adjusted render cost. Under this metric the field's ACE-vs-Chroma contradiction dissolves
+(§5), and report 6's accumulator control measures exactly the optimizer-vs-accumulator contrast.
+Token reduction alone is the wrong target; the accumulator reduces tokens by forgetting.
+
+**T6. Conservative-by-default lossiness.** The field's most repeated lesson: untrained compression
+and untrained folding underperform doing nothing (Context-Folding ablation; ACON's naive-compression
+losses; ACE's collapse). v1 ships VERBATIM-dominant; lossy representations earn aggressiveness
+through observed low regret (A6).
+
+**T7. The loop-milestone checklist, concretely affected.**
+- *Ledger write path:* raw provider usage fields verbatim; believed-cache fields; per-zone kind
+  histograms; lossiness events; template-choice log.
+- *Renderer v1:* byte-stable deterministic serialization as a hard invariant; tool-set mutations
+  priced as full-prefix rewrites (A4); variation confined to representation choices in
+  cache-inactive segments (A5).
+- *Defaults:* error-evidence profile (A1) and summary-confidence ramp (A6) as the first two
+  entries in the versioned profile registry.
+
+Recommendation on the queued proposals: all six are cheap. A3 and A6 carry the most protection per
+line — a named divergence class the Anthropic SDK shipped as a bug, and the field's most repeated
+failure mode. A1 is the cheapest insurance: one profile plus a label rule. A5 stays a design note
+until the renderer's template logs supply evidence.
+
+
 **Index**
 
-- §1 Method and scope — line 19
-- §2 What is reinforced — line 33
-- §3 What to keep in mind as we implement — line 107
-- §4 What to adjust — proposals awaiting ruling — line 178
-- §5 Synthesis: the field is arguing about value density, and our objective is the arbiter — line 218
+- §1 Method and scope — line 20
+- §2 What is reinforced — line 34
+- §3 What to keep in mind as we implement — line 108
+- §4 What to adjust — proposals awaiting ruling — line 179
+- §5 Synthesis: the field is arguing about value density, and our objective is the arbiter — line 219
+- §6 Takeaways and plan impact — line 232
 
 - §1 — The optimizer-not-accumulator framing is externally confirmed; nobody else prices it end-to-end. — line 11
 - §2 — Ten reinforcements, from KV-cache economics to replay-as-learn-from-oracle. — line 12
 - §3 — Ten implementation warnings with their sources and the ADR each touches. — line 13
 - §4 — Six proposed adjustments (A1–A6), awaiting the Decider's ruling. — line 14
 - §5 — Synthesis: value density, not length, is the variable the field is arguing about; our objective is the arbiter. — line 15
+- §6 — Takeaways: the architecture holds; the risks are named; the loop-milestone checklist is sharpened. — line 16
