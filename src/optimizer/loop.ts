@@ -37,6 +37,7 @@ export interface AgentHooks {
 export class AgentLoop {
   readonly store = new ContextStore();
   readonly cacheModel: CacheModel;
+  private failedIntents = 0;
   private incumbent: {
     rendered: Map<string, { position: number; zone: Zone; digest: string; representation: string; optionId: string }>;
     totalTokens: number;
@@ -76,7 +77,11 @@ export class AgentLoop {
       if (!r.ok) {
         // A1 (0004 §2): failures classed as error evidence at journal time —
         // estimators always need them as calibration labels, not console noise.
-        const err = new NoticeItem(`err:${this.store.turn}:${s.op}`, "error", `${s.op}: ${r.result}`);
+        // Id includes an attempt counter: the same op failing twice in one
+        // turn (retry loop, repeated probe) must not collide on the store's
+        // duplicate-id check. A1: failures stay distinct evidence.
+        const errId = `err:${this.store.turn}:${s.op}:${this.failedIntents++}`;
+        const err = new NoticeItem(errId, "error", `${s.op}: ${r.result}`);
         this.store.add(err.toContextItem());
       }
     }
@@ -107,7 +112,8 @@ export class AgentLoop {
         toolResults.push(r);
         if (!r.ok) {
           // A1 (0004 §2): failures classed as error evidence at journal time.
-          const err = new NoticeItem(`err:${this.store.turn}:${intent.op}`, "error", `${intent.op}: ${r.result}`);
+          const errId = `err:${this.store.turn}:${intent.op}:${this.failedIntents++}`;
+          const err = new NoticeItem(errId, "error", `${intent.op}: ${r.result}`);
           this.store.add(err.toContextItem());
         }
       }

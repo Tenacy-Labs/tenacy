@@ -9,7 +9,7 @@ import { ContextStore } from "../src/optimizer/store.ts";
 import { render } from "../src/optimizer/renderer.ts";
 import { solve } from "../src/optimizer/solver.ts";
 import { CacheModel } from "../src/optimizer/cache-model.ts";
-import { MockProvider } from "../src/optimizer/providers.ts";
+import { MockProvider, ScriptedProvider } from "../src/optimizer/providers.ts";
 import { AgentLoop, makeTurnItem } from "../src/optimizer/loop.ts";
 import { StandingItem, GoalItem, FileLensItem, NoticeItem } from "../src/optimizer/items.ts";
 import { mkdtempSync } from "node:fs";
@@ -68,6 +68,27 @@ describe("solver", () => {
     const fatLedger = r0.itemLedgers.find((l) => l.id === "fat")!;
     const tinyLedger = r0.itemLedgers.find((l) => l.id === "tiny")!;
     expect(fatLedger.utility.total).toBeGreaterThan(tinyLedger.utility.total);
+  });
+
+  test("two identical failing intents in one turn do not collide (error-evidence ids)", async () => {
+    // Reviewer probe: duplicate item id "err:1:ctx.search" crashed run().
+    // Fix: attempt counter in the error-evidence id.
+    const provider = new ScriptedProvider([
+      { text: "probing", intents: [
+        { op: "ctx.search", pattern: "*[" },
+        { op: "ctx.search", pattern: "*[" },
+      ] },
+    ]);
+    const loop = new AgentLoop(provider, ps);
+    const store = loop.store;
+    let threw = false;
+    loop.run("probe").catch((e) => { threw = true; console.error(e); });
+    await new Promise((res) => setTimeout(res, 50));
+    expect(threw).toBe(false);
+    const snap = [...store.snapshot().values()];
+    const errs = snap.filter((i) => i.kind === "error");
+    expect(errs.length).toBe(2);
+    expect(new Set(errs.map((e) => e.id)).size).toBe(2);
   });
 
   test("goals are always held (risk-free anchor)", () => {
