@@ -4,6 +4,10 @@ One entry per file. Each entry carries: link(s), kind, date, the ADRs it relates
 and a blurb stating the overlap and the divergence. Entries were verified against live
 sources on 2026-08-21; the two Anthropic doc pages marked *verified live* were fetched whole.
 
+**Deep-read analysis:** [ANALYSIS.md](ANALYSIS.md) — what the literature reinforces (R1–R10),
+what to keep in mind while implementing (K1–K10), and six proposed plan adjustments (A1–A6,
+awaiting ruling).
+
 ## Production & platform engineering
 
 - [Context Engineering for AI Agents: Lessons from Building Manus](manus-context-engineering.md) — *ADR-0002 §2/§4, ADR-0002b §5, ADR-0002e §1*
