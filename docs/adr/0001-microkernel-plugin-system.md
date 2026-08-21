@@ -4,6 +4,7 @@
 - **Date:** 2026-08-20
 - **Deciders:** Daniel Eisner (ruling), Robby (analysis)
 - **Sequence:** plugin loader lands *after* the agent loop (see Sequencing)
+- **Parent:** ADR-0000 (foundational purpose and driving design)
 
 ## Context
 
