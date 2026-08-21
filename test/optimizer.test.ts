@@ -8,7 +8,7 @@ import { paramSetV1 } from "../src/optimizer/params.ts";
 import { ContextStore } from "../src/optimizer/store.ts";
 import { render } from "../src/optimizer/renderer.ts";
 import { solve } from "../src/optimizer/solver.ts";
-import { CacheModel } from "../src/optimizer/cache-model.ts";
+import { CacheModel, blockDigest } from "../src/optimizer/cache-model.ts";
 import { MockProvider, ScriptedProvider } from "../src/optimizer/providers.ts";
 import { AgentLoop, makeTurnItem } from "../src/optimizer/loop.ts";
 import { StandingItem, GoalItem, FileLensItem, NoticeItem } from "../src/optimizer/items.ts";
@@ -89,6 +89,26 @@ describe("solver", () => {
     const errs = snap.filter((i) => i.kind === "error");
     expect(errs.length).toBe(2);
     expect(new Set(errs.map((e) => e.id)).size).toBe(2);
+  });
+
+  test("placement digests track the rendered option bytes, not serialize() (second-pass finding 1)", () => {
+    // A lens purge MUST record the digest of the purge header it renders,
+    // not the digest of the full-range serialization it did NOT render.
+    const store = new ContextStore();
+    const big = "x".repeat(20000); // ~5000 tokens -> purge wins over FULL
+    const lensItem = new FileLensItem("lens:notes.txt", "notes.txt", big);
+    lensItem.ranges.push([0, big.length]); // expanded: options exist (empty lens offers none)
+    store.add(lensItem.toContextItem());
+    const result = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0 }, paramSetV1("test-model"), 1);
+    const lens = result.placements.find((p) => p.id === "lens:notes.txt");
+    expect(lens).toBeDefined();
+    expect(lens!.optionId).toBe("purge");
+    // digest must equal blockDigest of the PURGE text, and must NOT equal serialize()'s digest
+    const purgeOpt = store.snapshot().get("lens:notes.txt")!.options().find((o) => o.id === "purge")!;
+    expect(lens!.digest).toBe(blockDigest(purgeOpt.text));
+    expect(lens!.digest).not.toBe(blockDigest(store.snapshot().get("lens:notes.txt")!.serialize()));
+    // lastRender carries the same rendered digest
+    expect(store.snapshot().get("lens:notes.txt")!.lastRender?.digest).toBe(blockDigest(purgeOpt.text));
   });
 
   test("goals are always held (risk-free anchor)", () => {

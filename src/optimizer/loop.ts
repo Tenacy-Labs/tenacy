@@ -202,10 +202,13 @@ export function makeTurnItem(id: string, role: "user" | "model", text: string, t
         tokens: estTokens(line), purelyAdditive: true, text: line,
       }];
       if (item.summary !== undefined) {
+        // Price the full rendered block — [role] [summary] prefix included —
+        // not the bare summary text (second-pass review finding 2).
+        const summaryText = `[${role}] [summary] ${item.summary}`;
         opts.push({
           id: "summary", zones: ["foundational"], representation: "SUMMARY",
-          tokens: estTokens(item.summary), purelyAdditive: false,
-          text: `[${role}] [summary] ${item.summary}`,
+          tokens: estTokens(summaryText), purelyAdditive: false,
+          text: summaryText,
         });
       }
       return opts;
