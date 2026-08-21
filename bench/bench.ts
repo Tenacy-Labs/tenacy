@@ -45,26 +45,33 @@ async function main() {
 
   // Status from one worker to confirm the state is really resident
   await new Promise((res) => {
-    workers[0].onmessage = (e) => {
+    const w0 = workers[0];
+    if (!w0) throw new Error("no workers");
+    w0.onmessage = (e) => {
       if (e.data && e.data.cmd === "status") {
         console.log(`sample session state: ${e.data.varCount} vars (~${e.data.heapApproxKB}KB keys), ctx buffer ${e.data.ctxBufferKB}KB`);
         res(null);
       }
     };
-    workers[0].postMessage("status");
+    w0.postMessage("status");
   });
 
   // Turn dispatch: 200 round-trips across all 10 sessions
   const lat: number[] = [];
   for (let r = 0; r < 20; r++) {
-    for (let i = 0; i < N; i++) lat.push(await turn(workers[i], r));
+    for (let i = 0; i < N; i++) {
+      const w = workers[i];
+      if (w) lat.push(await turn(w, r));
+    }
   }
   lat.sort((a, b) => a - b);
-  const med = lat[Math.floor(lat.length / 2)];
-  console.log(`turn dispatch over ${N} warm sessions: median ${(med * 1000).toFixed(0)}µs, p95 ${(lat[Math.floor(lat.length * 0.95)] * 1000).toFixed(0)}µs (${lat.length} round-trips)`);
+  const med = lat[Math.floor(lat.length / 2)] ?? 0;
+  const p95v = lat[Math.floor(lat.length * 0.95)] ?? 0;
+  console.log(`turn dispatch over ${N} warm sessions: median ${(med * 1000).toFixed(0)}µs, p95 ${(p95v * 1000).toFixed(0)}µs (${lat.length} round-trips)`);
 
   const spawnSorted = [...spawnTimes].sort((a, b) => a - b);
-  console.log(`\nSUMMARY | sessions: ${N} | total rss: ${rssMB()} MB | marginal/session: ~${Math.round((rssMB() - 27) / N)} MB | spawn median: ${spawnSorted[Math.floor(N / 2)]}ms`);
+  const smed = spawnSorted[Math.floor(N / 2)] ?? 0;
+  console.log(`\nSUMMARY | sessions: ${N} | total rss: ${rssMB()} MB | marginal/session: ~${Math.round((rssMB() - 27) / N)} MB | spawn median: ${smed}ms`);
   process.exit(0);
 }
 

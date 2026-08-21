@@ -1,0 +1,199 @@
+/**
+ * Audit reports 2–5 — ADR-0003 §3 (early-traffic tier). Reports 1/6 in replay.ts.
+ * Reports 2–4 are calibration reports: reliability buckets by kind/age/version.
+ */
+import type { Corpus, CorpusCard } from "./corpus.ts";
+import { corpusCard } from "./corpus.ts";
+
+export interface ReliabilityBucket {
+  lo: number;
+  hi: number;
+  n: number;
+  observed: number;
+}
+
+export function reliability(
+  claims: Array<{ forecast: number; observed01: number }>,
+  bucketEdges: readonly number[] = [0, 0.25, 0.5, 0.75, 1.0001],
+): ReliabilityBucket[] {
+  const out: ReliabilityBucket[] = [];
+  for (let i = 0; i < bucketEdges.length - 1; i++) {
+    const lo = bucketEdges[i]!;
+    const hi = bucketEdges[i + 1]!;
+    const inBucket = claims.filter((c) => c.forecast >= lo && c.forecast < hi);
+    const n = inBucket.length;
+    out.push({
+      lo,
+      hi,
+      n,
+      observed: n > 0 ? inBucket.reduce((s, c) => s + c.observed01, 0) / n : 0,
+    });
+  }
+  return out;
+}
+
+export function kindFromId(id: string): string {
+  if (id.startsWith("lens:")) return "lens";
+  if (id.startsWith("goal")) return "goal";
+  if (id.startsWith("err")) return "error";
+  if (id.startsWith("turn-")) return "episodic";
+  if (id.startsWith("syn-")) {
+    // synthetic ids: syn-<session>-lens-<turn> vs syn-<session>-turn-<n>-epi<k>
+    if (id.includes("-lens-")) return "lens";
+    return "episodic";
+  }
+  return "standing";
+}
+
+// ── Report 2: value forecast ───────────────────────────────────────────────
+
+export interface ValueForecastReport {
+  report: "value-forecast";
+  card: CorpusCard;
+  byKind: Array<{ kind: string; n: number; mae: number; buckets: ReliabilityBucket[] }>;
+}
+
+export function reportValueForecast(corpus: Corpus): ValueForecastReport {
+  const byKind = new Map<string, Array<{ forecast: number; observed01: number; err: number }>>();
+  for (const it of corpus.items) {
+    const kind = kindFromId(it.id);
+    const observed01 = it.accepted ? 1 : 0;
+    const forecast = it.forecast.expectedValue > 0 ? 1 : 0;
+    const err = Math.abs(it.forecast.expectedValue - (observed01 ? 1 : 0));
+    const list = byKind.get(kind) ?? [];
+    list.push({ forecast, observed01, err });
+    byKind.set(kind, list);
+  }
+  return {
+    report: "value-forecast",
+    card: corpusCard(corpus),
+    byKind: Array.from(byKind.entries()).map(([kind, list]) => ({
+      kind,
+      n: list.length,
+      mae: list.reduce((s, x) => s + x.err, 0) / list.length,
+      buckets: reliability(list),
+    })),
+  };
+}
+
+// ── Report 3: hazard ───────────────────────────────────────────────────────
+
+export interface HazardReport {
+  report: "hazard";
+  card: CorpusCard;
+  byBasis: Array<{ basis: "prior" | "observed"; kind: string; n: number; observedInvalidationRate: number; buckets: ReliabilityBucket[] }>;
+}
+
+export function reportHazard(corpus: Corpus): HazardReport {
+  // Bucketed by basis AND kind (0003 §3): pooling kinds dilutes planted
+  // signals — the ADR's bucketing discipline is load-bearing, not cosmetic.
+  const groups = new Map<string, Array<{ forecast: number; observed01: number }>>();
+  for (const it of corpus.items) {
+    const key = it.forecast.basis + ":" + kindFromId(it.id);
+    const observed01 = it.decision === "drop" || it.decision === "purge" ? 1 : 0;
+    const list = groups.get(key) ?? [];
+    list.push({ forecast: it.forecast.hazard, observed01 });
+    groups.set(key, list);
+  }
+  return {
+    report: "hazard",
+    card: corpusCard(corpus),
+    byBasis: Array.from(groups.entries()).map(([basisAndKind, list]) => {
+      const sep = basisAndKind.split(":");
+      const basis = sep[0] ?? "prior";
+      const kind = sep[1] ?? "unknown";
+      return {
+        basis: basis as "prior" | "observed",
+        kind,
+        n: list.length,
+        observedInvalidationRate: list.reduce((s, x) => s + x.observed01, 0) / list.length,
+        buckets: reliability(list, [0, 0.1, 0.3, 0.6, 1.0001]),
+      };
+    }),
+  };
+}
+
+// ── Report 4: rot (research-grade skeleton) ────────────────────────────────
+
+export interface RotReport {
+  report: "rot";
+  card: CorpusCard;
+  note: string;
+  byLambdaDecile: Array<{ lo: number; hi: number; n: number; meanObservedLossiness: number }>;
+}
+
+export function reportRot(corpus: Corpus): RotReport {
+  const perTurn = corpus.turns.map((t) => ({
+    lam: t.layout.reduce((s, e) => s + e.tokens, 0),
+    lossy: 0,
+  }));
+  for (const it of corpus.items) {
+    if (it.decision === "summarize-intent" || it.decision === "drop") {
+      if (perTurn.length > 0) perTurn[0]!.lossy += 1; // v1: session-level attribution
+    }
+  }
+  const sorted = [...perTurn].sort((a, b) => a.lam - b.lam);
+  const deciles: RotReport["byLambdaDecile"] = [];
+  const per = Math.max(1, Math.ceil(sorted.length / 10));
+  for (let i = 0; i < sorted.length; i += per) {
+    const chunk = sorted.slice(i, i + per);
+    deciles.push({
+      lo: chunk[0]!.lam,
+      hi: chunk[chunk.length - 1]!.lam,
+      n: chunk.length,
+      meanObservedLossiness: chunk.reduce((s, c) => s + c.lossy, 0) / chunk.length,
+    });
+  }
+  return {
+    report: "rot",
+    card: corpusCard(corpus),
+    note: "research-grade skeleton (0003 §8 tier 3): outcome labels (redo rate, instruction misses) not yet journaled — wired for when they are",
+    byLambdaDecile: deciles,
+  };
+}
+
+// ── Report 5: decision (thrash) ────────────────────────────────────────────
+
+export interface DecisionReport {
+  report: "decision";
+  card: CorpusCard;
+  accepted: number;
+  rejectedNearMisses: number;
+  thrashCount: number;
+  thrashRate: number;
+  reversals: Array<{ id: string; fromTurn: number; toTurn: number; decisions: [string, string] }>;
+  meanMargin: number | null;
+}
+
+export function reportDecision(corpus: Corpus): DecisionReport {
+  const accepted = corpus.items.filter((i) => i.accepted);
+  const nearMisses = corpus.items.filter((i) => !i.accepted && i.marginVsHysteresis > -0.05);
+  const byId = new Map<string, typeof corpus.items>();
+  for (const it of corpus.items) {
+    const list = byId.get(it.id) ?? [];
+    list.push(it);
+    byId.set(it.id, list);
+  }
+  const reversals: DecisionReport["reversals"] = [];
+  for (const [id, list] of byId) {
+    const sorted = list.sort((a, b) => a.turn - b.turn);
+    for (let i = 0; i < sorted.length - 1; i++) {
+      const a = sorted[i]!;
+      const b = sorted[i + 1]!;
+      if (a.turn + 3 >= b.turn && a.accepted !== b.accepted) {
+        reversals.push({ id, fromTurn: a.turn, toTurn: b.turn, decisions: [a.decision, b.decision] });
+      }
+    }
+  }
+  const margins = corpus.items.map((i) => i.marginVsHysteresis);
+  return {
+    report: "decision",
+    card: corpusCard(corpus),
+    accepted: accepted.length,
+    rejectedNearMisses: nearMisses.length,
+    thrashCount: reversals.length,
+    thrashRate: corpus.items.length > 0 ? reversals.length / corpus.items.length : 0,
+    reversals,
+    meanMargin: margins.length > 0 ? margins.reduce((s, m) => s + m, 0) / margins.length : null,
+  };
+}

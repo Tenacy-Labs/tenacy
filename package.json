@@ -1,0 +1,13 @@
+{
+  "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.40",
+    "@ai-sdk/openai": "^4.0.45",
+    "@ai-sdk/openai-compatible": "^3.0.34",
+    "@ai-sdk/xai": "^4.0.42",
+    "ai": "^7.0.74"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "typescript": "5.9.2"
+  }
+}

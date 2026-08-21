@@ -13,6 +13,7 @@
  *   5. Non-serializable values become explicit tombstones, never silent loss.
  */
 import { appendFileSync, writeFileSync, renameSync, readFileSync, existsSync } from "node:fs";
+import type { CellCompiler, CellDiagnostic } from "./cell-compiler.ts";
 
 type Snap = { index: number; data: Record<string, any>; tombstones: string[] };
 
@@ -57,22 +58,65 @@ function isUnrestorable(v: any): boolean {
   return ctor !== undefined && ctor !== "Object" && ctor !== "Array";
 }
 
-export interface TurnResult { ok: boolean; value?: any; error?: string; turnMs: number }
+export interface TurnResult {
+  ok: boolean;
+  value?: any;
+  error?: string;
+  phase?: "typecheck" | "runtime";
+  diagnostics?: CellDiagnostic[];
+  typeCheckMs?: number;
+  transpileMs?: number;
+  turnMs: number;
+}
 
 export class Kernel {
   ns: Record<string, any> = {};
   cells: string[] = [];
   #known = new Set(Object.getOwnPropertyNames(globalThis));
+  #compiler?: CellCompiler;
 
-  constructor(public journalPath: string, public snapPath: string) {}
+  constructor(public journalPath: string, public snapPath: string, typeHistory: string[] = [], typecheck = true) {
+    if (typecheck) {
+      // Lazy by design: worker VMs receive coordinator-checked JavaScript and
+      // must not load a ~40MB TypeScript compiler replica.
+      const { CellCompiler: Compiler } = require("./cell-compiler.ts") as typeof import("./cell-compiler.ts");
+      this.#compiler = new Compiler(typeHistory);
+    }
+  }
 
   /** Execute a cell: journal (audit) -> execute -> snapshot (atomic commit). */
   eval(src: string): TurnResult {
     const t0 = performance.now();
-    appendFileSync(this.journalPath, JSON.stringify({ i: this.cells.length, ts: Date.now(), src }) + "\n");
+    if (!this.#compiler) throw new Error("raw eval disabled: send coordinator-checked JavaScript via evalCompiled()");
+    const compiled = this.#compiler.checkAndTranspile(src);
+    if (!compiled.ok || compiled.js === undefined) {
+      appendFileSync(this.journalPath, JSON.stringify({
+        i: this.cells.length, ts: Date.now(), src, accepted: false, phase: "typecheck",
+        diagnostics: compiled.diagnostics,
+      }) + "\n");
+      this.#writeSnapshot();
+      this.cells.push(src);
+      return {
+        ok: false,
+        phase: "typecheck",
+        error: compiled.diagnostics.map((d) => `TS${d.code}: ${d.message}`).join("\n"),
+        diagnostics: compiled.diagnostics,
+        typeCheckMs: compiled.typeCheckMs,
+        transpileMs: compiled.transpileMs,
+        turnMs: performance.now() - t0,
+      };
+    }
+    return this.evalCompiled(src, compiled.js, compiled.typeCheckMs, compiled.transpileMs);
+  }
+
+  /** Execute JavaScript that a trusted coordinator already compiled from src. */
+  evalCompiled(src: string, js: string, typeCheckMs = 0, transpileMs = 0): TurnResult {
+    const t0 = performance.now();
+    appendFileSync(this.journalPath, JSON.stringify({ i: this.cells.length, ts: Date.now(), src, accepted: true }) + "\n");
+    this.#compiler?.accept(src);   // worker-side kernels execute pre-checked JS; the coordinator gate tracks types
     let ok = true, value: any, error: string | undefined;
     try {
-      value = (0, eval)(src);
+      value = (0, eval)(js);
       for (const k of Object.getOwnPropertyNames(globalThis)) {
         if (!this.#known.has(k)) { this.#known.add(k); (this.ns as any)[k] = (globalThis as any)[k]; }
       }
@@ -87,7 +131,23 @@ export class Kernel {
     }
     this.#writeSnapshot();
     this.cells.push(src);
-    return { ok, value, error, turnMs: performance.now() - t0 };
+    // exactOptionalPropertyTypes: build the result so `error` is present only when falsy-handling demands it
+    const res: TurnResult = { ok, value, turnMs: performance.now() - t0 };
+    res.phase = "runtime";
+    res.typeCheckMs = typeCheckMs;
+    res.transpileMs = transpileMs;
+    if (error !== undefined) res.error = error;
+    return res;
+  }
+
+  /** Record a cell the coordinator's type gate rejected before execution. */
+  journalRejected(src: string, diagnostics: CellDiagnostic[]): void {
+    appendFileSync(this.journalPath, JSON.stringify({
+      i: this.cells.length, ts: Date.now(), src, accepted: false, phase: "typecheck",
+      diagnostics,
+    }) + "\n");
+    this.#writeSnapshot();
+    this.cells.push(src);
   }
 
   #writeSnapshot(): { ms: number; bytes: number } {
@@ -118,9 +178,15 @@ export class Kernel {
    */
   static recover(journalPath: string, snapPath: string): { k: Kernel; seeded: number; tombstoned: number; replayed: 0; ms: number } {
     const t0 = performance.now();
-    const k = new Kernel(journalPath, snapPath);
+    let entries: Array<{ src: string; accepted?: boolean }> = [];
     if (existsSync(journalPath)) {
-      k.cells = readFileSync(journalPath, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l).src);
+      entries = readFileSync(journalPath, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l));
+    }
+    // Rebuild static type history from source text only. No cell is executed.
+    const typeHistory = entries.filter((e) => e.accepted !== false).map((e) => e.src);
+    const k = new Kernel(journalPath, snapPath, typeHistory);
+    if (existsSync(journalPath)) {
+      k.cells = entries.map((e) => e.src);
     }
     let seeded = 0, tombstoned = 0;
     if (!existsSync(snapPath)) return { k, seeded, tombstoned, replayed: 0, ms: performance.now() - t0 };

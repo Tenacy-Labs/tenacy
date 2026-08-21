@@ -31,14 +31,14 @@ describe("Kernel: serialization fidelity", () =>  {
   test("primitives update live values, not binding-time captures (invariant 4)", () => {
     const k = new Kernel(join(dir, "t3.journal"), join(dir, "t3.snap"));
     k.eval("var betaCount = 0");
-    k.eval("function betaFib(n){ betaCount++; return n<2 ? n : betaFib(n-1)+betaFib(n-2) }");
+    k.eval("function betaFib(n: number): number { betaCount++; return n<2 ? n : betaFib(n-1)+betaFib(n-2) }");
     k.eval("var betaResults = [betaFib(15), betaFib(20)]");
     expect(k.ns.betaCount).toBeGreaterThan(1000);
   });
 
   test("Map/Set/Date/RegExp round-trip through snapshot and recover", () => {
     const k = new Kernel(join(dir, "t4.journal"), join(dir, "t4.snap"));
-    k.eval("var gammaM = new Map([['k','v'],['n',2]])");
+    k.eval("var gammaM: Map<string, string | number> = new Map<string, string | number>([['k','v'],['n',2]])");
     k.eval("var gammaS = new Set([1,2,3])");
     k.eval("var gammaD = new Date('2026-08-20T00:00:00Z')");
     k.eval("var gammaRe = /ab+c/gi");
@@ -53,7 +53,7 @@ describe("Kernel: serialization fidelity", () =>  {
 
   test("functions revive as callable from fn-source", () => {
     const k = new Kernel(join(dir, "t5.journal"), join(dir, "t5.snap"));
-    k.eval("function deltaDouble(x){ return x*2 }");
+    k.eval("function deltaDouble(x: number): number { return x*2 }");
     const rec = Kernel.recover(join(dir, "t5.journal"), join(dir, "t5.snap"));
     expect(typeof rec.k.ns.deltaDouble).toBe("function");
     expect((rec.k.ns.deltaDouble as (x: number) => number)(21)).toBe(42);
@@ -63,7 +63,7 @@ describe("Kernel: serialization fidelity", () =>  {
 
   test("cyclic and non-serializable values become tombstones; turns never crash", () => {
     const k = new Kernel(join(dir, "t6.journal"), join(dir, "t6.snap"));
-    const r1 = k.eval("var epsA = { name: 'root' }; var epsB = { parent: epsA }; epsA.child = epsB");
+    const r1 = k.eval("var epsA: any = { name: 'root' }; var epsB = { parent: epsA }; epsA.child = epsB");
     const r2 = k.eval("var epsBuf = new ArrayBuffer(8)");
     const r3 = k.eval("var epsN = 41 + 1");
     expect(r1.ok && r2.ok && r3.ok).toBe(true);
