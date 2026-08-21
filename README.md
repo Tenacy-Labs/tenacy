@@ -1,5 +1,20 @@
 # agent-kernel
 
+The harness **and agent-authored cells are TypeScript**. Bun strips types when
+loading `.ts` modules but does not type-check and does not transpile strings
+passed to `eval`. Every cell therefore passes through an in-process TypeScript
+gate before execution:
+
+```
+TS source → strict static diagnostics → transpile → JSC eval → snapshot
+```
+
+Type errors return structured, cell-relative diagnostics and execute no code.
+Successful source remains in a cumulative virtual TypeScript program, so types
+survive between cells. Recovery rebuilds that static program from audit source
+without replaying any cell. Repository CI separately runs `tsc --noEmit` before
+the test suite.
+
 A persistent TypeScript/JavaScript kernel for LLM agents. The agent executes code in a
 long-lived kernel whose namespace persists across turns — trading context-window tokens
 for addressable, queryable state. Concepts from [prime-agent](https://github.com/PrimeIntellectual-ai/prime-agent)'s

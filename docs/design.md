@@ -103,6 +103,30 @@ These are enforced in code and tested, not aspirations:
 
 ## Roadmap
 
+### TypeScript cell gate (implemented)
+
+Bun executes TypeScript modules by stripping types; it has no type-checking
+mode, and `eval("const x: number = 1")` reaches JavaScriptCore unchanged and
+throws. Agent cells therefore use `src/cell-compiler.ts`, a persistent
+in-memory TypeScript LanguageService:
+
+1. append the candidate to the successful source history in a virtual script;
+2. run strict syntactic + semantic diagnostics;
+3. reject before execution on any error (structured TS code/message/line/col);
+4. transpile only the current cell to JavaScript in-process;
+5. execute generated JS, while journaling the original TS only;
+6. on recovery, rebuild static history from accepted journal source without
+   executing it (never-replay remains absolute).
+
+Measured on Bun 1.3.14 / M4 Max over 50 accumulating cells: first check 131ms,
+first transpile 6ms; warm check median 50.8ms / p95 57.0ms; warm transpile
+median 0.47ms. This is material versus raw eval but negligible beside a model
+call, and it supplies the error-correction signal an RLM needs.
+
+`tsc` is the type/static-analysis gate. ESLint is deliberately not in the
+inline critical path: it primarily adds style and policy checks, not stronger
+type correctness. It can be added later as an asynchronous policy pass.
+
 - [ ] Agent loop: model calls, tool-call parsing, turn dispatch into the kernel
 - [ ] `ops.*` host surface: `ops.rlm_spawn`, `ops.goal_set`, `ops.memory_search` —
       credentials and providers stay host-side (prime-agent's trust boundary)
