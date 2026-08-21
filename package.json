@@ -4,10 +4,14 @@
     "@ai-sdk/openai": "^4.0.45",
     "@ai-sdk/openai-compatible": "^3.0.34",
     "@ai-sdk/xai": "^4.0.42",
-    "ai": "^7.0.74"
+    "@opentui/core": "^0.5.6",
+    "@opentui/react": "^0.5.6",
+    "ai": "^7.0.74",
+    "react": "^19"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",
+    "@types/react": "^19",
     "typescript": "5.9.2"
   }
 }
