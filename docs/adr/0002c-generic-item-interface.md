@@ -4,6 +4,10 @@
 - **Date:** 2026-08-21
 - **Deciders:** Daniel Eisner (rulings), Robby (analysis)
 - **Parent:** ADR-0002b · **Siblings:** ADR-0002, ADR-0002a
+- **Extended by:** ADR-0002d (the lens family populates the instance
+  space — the directory lens is the subscribable instance, the namespace
+  lens the in-process-observable one; the rate-limited API stress test
+  remains unbuilt)
 - **Input:** this session — multi-horizon worked examples (current-time
   component vs. file lens on an aged mtime) and the ruling that they are
   **example instances of a generic interface to be designed**, not the

@@ -4,6 +4,9 @@
 - **Date:** 2026-08-21
 - **Deciders:** Daniel Eisner (rulings), Robby (analysis)
 - **Parent:** ADR-0000 · **Relates to:** ADR-0001
+- **Extended by:** ADR-0002d (the lens family — kernel namespace,
+  code-on-disk, directory — and live views; §3's "future lenses" partly
+  specified there)
 - **Input:** prime-agent loop study (packages/agent/src/agent-loop.ts, read 2026-08-21)
 
 ## Context
