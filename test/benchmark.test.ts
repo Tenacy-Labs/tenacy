@@ -148,7 +148,13 @@ describe("benchmark harness", () => {
     const r = await runTask(benchmarkTasks[0]!);
     expect(r.passed).toBe(true);
     const vd = valueDensity(r.outcomes);
+    // mean must be ≥ 0 AND positive for a task that actually passed with
+    // nonzero rendered tokens — bare ≥0 would pass even if density were
+    // structurally pinned to zero (review finding: non-discriminating).
     expect(vd.mean).toBeGreaterThanOrEqual(0);
+    expect(vd.mean).toBeGreaterThan(0);
+    // per-turn array length tracks outcomes — dense, not decorative
+    expect(vd.perTurn.length).toBe(r.outcomes.length);
   });
 
   test("ledger replays: cache-belief report and cost-vs-baselines report from file", async () => {

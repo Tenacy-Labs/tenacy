@@ -4,6 +4,10 @@
  */
 import { describe, test, expect } from "bun:test";
 import { loadCorpus, corpusCard } from "../src/optimizer/corpus.ts";
+import { loadHarnessConfig } from "../src/optimizer/harness-config.ts";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { reportValueForecast, reportHazard, reportRot, reportDecision } from "../src/optimizer/reports.ts";
 import { reportCacheBelief, reportCostVsBaselines } from "../src/optimizer/replay.ts";
 import { refitMuAlpha } from "../src/optimizer/refit.ts";
@@ -14,9 +18,6 @@ import { ScriptedProvider } from "../src/optimizer/providers.ts";
 import { StandingItem } from "../src/optimizer/items.ts";
 import { Ledger } from "../src/optimizer/ledger.ts";
 import { availableProviders, REGISTRY } from "../src/optimizer/registry.ts";
-import { mkdtempSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 const FILES_200 = Array.from({ length: 200 }, (_, i) => `line ${i + 1} — payload text ${i}`).join("\n");
 
@@ -143,3 +144,39 @@ function buildProviderMissingKey(): void {
   const key = process.env.OPENAI_API_KEY ?? "";
   if (key === "") throw new Error("OPENAI_API_KEY not set — openai is bring-your-own-key");
 }
+
+// ── review findings: config guard + credential tier blanks ─────────────
+describe("harness config guard (review B2)", () => {
+  const tmp = mkdtempSync(join(tmpdir(), "ak-cfg-"));
+  const cfgPath = (obj: unknown) => {
+    const p = join(tmp, `c${Math.random().toString(36).slice(2)}.json`);
+    writeFileSync(p, JSON.stringify(obj));
+    return p;
+  };
+
+  test("providers:null rejected; array rejected; well-formed accepted", () => {
+    // null passes typeof "object" — the bug the security reviewer's probe caught
+    expect(loadHarnessConfig(cfgPath({ version: 1, providers: null }))).toBeNull();
+    expect(loadHarnessConfig(cfgPath({ version: 1, providers: [] }))).toBeNull();
+    const ok = loadHarnessConfig(cfgPath({ version: 1, providers: { zai: { apiKey: "k", model: "m" } } }));
+    expect(ok?.providers.zai?.model).toBe("m");
+  });
+
+  test("blank model in config falls back to registry default", async () => {
+    // model "" must not win over defaultModel (blank-tier fix).
+    // Point the registry at a tmp config via AGENT_KERNEL_CONFIG so the
+    // real agents/config.json cannot mask the behavior.
+    const { buildProvider } = await import("../src/optimizer/registry.ts");
+    const p = join(tmp, "blank-model.json");
+    writeFileSync(p, JSON.stringify({ version: 1, providers: { zai: { apiKey: "k", model: "" } } }));
+    const prev = process.env.AGENT_KERNEL_CONFIG;
+    process.env.AGENT_KERNEL_CONFIG = p;
+    try {
+      const provider = buildProvider("zai", { apiKey: "explicit" }); // model from cfg is "" -> default
+      expect(provider.modelId).toBe(REGISTRY.zai!.defaultModel);
+    } finally {
+      if (prev === undefined) delete process.env.AGENT_KERNEL_CONFIG;
+      else process.env.AGENT_KERNEL_CONFIG = prev;
+    }
+  });
+});

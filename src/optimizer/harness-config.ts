@@ -28,7 +28,13 @@ export function loadHarnessConfig(path?: string | undefined): HarnessConfig | nu
   try {
     const raw = require("node:fs").readFileSync(p, "utf8");
     const parsed = JSON.parse(raw) as HarnessConfig;
-    if (parsed.providers === undefined || typeof parsed.providers !== "object") return null;
+    // Guard honestly: null passes typeof "object" (review finding B2) and
+    // arrays are not provider maps. Both malformed shapes -> null, the
+    // same honest answer as unreadable files.
+    if (
+      parsed?.providers === undefined || parsed?.providers === null ||
+      Array.isArray(parsed.providers) || typeof parsed.providers !== "object"
+    ) return null;
     return parsed;
   } catch {
     return null;

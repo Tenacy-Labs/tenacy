@@ -183,15 +183,21 @@ export function buildProvider(
   // credential resolution: explicit > env > harness config file (gitignored)
   const cfg = loadHarnessConfig();
   const cfgProvider = cfg?.providers[name];
+  // Empty-string env vars must not mask the config file (review finding B2):
+  // "" is defined, so ?? keeps it; treat blank as unset at every tier.
+  const envKey = process.env[spec.envKey];
+  const optKey = opts.apiKey;
   const apiKey =
-    opts.apiKey ??
-    process.env[spec.envKey] ??
+    (optKey !== undefined && optKey !== "" ? optKey : undefined) ??
+    (envKey !== undefined && envKey !== "" ? envKey : undefined) ??
     cfgProvider?.apiKey ??
     "";
   if (apiKey === "") {
     throw new Error(`${spec.envKey} not set and no harness config entry for "${name}" — bring-your-own-key`);
   }
-  const model = opts.model ?? cfgProvider?.model ?? spec.defaultModel;
+  const model = (opts.model !== undefined && opts.model !== "" ? opts.model : undefined)
+    ?? (cfgProvider?.model !== undefined && cfgProvider?.model !== "" ? cfgProvider.model : undefined)
+    ?? spec.defaultModel;
   const baseUrl = opts.baseUrl ?? cfgProvider?.baseUrl;
   return providerFromWire(model, spec.build({ apiKey, model, baseUrl }));
 }
