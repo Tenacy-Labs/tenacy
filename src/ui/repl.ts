@@ -1,18 +1,31 @@
 /**
- * Terminal REPL UI — basic user interface for the agentic loop.
+ * Terminal REPL UI — the human surface of the context optimizer.
  *
- * Commands:
- *   /status            — turn, tokens, cache belief/hit, divergence
- *   /context [zone]    — current render: zones, items, tokens
- *   /why <id>          — decision-ledger trace for an item
- *   /inspect [filter]  — store contents (rendered/invisible/all)
- *   /search <regex>    — ctx.search over the store
- *   /goal <text>       — goals.set
- *   /file <path> <a-b> — files.expand
- *   /release <path> <a-b> — files.release
- *   /promote <id> / /demote <id> — ctx value bumps
- *   /watch <id> <mode> — ctx.watch
+ *   bun src/ui/repl.ts [provider] [model]
+ *
+ * Boots a LIVE provider from harness config when a name is given (or when
+ * harness config has keys); falls back to the mock provider for offline
+ * demo. Live models are wrapped with intent parsing — ```intents fences in
+ * replies are stripped from visible text and executed at the coordinator
+ * (proposer/applier split).
+ *
+ * Human commands (local, no model call):
+ *   /status              — turn, tokens, cache belief/hit, divergence
+ *   /context [zone]      — current render layout (zone filter optional)
+ *   /why <id>            — decision-ledger trace for an item
+ *   /inspect [filter]    — store contents (rendered/invisible/all)
+ *   /search <regex>      — ctx.search over the store
+ *   /goal <text>         — declare a goal (id auto-generated)
+ *   /file <path> <a-b>   — pull a real file's line range into a lens
+ *   /release <path> <a-b>— drop a lens range
+ *   /promote|/demote <id>— value bumps
+ *   /watch <id> <mode>   — live/polled/frozen
+ *   /provider [name] [model] — swap provider mid-session (re-pins ParamSet, A2)
+ *   /ledger              — ledger path + flushed line count
  *   /quit
+ *
+ * Anything else is a user turn: rendered zones -> live model -> reply +
+ * any intents the model proposed (shown as [op] ok/FAIL lines).
  */
 import { AgentLoop } from "../optimizer/loop.ts";
 import { MockProvider } from "../optimizer/providers.ts";
@@ -21,33 +34,101 @@ import { paramSetV1 } from "../optimizer/params.ts";
 import { Ledger } from "../optimizer/ledger.ts";
 import { StandingItem } from "../optimizer/items.ts";
 import { executeIntent } from "../optimizer/intents.ts";
+import { INTENT_PROTOCOL_DOC, withIntentParsing } from "../optimizer/live.ts";
 import { ZONE_ORDER } from "../optimizer/types.ts";
+import type { Provider, ModelResponse } from "../optimizer/providers.ts";
+import type { Block } from "../optimizer/types.ts";
+import type { SteeringIntent } from "../optimizer/intents.ts";
+import { readFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+// ── boot: live provider when requested or when harness config has keys ──
+const providerName = process.argv[2];
+let inner: Provider;
+let bootedLive = false;
+if (providerName !== undefined) {
+  inner = buildProvider(providerName, process.argv[3] !== undefined ? { model: process.argv[3] } : {});
+  bootedLive = true;
+} else {
+  const avail = availableProviders();
+  if (avail.length > 0) {
+    inner = buildProvider(avail[0]!);
+    bootedLive = true;
+  } else {
+    inner = new MockProvider();
+  }
+}
+const model = withIntentParsing(inner.modelId, inner);
+
 const dir = mkdtempSync(join(tmpdir(), "agent-kernel-"));
-const ledger = new Ledger(join(dir, "ledger.jsonl"));
-const agent = new AgentLoop(new MockProvider(), paramSetV1("mock-1"), ledger);
+const ledgerPath = join(dir, "ledger.jsonl");
+const ledger = new Ledger(ledgerPath);
+const agent = new AgentLoop(model, paramSetV1(inner.modelId), ledger);
 
 agent.store.add(new StandingItem("identity", "identity",
-  "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator.").toContextItem());
+  "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator. " + INTENT_PROTOCOL_DOC,
+).toContextItem());
 agent.store.add(new StandingItem("directive", "directive",
   "Work in typed cells against the namespace. Use files./ctx./goals. tools to operate your context. Be precise.").toContextItem());
 
-console.log("agent-kernel REPL — mock provider, /help for commands, /quit to exit");
-process.on("SIGINT", () => { console.log("\\n(interrupt)"); });
+// Real file reads for lenses (expand fails honestly on unreadable targets)
+agent.fileContent = (target: string): string => {
+  try {
+    return readFileSync(target, "utf8");
+  } catch {
+    return "";
+  }
+};
+
+let lastOutcome: Awaited<ReturnType<AgentLoop["run"]>> | null = null;
+
+console.log("agent-kernel REPL");
+console.log(`provider: ${bootedLive ? inner.modelId : "mock (no live config)"} | ledger: ${ledgerPath}`);
+console.log("type a message, or /help for commands. /quit exits.");
+if (!bootedLive) console.log("(mock provider — /provider <name> to attach a live one)");
+
+process.on("SIGINT", () => {
+  console.log("\n(interrupt) — /quit to exit");
+});
+
 process.stdin.setEncoding("utf8");
 
+// Input queue: lines arriving while a turn is busy are QUEUED, never
+// dropped. The pump runs one line at a time; /quit drains the queue first.
+const queue: string[] = [];
+let pumping = false;
 let buf = "";
 process.stdin.on("data", (d: string) => {
   buf += d;
   const lines = buf.split("\n");
   buf = lines.pop() ?? "";
-  for (const line of lines) {
-    void handle(line.trim());
-  }
+  for (const line of lines) { queue.push(line.trim()); }
+  void pump();
 });
+async function pump(): Promise<void> {
+  if (pumping) return;
+  pumping = true;
+  try {
+    while (queue.length > 0) {
+      const line = queue.shift()!;
+      if (line === "/quit") {
+        await flushAndExit();
+        return;
+      }
+      await handle(line);
+    }
+  } finally {
+    pumping = false;
+  }
+}
+
+async function flushAndExit(): Promise<void> {
+  queue.length = 0; // drop queued commands; the human said quit
+  await ledger.drain();
+  process.exit(0);
+}
 
 async function handle(line: string): Promise<void> {
   if (line === "") return;
@@ -55,11 +136,27 @@ async function handle(line: string): Promise<void> {
     if (line.startsWith("/")) {
       await command(line);
     } else {
-      const out = await agent.run(line);
-      console.log(renderTurn(out.modelText, out.renderTokens, out.cacheLedger.expected.hitTokens));
+      await turn(line);
     }
   } catch (e) {
     console.error("error:", String(e));
+  }
+}
+
+let busy = false;
+async function turn(input: string): Promise<void> {
+  if (busy) { console.log("(busy — wait for the current turn)"); return; }
+  busy = true;
+  const t0 = Date.now();
+  try {
+    const out = await agent.run(input);
+    lastOutcome = out;
+    const secs = ((Date.now() - t0) / 1000).toFixed(1);
+    console.log("\n" + out.modelText);
+    for (const tr of out.toolResults) console.log(`  [${tr.op}] ${tr.ok ? "ok" : "FAIL"}: ${tr.result}`);
+    console.log(`  (${out.renderTokens}t rendered, ${out.cacheLedger.expected.hitTokens}t expected cache-hit, ${secs}s)`);
+  } finally {
+    busy = false;
   }
 }
 
@@ -68,44 +165,41 @@ async function command(line: string): Promise<void> {
   const cmd = parts[0];
   switch (cmd) {
     case "/help":
-      console.log("commands: /status /context /why <id> /inspect /search <re> /goal <text> /file <p> <a-b> /release <p> <a-b> /promote <id> /demote <id> /watch <id> <mode> /quit");
+      console.log("local: /status /context [zone] /why <id> /inspect [filter] /search <re> /goal <text> /file <path> <a-b> /release <path> <a-b> /promote <id> /demote <id> /watch <id> <mode> /provider [name] [model] /ledger /quit");
       break;
     case "/status": {
+      if (lastOutcome === null) { console.log("no turns yet"); break; }
       const out = lastOutcome;
-      if (out === null) { console.log("no turns yet"); break; }
       console.log(`turn ${out.turn} | render ${out.renderTokens}t | expected cache-hit ${out.cacheExpectedHit}t | divergence ${out.cacheLedger.divergence}`);
       break;
     }
     case "/context": {
+      if (lastOutcome === null) { console.log("no turns yet"); break; }
       const zone = parts[1] as (typeof ZONE_ORDER)[number] | undefined;
-      for (const p of lastOutcome?.placements ?? []) {
+      for (const p of lastOutcome.placements) {
         if (zone !== undefined && p.zone !== zone) continue;
         console.log(`${String(p.position).padStart(3)} ${p.zone.padEnd(13)} ${p.representation.padEnd(12)} ${p.tokens}t  ${p.id}`);
       }
       break;
     }
-    case "/why":
-    case "/inspect":
-    case "/search":
-    case "/goal":
-    case "/file":
-    case "/release":
-    case "/promote":
-    case "/demote":
-    case "/watch": {
-      const r = await runIntent(line);
-      console.log(r.result);
+    case "/ledger": {
+      try {
+        const n = readFileSync(ledgerPath, "utf8").split("\n").filter((l) => l !== "").length;
+        console.log(`ledger: ${ledgerPath} (${n} lines flushed)`);
+      } catch {
+        console.log(`ledger: ${ledgerPath} (not yet flushed)`);
+      }
       break;
     }
     case "/provider": {
-      const name = parts.slice(1).join(" ").trim();
-      if (name === "") {
+      const name = parts[1];
+      if (name === undefined) {
         console.log(`current: ${agent.providerId}  |  available (keys present): ${availableProviders().join(", ") || "none"}`);
         break;
       }
       try {
-        const p = buildProvider(name);
-        agent.swapProvider(p, paramSetV1(p.modelId));
+        const p = buildProvider(name, parts[2] !== undefined ? { model: parts[2] } : {});
+        agent.swapProvider(withIntentParsing(p.modelId, p), paramSetV1(p.modelId));
         console.log(`provider -> ${name} (${p.modelId})`);
       } catch (e) {
         console.log(String(e));
@@ -113,62 +207,39 @@ async function command(line: string): Promise<void> {
       break;
     }
     case "/quit":
-      await ledger.drain();
-      process.exit(0);
+      // Handled at the queue head (flushAndExit) — reached only if the
+      // queue pump is bypassed; drain defensively.
+      await flushAndExit();
       break;
-    default:
-      console.log(`unknown command: ${cmd} (try /help)`);
+    default: {
+      // /why /inspect /search /goal /file /release /promote /demote /watch
+      const intent = parseLocalIntent(parts);
+      if (intent === null) { console.log(`unknown command: ${cmd} (try /help)`); break; }
+      const r = executeIntent(intent, agent.store, ledger);
+      console.log(r.result);
+      break;
+    }
   }
 }
 
-let lastOutcome: Awaited<ReturnType<AgentLoop["run"]>> | null = null;
-agentHooks();
-
-function agentHooks(): void {
-  // patch run to capture lastOutcome
-  const origRun = agent.run.bind(agent);
-  agent.run = async (msg: string) => {
-    const out = await origRun(msg);
-    lastOutcome = out;
-    for (const tr of out.toolResults) console.log(`  [${tr.op}] ${tr.ok ? "ok" : "FAIL"}: ${tr.result}`);
-    return out;
-  };
-}
-
-async function runIntent(line: string): Promise<{ op: string; ok: boolean; result: string }> {
-  const parts = line.split(/\s+/);
+function parseLocalIntent(parts: string[]): SteeringIntent | null {
   const cmd = parts[0]!.slice(1); // strip slash
-  let intent: import("../optimizer/intents.ts").SteeringIntent | null = null;
   switch (cmd) {
-    case "why": intent = { op: "ctx.why", id: parts[1] ?? "" }; break;
-    case "inspect": intent = { op: "ctx.inspect", filter: "all" }; break;
-    case "search": intent = { op: "ctx.search", pattern: parts.slice(1).join(" ") }; break;
-    case "goal": intent = { op: "goals.set", id: `goal-${Date.now()}`, text: parts.slice(1).join(" ") }; break;
+    case "why": return { op: "ctx.why", id: parts[1] ?? "" };
+    case "inspect": return { op: "ctx.inspect", filter: (parts[1] as "rendered" | "invisible" | "all") ?? "all" };
+    case "search": return { op: "ctx.search", pattern: parts.slice(1).join(" ") };
+    case "goal": return { op: "goals.set", id: `goal-${Date.now()}`, text: parts.slice(1).join(" ") };
     case "file": {
-      const m = (parts[2] ?? "1-40").split("-").map(Number) as [number, number];
-      intent = { op: "files.expand", target: parts[1] ?? "", from: m[0] ?? 1, to: m[1] ?? 40 };
-      break;
+      const m = (parts[2] ?? "1-40").split("-").map(Number);
+      return { op: "files.expand", target: parts[1] ?? "", from: m[0] ?? 1, to: m[1] ?? 40 };
     }
     case "release": {
-      const m = (parts[2] ?? "1-1").split("-").map(Number) as [number, number];
-      intent = { op: "files.release", target: parts[1] ?? "", from: m[0] ?? 1, to: m[1] ?? 1 };
-      break;
+      const m = (parts[2] ?? "1-1").split("-").map(Number);
+      return { op: "files.release", target: parts[1] ?? "", from: m[0] ?? 1, to: m[1] ?? 1 };
     }
-    case "promote": intent = { op: "ctx.promote", id: parts[1] ?? "" }; break;
-    case "demote": intent = { op: "ctx.demote", id: parts[1] ?? "" }; break;
-    case "watch": {
-      const mode = (parts[2] ?? "polled") as "live" | "polled" | "frozen";
-      intent = { op: "ctx.watch", id: parts[1] ?? "", mode };
-      break;
-    }
+    case "promote": return { op: "ctx.promote", id: parts[1] ?? "" };
+    case "demote": return { op: "ctx.demote", id: parts[1] ?? "" };
+    case "watch": return { op: "ctx.watch", id: parts[1] ?? "", mode: (parts[2] ?? "polled") as "live" | "polled" | "frozen" };
+    default: return null;
   }
-  if (intent === null) return { op: cmd, ok: false, result: "unparsed" };
-  const r = executeIntent(intent, agent.store, ledger);
-  if (!r.ok) return r;
-  await agent.run("");
-  return r;
-}
-
-function renderTurn(text: string, tokens: number, hit: number): string {
-  return "\n" + text + "\n  (" + tokens + "t rendered, " + hit + "t expected cache-hit)\n";
 }
