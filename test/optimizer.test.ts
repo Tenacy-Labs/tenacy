@@ -40,6 +40,36 @@ describe("solver", () => {
     expect(epPos).toBeGreaterThan(idPos);
   });
 
+  test("budget relief drops worst density, not lowest utility (ADR-0005 §7)", () => {
+    // Discriminating setup: the fat item carries a value bump, so its
+    // ABSOLUTE utility exceeds the tiny one's — the old rule (lowest
+    // utility) would drop the tiny item first and then still be over
+    // budget. The ruled density rule drops the fat item once and fits.
+    const store = freshStore();
+    const fat = makeTurnItem("fat", "user", "lorem ipsum ".repeat(80), 1);
+    fat.valueBump = { amount: 6, untilTurn: 10 };
+    const tiny = makeTurnItem("tiny", "user", "lorem ipsum", 1);
+    store.add(fat);
+    store.add(tiny);
+    const fresh = { rendered: new Map(), totalTokens: 0 };
+    // Phase 0: unconstrained render to learn the natural layout.
+    const r0 = solve(store.snapshot(), fresh, ps, 1);
+    const fatTokens = r0.placements.find((p) => p.id === "fat")!.tokens;
+    // Budget that fits exactly when fat is dropped, and cannot fit while
+    // fat is held (dropping tiny alone leaves fat in context).
+    const tight = { ...ps, budgetLambda: r0.totalTokens - fatTokens };
+    const r = solve(store.snapshot(), fresh, tight, 1);
+    const droppedIds = r.itemLedgers.filter((l) => l.decision === "drop").map((l) => l.id);
+    expect(droppedIds).toContain("fat");
+    expect(droppedIds).not.toContain("tiny");
+    expect(r.totalTokens).toBeLessThanOrEqual(tight.budgetLambda);
+    // Sanity: fat's absolute utility really did exceed tiny's (else this
+    // test would pass under the old rule too).
+    const fatLedger = r0.itemLedgers.find((l) => l.id === "fat")!;
+    const tinyLedger = r0.itemLedgers.find((l) => l.id === "tiny")!;
+    expect(fatLedger.utility.total).toBeGreaterThan(tinyLedger.utility.total);
+  });
+
   test("goals are always held (risk-free anchor)", () => {
     const store = new ContextStore();
     store.add(new GoalItem("g", "survive budget pressure", undefined, "standing").toContextItem());

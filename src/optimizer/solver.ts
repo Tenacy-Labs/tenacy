@@ -115,7 +115,7 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   // ── 3. Budget: drop lowest-utility droppable items until within Λ ─────────
   let totalTokens = chosen.reduce((s, c) => s + c.option.tokens, 0);
   while (totalTokens > ps.budgetLambda) {
-    const idx = lowestUtilityDroppable(chosen);
+    const idx = worstDensityDroppable(chosen);
     if (idx < 0) break; // only always-held remain
     const [cut] = chosen.splice(idx, 1);
     totalTokens -= cut!.option.tokens;
@@ -158,14 +158,21 @@ function density(c: { item: ContextItem; option: RenderOption }): number {
   return p.tokens > 0 ? p.tokens / Math.max(1, c.option.tokens) : 1;
 }
 
-function lowestUtilityDroppable(chosen: { item: ContextItem; option: RenderOption; utility: number }[]): number {
-  let bestIdx = -1, bestU = Infinity;
+/**
+ * Budget relief (ADR-0005 §7): drop the droppable item with the worst
+ * utility-per-token (density), not the lowest absolute utility. Equal
+ * utility, 5 vs 500 tokens: the 500-token item frees 100x the capacity
+ * for the same utility loss. ALWAYS_HELD kinds are exempt.
+ */
+function worstDensityDroppable(chosen: { item: ContextItem; option: RenderOption; utility: number }[]): number {
+  let worstIdx = -1, worstD = Infinity;
   for (let i = 0; i < chosen.length; i++) {
     const c = chosen[i]!;
     if (ALWAYS_HELD.has(c.item.kind)) continue;
-    if (c.utility < bestU) { bestU = c.utility; bestIdx = i; }
+    const density = c.utility / Math.max(1, c.option.tokens);
+    if (density < worstD) { worstD = density; worstIdx = i; }
   }
-  return bestIdx;
+  return worstIdx;
 }
 
 /** Transaction cost: additive append is cheap; a rewrite re-prices the suffix (0004 §5–6). */
