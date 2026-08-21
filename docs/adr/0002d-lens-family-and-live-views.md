@@ -124,6 +124,48 @@ sequence** — a changed view reads as one evolving fact, not a new fact.
    turn N`. Explicit absence of change is information; silence is
    ambiguous.
 
+### 7. The update toggle (model-authored relevance signal)
+
+Ruling: each lens carries a toggle the model controls — **does it want
+change updates, or does it not care.** Three states, one declarative:
+
+- **live** — push updates flow (§5); watcher active; tail notices on.
+- **polled** — default: validate on use, no watcher; updates only when
+  the model touches the lens.
+- **frozen** (mute) — the model declares it does not care.
+
+**Mute is a state transition, not silence:**
+
+- The watcher is **released** (resource reclaimed; the watch capability
+  retires with it).
+- Tail change-notices and unchanged-stamps cease for this lens.
+- The rendered artifact becomes a **digest-stamped snapshot at
+  mute-time** — stable content, eligible for promotion toward the cached
+  prefix. Mute converts a volatile asset into a stable one: the toggle is
+  a placement input, not only a value input.
+- Explicit re-expand of a muted range is **implicit re-interest**: reset
+  Δt, revalidate that range (its mismatch renders as a delta since the
+  mute turn).
+
+**Toggle flips are declarative journal signals.** The journal already
+records behavioral signals (touches, re-references — ADR-0002b §2);
+toggle flips add the declarative class: high-confidence, low-frequency
+intent. Feeding the value utility:
+
+- **Model-authored mute** bumps effective decay (α) — stronger than
+  non-use, because non-use is ambiguous (may be mid-task) while mute is
+  a declaration.
+- **Unmute** resets Δt and re-confirms μ₀ — a re-declared interest.
+- Portfolio reading: mute is the model's shadow vote for liquidation;
+  the optimizer still prices the position (option value persists after
+  declaration).
+
+**Flip authorship is journaled.** The optimizer's churn demotion (§5)
+lands in the same polled state, but an optimizer-forced flip must **not**
+feed value decay — demote → decay → evict would spiral away lenses the
+model still wants. Only model-authored flips are value signals;
+optimizer flips are cost decisions.
+
 ## Consequences
 
 - ADR-0002c's instance space gains two real residents (namespace:
@@ -135,6 +177,9 @@ sequence** — a changed view reads as one evolving fact, not a new fact.
   watcher backend — no second event system.
 - Render purity is preserved: all asynchrony mutates the store at safe
   points; render remains a pure function of the store.
+- The toggle state (§7) participates in both placement and value: mute
+  promotes the snapshot toward the cached prefix; model-authored flips
+  feed α and Δt; optimizer-authored flips never do.
 
 ## Risks / research areas
 
