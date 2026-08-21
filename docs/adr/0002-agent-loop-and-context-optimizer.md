@@ -8,7 +8,8 @@
   code-on-disk, directory — and live views; §3's "future lenses" partly
   specified there); ADR-0002e (the InvalidationLedger of §4 subsumed
   into the decision ledger with per-step forecast/computation/cache
-  detail)
+  detail); ADR-0002g (§6's kernel-as-tool completes the RLM symmetry:
+  ctx.* is the agent operating its own context)
 - **Input:** prime-agent loop study (packages/agent/src/agent-loop.ts, read 2026-08-21)
 
 ## Context
