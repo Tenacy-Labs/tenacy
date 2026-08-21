@@ -149,6 +149,16 @@ export class AgentLoop {
     return this.goalRegistry.get(id);
   }
   private goalRegistry = new Map<string, GoalItem>();
+
+  /** Swap the live provider mid-session (REPL /provider). Re-pins the param set per A2. */
+  swapProvider(provider: Provider, ps: ParamSet): void {
+    this.provider = provider;
+    this.ps = ps;
+  }
+
+  get providerId(): string {
+    return this.provider.modelId;
+  }
   registerGoal(g: GoalItem): void {
     this.goalRegistry.set(g.id, g);
     g.lastTouchTurn = this.store.turn;

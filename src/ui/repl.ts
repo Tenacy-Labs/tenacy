@@ -16,6 +16,7 @@
  */
 import { AgentLoop } from "../optimizer/loop.ts";
 import { MockProvider } from "../optimizer/providers.ts";
+import { buildProvider, availableProviders } from "../optimizer/registry.ts";
 import { paramSetV1 } from "../optimizer/params.ts";
 import { Ledger } from "../optimizer/ledger.ts";
 import { StandingItem } from "../optimizer/items.ts";
@@ -39,12 +40,12 @@ process.on("SIGINT", () => { console.log("\\n(interrupt)"); });
 process.stdin.setEncoding("utf8");
 
 let buf = "";
-process.stdin.on("data", (d) => { buf += d; });
-process.stdin.on("data", async (d) => {
-  const lines = buf.split("\\n");
+process.stdin.on("data", (d: string) => {
+  buf += d;
+  const lines = buf.split("\n");
   buf = lines.pop() ?? "";
   for (const line of lines) {
-    await handle(line.trim());
+    void handle(line.trim());
   }
 });
 
@@ -63,7 +64,7 @@ async function handle(line: string): Promise<void> {
 }
 
 async function command(line: string): Promise<void> {
-  const parts = line.split(/\\s+/);
+  const parts = line.split(/\s+/);
   const cmd = parts[0];
   switch (cmd) {
     case "/help":
@@ -96,6 +97,21 @@ async function command(line: string): Promise<void> {
       console.log(r.result);
       break;
     }
+    case "/provider": {
+      const name = parts.slice(1).join(" ").trim();
+      if (name === "") {
+        console.log(`current: ${agent.providerId}  |  available (keys present): ${availableProviders().join(", ") || "none"}`);
+        break;
+      }
+      try {
+        const p = buildProvider(name);
+        agent.swapProvider(p, paramSetV1(p.modelId));
+        console.log(`provider -> ${name} (${p.modelId})`);
+      } catch (e) {
+        console.log(String(e));
+      }
+      break;
+    }
     case "/quit":
       await ledger.drain();
       process.exit(0);
@@ -120,7 +136,7 @@ function agentHooks(): void {
 }
 
 async function runIntent(line: string): Promise<{ op: string; ok: boolean; result: string }> {
-  const parts = line.split(/\\s+/);
+  const parts = line.split(/\s+/);
   const cmd = parts[0]!.slice(1); // strip slash
   let intent: import("../optimizer/intents.ts").SteeringIntent | null = null;
   switch (cmd) {
