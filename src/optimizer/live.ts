@@ -45,6 +45,21 @@ export function parseIntentsFromText(text: string): { text: string; intents: Ste
   return { text: visible, intents };
 }
 
+
+import type { Provider } from "./providers.ts";
+
+/** Wrap any provider so live-model ```intents fences become structured intents. */
+export function withIntentParsing(modelId: string, inner: Provider): Provider {
+  return {
+    modelId,
+    call: async (blocks, userMessage) => {
+      const r = await inner.call(blocks, userMessage);
+      const { text, intents } = parseIntentsFromText(r.text);
+      return { ...r, text, intents };
+    },
+  };
+}
+
 /** The protocol description given to live models so they know the affordance. */
 export const INTENT_PROTOCOL_DOC = [
   "You can operate your context by appending a fenced block to your reply:",
