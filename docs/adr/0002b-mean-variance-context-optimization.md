@@ -6,7 +6,9 @@
 - **Parent:** ADR-0002 · **Sibling:** ADR-0002a
 - **Extended by:** ADR-0002d (the lens family and live views); the
   decision audit of §6 and the calibration inputs of §2 are specified as
-  the decision ledger and corpus by ADR-0002e
+  the decision ledger and corpus by ADR-0002e; ADR-0002f declares per-kind
+  value profiles — §2's power law is the default profile, not a law
+  (goals are the first decay-exempt kind)
 
 ## Context
 

@@ -4,6 +4,9 @@
 - **Date:** 2026-08-21
 - **Deciders:** Daniel Eisner (rulings), Robby (analysis)
 - **Parent:** ADR-0002c · **Ancestors:** ADR-0002 §3, ADR-0002a §4
+- **Extended by:** ADR-0002f (self-lenses — conversation history with
+  lossy summary transforms, and goals & objectives with the first
+  decay-exemption value profile)
 - **Input:** this session — ruling enumerating the primary lens
   implementations and live views, with the render contract for change
   legibility.
