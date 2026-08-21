@@ -145,6 +145,26 @@ function buildProviderMissingKey(): void {
   if (key === "") throw new Error("OPENAI_API_KEY not set — openai is bring-your-own-key");
 }
 
+// ── second-pass findings: synthetic detachment + seed honesty ──────────
+describe("synthetic truth detachment (second-pass finding 3)", () => {
+  test("mutating returned truth does not poison the next generation", () => {
+    const a = generateSynthetic();
+    a.truth.lensHazard = 0.99; // mutate the returned truth
+    const b = generateSynthetic();
+    expect(b.truth.lensHazard).not.toBe(0.99);
+    expect(DEFAULT_SPEC.lensHazard).not.toBe(0.99);
+  });
+});
+
+describe("seed truncation honesty (second-pass finding 4)", () => {
+  test("sources records the truncated seed the rng actually used", () => {
+    const big = 2 ** 35 + 42;
+    const g = generateSynthetic({ ...DEFAULT_SPEC, seed: big });
+    expect(g.corpus.sources[0]).toBe(`synthetic:${big >>> 0}`);
+    expect(g.corpus.sources[0]).not.toBe(`synthetic:${big}`);
+  });
+});
+
 // ── review findings: config guard + credential tier blanks ─────────────
 describe("harness config guard (review B2)", () => {
   const tmp = mkdtempSync(join(tmpdir(), "ak-cfg-"));

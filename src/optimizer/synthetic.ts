@@ -119,10 +119,14 @@ export function generateSynthetic(spec: PlantedSpec = DEFAULT_SPEC): { corpus: C
     corpus: {
       turns, items, caches,
       provenance: "synthetic",
-      sources: [`synthetic:${spec.seed ?? 42}`],
+      // Record the seed actually used by rng() — the truncated value, so
+      // the source line is reproducible for any seed input (finding 4).
+      sources: [`synthetic:${(spec.seed ?? 42) >>> 0}`],
       parameterSetVersions: ["v1-synthetic"],
       modelIds: ["synthetic-model"],
     },
-    truth: spec,
+    // Detach: the caller must be able to mutate the returned truth without
+    // poisoning DEFAULT_SPEC for every other importer (finding 3).
+    truth: structuredClone(spec),
   };
 }

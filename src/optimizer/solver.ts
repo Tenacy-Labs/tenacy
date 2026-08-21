@@ -133,7 +133,11 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   const suffixTokens = totalTokens; // for rot share attribution
   for (const c of chosen) {
     position += 1;
-    const text = c.item.serialize();
+    // Digest the bytes actually rendered — the chosen option's text — not
+    // serialize(). Non-serialize options (purge/compact/summary) render
+    // different bytes than the store serialization; digests must track
+    // what hit the wire (second-pass review finding 1).
+    const text = c.option.text;
     const digest = blockDigest(text);
     const zone = zoneOf(c);
     const rotShare = ps.lambda * (ps.rotCurve.sizeCoef * suffixTokens * 0.01
