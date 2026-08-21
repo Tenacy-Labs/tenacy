@@ -59,7 +59,8 @@ describe("Swarm: topology and gating (no workers)", () => {
     const child = s.spawn(root.id, {});
     expect(() => s.setPlan(child.id, { version: 1, tasks: [] })).toThrow(/root/);
     s.setPlan(root.id, { version: 1, tasks: [{ id: "t1", title: "demo", deps: [], status: "queued" }] });
-    expect(s.plan!.tasks[0].id).toBe("t1");
+    const t1 = s.plan?.tasks[0];
+    expect(t1?.id).toBe("t1");
     expect(() => s.proposePlan(child.id, s.plan!)).not.toThrow(); // routed as DM to root
   });
 

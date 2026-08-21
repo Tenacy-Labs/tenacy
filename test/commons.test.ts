@@ -79,7 +79,8 @@ describe("Commons — optimistic versioned commits", () => {
     cm.commit({ agentId: "A", baseVersion: 0, writes: { util: { op: "set", value: "v1" } } } as Commit);
     cm.read("B", ["util"]);
     cm.commit({ agentId: "A", baseVersion: 1, writes: { util: { op: "set", value: "v2" } } } as Commit);
-    const [note] = cm.drainNotifications();
+    const drained = cm.drainNotifications();
+    const note = drained[0];
     expect(note).toMatchObject({ agentId: "B", from: "A", name: "util", kind: "changed" });
     expect(cm.drainNotifications()).toEqual([]);   // no spurious repeats
   });
@@ -96,6 +97,7 @@ describe("Commons — optimistic versioned commits", () => {
     // B's promise resolves later -> arrives as mail at B's next turn start, not now
     const notes = cm.drainNotifications();
     expect(notes.length).toBe(1);
-    expect(notes[0].name).toBe("data");
+    const first = notes[0];
+    if (first) expect(first.name).toBe("data");
   });
 });

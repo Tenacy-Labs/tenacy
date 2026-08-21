@@ -79,14 +79,14 @@ export class Swarm {
   plan: VersionedPlan | null = null;
   private channels = new Map<string, Set<string>>();   // channel name -> member ids
   private nextId = 0;
-  private opts: Required<Pick<SwarmOptions, "memberCap" | "liveWorkerBudget">> & SwarmOptions;
+  private opts: Required<Pick<SwarmOptions, "memberCap" | "liveWorkerBudget">> & { stateDir?: string };
 
   constructor(opts: SwarmOptions = {}) {
     this.opts = {
       memberCap: opts.memberCap ?? 16,
       liveWorkerBudget: opts.liveWorkerBudget ?? 8,
-      stateDir: opts.stateDir,
     };
+    if (opts.stateDir !== undefined) this.opts.stateDir = opts.stateDir;
   }
 
   /** Ancestry: walk parentId chain from `id` upward. Includes self. */

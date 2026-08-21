@@ -87,7 +87,10 @@ export class Kernel {
     }
     this.#writeSnapshot();
     this.cells.push(src);
-    return { ok, value, error, turnMs: performance.now() - t0 };
+    // exactOptionalPropertyTypes: build the result so `error` is present only when falsy-handling demands it
+    const res: TurnResult = { ok, value, turnMs: performance.now() - t0 };
+    if (error !== undefined) res.error = error;
+    return res;
   }
 
   #writeSnapshot(): { ms: number; bytes: number } {
