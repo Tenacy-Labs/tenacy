@@ -22,8 +22,9 @@
  * ~6-7MB, dispatch 54µs median — vs jcode's ~10MB/session, ~117MB/10 sessions.
  */
 import { Worker } from "node:worker_threads";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
+import { CellCompiler } from "./cell-compiler.ts";
 
 export type AgentState =
   | "spawned"    // session created, not yet ready
@@ -199,6 +200,71 @@ export class Swarm {
 
   /** Observers for lifecycle events (UI/widget/audit hooks). */
   lifecycleObservers: ((agentId: string, state: AgentState, detail?: string) => void)[] = [];
+
+  /**
+   * The single coordinator-side TypeScript gate. Every cell destined for any
+   * agent is checked and transpiled here, on the main thread; workers receive
+   * compiler-free JavaScript and never load the TypeScript package. Each agent
+   * keeps its own CellCompiler (its accepted-source history is its own), but
+   // they share one document registry (see cell-compiler.ts).
+   */
+  #gates = new Map<string, CellCompiler>();
+  #gateFor(id: string): CellCompiler {
+    let gate = this.#gates.get(id);
+    if (!gate) { gate = new CellCompiler(); this.#gates.set(id, gate); }
+    return gate;
+  }
+
+  /**
+   * Run one turn: check + transpile the TypeScript cell on the coordinator,
+   * then execute the generated JavaScript inside the agent's worker.
+   * Type-rejected cells never reach the worker: the coordinator records the
+   * rejection in the agent's journal (audit) and reports diagnostics.
+   */
+  turn(id: string, cell: string): Promise<any> {
+    const rec = this.agents.get(id);
+    if (!rec) return Promise.reject(new Error(`turn: unknown agent ${id}`));
+    if (!rec.worker) return Promise.reject(new Error(`turn: agent ${id} has no live worker`));
+    const gate = this.#gateFor(id);
+    const compiled = gate.checkAndTranspile(cell);
+    if (!compiled.ok || compiled.js === undefined) {
+      // Audit locally: worker journals live in each agent's state dir.
+      const stateDir = this.opts.stateDir ?? "/tmp/agent-kernel-states";
+      const journalPath = join(stateDir, id, "journal.jsonl");
+      mkdirSync(join(stateDir, id), { recursive: true });
+      appendFileSync(journalPath, JSON.stringify({
+        i: -1, ts: Date.now(), src: cell, accepted: false, phase: "typecheck",
+        diagnostics: compiled.diagnostics,
+      }) + "\n");
+      return Promise.resolve({
+        agentId: id, ok: false, phase: "typecheck", error: compiled.diagnostics.map((d) => `TS${d.code}: ${d.message}`).join("\n"),
+        diagnostics: compiled.diagnostics, typeCheckMs: compiled.typeCheckMs, transpileMs: compiled.transpileMs,
+      });
+    }
+    const w = rec.worker;
+    return new Promise((resolve) => {
+      const cleanup = () => {
+        w.off("message", on);
+        w.off("exit", onExit);
+        w.off("error", onExit);
+      };
+      const on = (m: any) => {
+        if (m.kind === "turn_result" && m.agentId === id) {
+          cleanup();
+          // The cell executed (even on runtime error): admit it to this
+          // agent's static type history so later cells see its declarations.
+          if (m.ok !== false || m.phase !== "typecheck") gate.accept(cell);
+          resolve(m);
+        }
+      };
+      const onExit = () => { cleanup(); resolve({ agentId: id, ok: false, phase: "crash", error: "worker exited during turn" }); };
+      w.on("exit", onExit);
+      w.on("error", onExit);
+      w.on("message", on);
+      this.#setLife(id, "running");
+      w.postMessage({ __turn: { js: compiled.js, src: cell } });
+    });
+  }
   private notifyLifecycleObservers(id: string, state: AgentState, detail?: string): void {
     for (const cb of this.lifecycleObservers) cb(id, state, detail);
   }

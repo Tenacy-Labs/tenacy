@@ -30,7 +30,9 @@ const stateDir = process.env.STATE_DIR ?? "/tmp/agent-kernel-states";
 const journal = `${stateDir}/${agentId}/journal.jsonl`;
 const snap = `${stateDir}/${agentId}/snapshot.json`;
 mkdirSync(dirname(journal), { recursive: true });   // worker owns its bootstrap
-const k = new Kernel(journal, snap);
+// Compiler-free by design: the coordinator checked and transpiled this cell's
+// TypeScript before dispatch. Workers must never load the ~40MB compiler.
+const k = new Kernel(journal, snap, [], false);
 
 /** Envelope helper: send to coordinator (which routes). */
 function send(env: any): void { port.postMessage(env); }
@@ -49,7 +51,7 @@ function handleEnvelope(env: any): void {
   // NOTE: assignment must target globalThis — `var` inside this string would
   // be scoped to the eval'd function, not the kernel namespace.
   if (!env || typeof env !== "object") return;
-  k.eval(`(function(){
+  k.evalCompiled("swarm-mail", `(function(){
     if (typeof swarmMail === "undefined") globalThis.swarmMail = [];
     swarmMail.push(${JSON.stringify(env)});
   })()`);
@@ -69,7 +71,8 @@ port.on("message", (m: any) => {
     // A turn = drain interrupts first (safe point), then run the cell.
     drainInbox();
     send({ kind: "turn_start", agentId });
-    const r = k.eval(m.__turn.cell);
+    // Coordinator-gated turn: JS was type-checked + transpiled on the main thread.
+    const r = k.evalCompiled(m.__turn.src ?? "", m.__turn.js);
     send({ kind: "turn_result", agentId, ok: r.ok, value: r.value, error: r.error });
   }
   if (m.__final) {
@@ -77,7 +80,8 @@ port.on("message", (m: any) => {
     // final response is just the last cell's namespace view. Host auto-forwards
     // to the parent (spawn edge = report-back edge).
     drainInbox();
-    const summary = k.eval(m.__final.expr ?? "(typeof swarmMail !== 'undefined' ? swarmMail.length : 0)");
+    // Internal runtime helpers are plain JavaScript, pre-vetted by the host.
+    const summary = k.evalCompiled(m.__final.src ?? "final-expr", m.__final.js ?? "(typeof swarmMail !== 'undefined' ? swarmMail.length : 0)");
     send({ kind: "final_response", agentId, body: summary.value });
   }
 });

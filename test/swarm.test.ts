@@ -23,14 +23,7 @@ function waitFor<T>(pred: () => T | undefined, ms = 5000): Promise<T> {
 
 /** Run one turn in an agent; resolves with the turn_result message. */
 function turn(s: Swarm, id: string, cell: string): Promise<any> {
-  const w = s.agents.get(id)!.worker!;
-  const p = new Promise<any>((resolve) => {
-    const on = (m: any) => { if (m.kind === "turn_result" && m.agentId === id) { w.off("message", on); resolve(m); } };
-    w.on("message", on);
-  });
-  s.agents.get(id)!.state = "running";
-  w.postMessage({ __turn: { cell } });
-  return p;
+  return s.turn(id, cell);
 }
 
 describe("Swarm: topology and gating (no workers)", () => {
@@ -94,6 +87,13 @@ describe("Swarm: live workers on Bun threads", () => {
     expect(r2.ok).toBe(true);
     expect(r2.value).toBe(20);
 
+    // TypeScript is checked by the coordinator, not inside the worker VM.
+    const typed = await turn(s, root.id, "var workerTyped: number = swarmTally + 1");
+    expect(typed.ok).toBe(true);
+    const rejected = await turn(s, root.id, "workerTyped = 'wrong'");
+    expect(rejected.ok).toBe(false);
+    expect(rejected.phase).toBe("typecheck");
+
     // Soft interrupt: DM queued, NOT visible mid-turn; drained at next safe point
     s.route({ kind: "dm", from: sib.id, to: root.id, body: "hello from sibling" });
     const mid = await turn(s, root.id, "(typeof swarmMail === 'undefined') ? 'clean' : 'polluted:' + swarmMail.length");
@@ -104,7 +104,9 @@ describe("Swarm: live workers on Bun threads", () => {
 
     // Crash containment: worker exits non-zero -> state crashed; sibling unaffected
     const w1 = s.agents.get(root.id)!.worker!;
-    w1.postMessage({ __turn: { cell: "process.exit(7)" } });
+    const crashed = await turn(s, root.id, "process.exit(7)");
+    expect(crashed.ok).toBe(false);
+    expect(crashed.phase).toBe("crash");
     await waitFor(() => (s.agents.get(root.id)!.state === "crashed" ? true : undefined));
     const sibResult = await turn(s, sib.id, "41 + 1");
     expect(sibResult.value).toBe(42);

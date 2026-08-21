@@ -16,7 +16,13 @@ export interface CompiledCell {
   transpileMs: number;
 }
 
-const VIRTUAL_FILE = "/agent-kernel/cells.ts";
+// Unique per agent: the shared registry caches SourceFiles by path, so two
+// agents must never present different text under the same virtual path.
+let virtualFileCounter = 0;
+
+// One document registry shared by every per-agent LanguageService: lib.d.ts
+// and standard library snapshots are parsed once per process, not per agent.
+const sharedRegistry = ts.createDocumentRegistry();
 
 /**
  * Persistent in-memory TypeScript gate for agent-authored cells.
@@ -29,10 +35,12 @@ export class CellCompiler {
   private history: string[] = [];
   private candidate = "";
   private version = 0;
+  private readonly virtualFile: string;
   private readonly service: ts.LanguageService;
 
   constructor(history: string[] = []) {
     this.history = [...history];
+    this.virtualFile = `/agent-kernel/cells-${++virtualFileCounter}.ts`;
     const options: ts.CompilerOptions = {
       target: ts.ScriptTarget.ESNext,
       module: ts.ModuleKind.None,
@@ -45,10 +53,10 @@ export class CellCompiler {
     };
     const host: ts.LanguageServiceHost = {
       getCompilationSettings: () => options,
-      getScriptFileNames: () => [VIRTUAL_FILE],
+      getScriptFileNames: () => [this.virtualFile],
       getScriptVersion: () => String(this.version),
       getScriptSnapshot: (file) => {
-        if (file === VIRTUAL_FILE) return ts.ScriptSnapshot.fromString(this.virtualSource());
+        if (file === this.virtualFile) return ts.ScriptSnapshot.fromString(this.virtualSource());
         const text = ts.sys.readFile(file);
         return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text);
       },
@@ -58,7 +66,7 @@ export class CellCompiler {
       readFile: ts.sys.readFile,
       readDirectory: ts.sys.readDirectory,
     };
-    this.service = ts.createLanguageService(host, ts.createDocumentRegistry());
+    this.service = ts.createLanguageService(host, sharedRegistry);
   }
 
   private sourcePrefix(): string {
@@ -83,8 +91,8 @@ export class CellCompiler {
     this.version++;
     const t0 = performance.now();
     const raw = [
-      ...this.service.getSyntacticDiagnostics(VIRTUAL_FILE),
-      ...this.service.getSemanticDiagnostics(VIRTUAL_FILE),
+      ...this.service.getSyntacticDiagnostics(this.virtualFile),
+      ...this.service.getSemanticDiagnostics(this.virtualFile),
     ];
     const typeCheckMs = performance.now() - t0;
     const prefixLines = this.sourcePrefix().split("\n").length - 1;

@@ -123,6 +123,18 @@ first transpile 6ms; warm check median 50.8ms / p95 57.0ms; warm transpile
 median 0.47ms. This is material versus raw eval but negligible beside a model
 call, and it supplies the error-correction signal an RLM needs.
 
+**Gate placement (swarm).** In multi-agent operation the gate lives on the
+coordinator thread only: `Swarm.turn()` checks and transpiles every cell
+before dispatch, and workers execute `Kernel.evalCompiled()` — compiler-free
+JavaScript-only kernels. A compiler inside each worker raised the marginal
+cost of a worker from ~5–7MB to 48.1MB (a full LanguageService replica per
+VM); coordinator-side gating restores 6.7MB/worker. Type-rejected cells never
+reach the worker: the coordinator journals the rejection and returns
+diagnostics. A cell is admitted to an agent's static type history when its
+worker confirms execution (runtime errors still count — the declarations
+exist). Turns are crash-safe: if the worker exits mid-cell the turn resolves
+`phase: "crash"` instead of hanging the coordinator.
+
 `tsc` is the type/static-analysis gate. ESLint is deliberately not in the
 inline critical path: it primarily adds style and policy checks, not stronger
 type correctness. It can be added later as an asynchronous policy pass.

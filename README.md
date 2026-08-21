@@ -15,6 +15,9 @@ survive between cells. Recovery rebuilds that static program from audit source
 without replaying any cell. Repository CI separately runs `tsc --noEmit` before
 the test suite.
 
+In multi-agent mode the gate runs once on the coordinator thread; worker
+agents execute pre-checked JavaScript and stay compiler-free (~6.7MB each).
+
 A persistent TypeScript/JavaScript kernel for LLM agents. The agent executes code in a
 long-lived kernel whose namespace persists across turns — trading context-window tokens
 for addressable, queryable state. Concepts from [prime-agent](https://github.com/PrimeIntellectual-ai/prime-agent)'s
