@@ -16,7 +16,11 @@ export class ContextStore {
 
   add(item: ContextItem): void {
     if (this.items.has(item.id)) throw new Error(`duplicate item id: ${item.id}`);
-    this.items.set(item.id, { ...item, createdTurn: this.turn, lastTouchTurn: this.turn });
+    // Store by reference: option closures stay live (0002d live views) — a
+    // defensive copy would freeze the option surface at insertion time.
+    item.createdTurn = this.turn;
+    item.lastTouchTurn = this.turn;
+    this.items.set(item.id, item);
   }
 
   get(id: string): ContextItem | undefined {

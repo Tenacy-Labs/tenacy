@@ -45,7 +45,9 @@ export function render(placements: Placement[], items: Map<string, ContextItem>,
     for (const p of zonePlacements) {
       const it = items.get(p.id);
       if (!it) continue;
-      const text = it.serialize();
+      // The chosen option IS the representation — render its bytes (0004 §5).
+      const option = it.options().find((o) => o.id === p.optionId);
+      const text = option !== undefined ? option.text : it.serialize();
       const tokens = estTokens(text);
       const digest = blockDigest(text);
       blocks.push({ digest, tokens, text, itemId: p.id, zone });

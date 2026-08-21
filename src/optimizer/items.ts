@@ -9,7 +9,7 @@ import type { ConvoRep, ContextItem, ItemKind, LensState, RenderOption, Velocity
 import { estTokens } from "./renderer.ts";
 
 function opt(id: string, zones: readonly Zone[], representation: RenderOption["representation"], text: string, purelyAdditive: boolean): RenderOption {
-  return { id, zones, representation, tokens: estTokens(text), purelyAdditive };
+  return { id, zones, representation, tokens: estTokens(text), purelyAdditive, text };
 }
 
 /** Identity / directive — standing context, cache-pinned head. */

@@ -5,7 +5,7 @@
  * journal reply → cacheModel.calibrate(usage) → incumbent update.
  * Tools execute at the coordinator (proposer/applier split, 0002g/K7).
  */
-import type { ContextItem, Placement, RenderResult, Zone } from "./types.ts";
+import type { ContextItem, Placement, RenderOption, RenderResult, Zone } from "./types.ts";
 import type { ParamSet } from "./params.ts";
 import { ContextStore } from "./store.ts";
 import { render, estTokens } from "./renderer.ts";
@@ -13,8 +13,9 @@ import { solve } from "./solver.ts";
 import { CacheModel } from "./cache-model.ts";
 import { Ledger } from "./ledger.ts";
 import type { Provider } from "./providers.ts";
-import { GoalItem, FileLensItem } from "./items.ts";
+import { GoalItem, FileLensItem, NoticeItem } from "./items.ts";
 import { executeIntent, bindHost, type SteeringIntent } from "./intents.ts";
+import { dreamPass } from "./dream.ts";
 
 export type { SteeringIntent } from "./intents.ts";
 
@@ -65,7 +66,19 @@ export class AgentLoop {
     const steering = this.interrupts.splice(0);
     const toolResults: TurnOutcome["toolResults"] = [];
     for (const s of steering) {
-      toolResults.push(executeIntent(s, this.store, this.ledger));
+      let r: { op: string; ok: boolean; result: string };
+      try {
+        r = executeIntent(s, this.store, this.ledger);
+      } catch (e) {
+        r = { op: s.op, ok: false, result: String(e) };
+      }
+      toolResults.push(r);
+      if (!r.ok) {
+        // A1 (0004 §2): failures classed as error evidence at journal time —
+        // estimators always need them as calibration labels, not console noise.
+        const err = new NoticeItem(`err:${this.store.turn}:${s.op}`, "error", `${s.op}: ${r.result}`);
+        this.store.add(err.toContextItem());
+      }
     }
 
     this.store.nextTurn();
@@ -81,6 +94,29 @@ export class AgentLoop {
     const response = await this.provider.call(rr.blocks, userMessage);
 
     this.store.add(makeTurnItem(`turn-${this.turn}-model`, "model", response.text, this.turn));
+
+    // Model-proposed intents execute at the coordinator (proposer/applier split)
+    if (response.intents !== undefined) {
+      for (const intent of response.intents) {
+        let r: { op: string; ok: boolean; result: string };
+        try {
+          r = executeIntent(intent, this.store, this.ledger);
+        } catch (e) {
+          r = { op: intent.op, ok: false, result: String(e) };
+        }
+        toolResults.push(r);
+        if (!r.ok) {
+          // A1 (0004 §2): failures classed as error evidence at journal time.
+          const err = new NoticeItem(`err:${this.store.turn}:${intent.op}`, "error", `${intent.op}: ${r.result}`);
+          this.store.add(err.toContextItem());
+        }
+      }
+    }
+
+    // Dream pass: aged episodic items gain SUMMARY options (0002f §4) —
+    // off the hot path; the solver will price them next render.
+    const dreamt = dreamPass(this.store.all(), this.turn, 3);
+    if (dreamt.length > 0) this.ledger?.recordSignal({ type: "dream-pass", count: dreamt.length, turn: this.turn });
 
     const cl = this.cacheModel.calibrate(rr.blocks, response.usage, expected);
     this.cacheModel.update(rr.blocks);
@@ -123,7 +159,9 @@ export class AgentLoop {
     const id = `lens:${target}`;
     let f = this.fileRegistry.get(id);
     if (f === undefined) {
-      f = new FileLensItem(id, target, this.fileContent(target));
+      const content = this.fileContent(target);
+      if (content === "") throw new Error(`no such file: ${target}`);
+      f = new FileLensItem(id, target, content);
       f.lastTouchTurn = this.store.turn;
       f.createdTurn = this.store.turn;
       this.fileRegistry.set(id, f);
@@ -138,14 +176,25 @@ export class AgentLoop {
 
 export function makeTurnItem(id: string, role: "user" | "model", text: string, turn: number): ContextItem {
   const line = `[${role}] ${text}`;
-  return {
+  const item: ContextItem = {
     id, kind: "episodic", velocity: "stable", immutable: true,
     tokens: estTokens(line),
     serialize: () => line,
-    options: () => [{
-      id: "verbatim", zones: ["evolving"], representation: "VERBATIM",
-      tokens: estTokens(line), purelyAdditive: true,
-    }],
-    lastTouchTurn: turn, createdTurn: turn,
+    options: () => {
+      const opts: RenderOption[] = [{
+        id: "verbatim", zones: ["evolving"], representation: "VERBATIM",
+        tokens: estTokens(line), purelyAdditive: true, text: line,
+      }];
+      if (item.summary !== undefined) {
+        opts.push({
+          id: "summary", zones: ["foundational"], representation: "SUMMARY",
+          tokens: estTokens(item.summary), purelyAdditive: false,
+          text: `[${role}] [summary] ${item.summary}`,
+        });
+      }
+      return opts;
+    },
+    lastTouchTurn: turn, createdTurn: turn, summary: undefined,
   };
+  return item;
 }

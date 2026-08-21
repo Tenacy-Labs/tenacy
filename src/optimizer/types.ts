@@ -34,6 +34,8 @@ export interface RenderOption {
   representation: LensState | ConvoRep | "AS_IS";
   /** Token estimate at this option's serialization. */
   tokens: number;
+  /** The deterministic bytes this option renders (ADR-0004: an option IS a representation). */
+  text: string;
 }
 
 /** The stored record — never rendered directly (ADR-0002 §2). */
@@ -60,6 +62,8 @@ export interface ContextItem {
   watch?: "live" | "polled" | "frozen" | undefined;
   /** Marks store-level authored signals (model ctx / goals flips) — never optimizer-authored. */
   signalClass?: "model-authored" | "optimizer" | undefined;
+  /** Dream output (0002f §4): when set, a SUMMARY option joins the surface. Store record stays verbatim. */
+  summary?: string | undefined;
 }
 
 /** ItemSource — the generic validity interface, ADR-0002c §2. */
