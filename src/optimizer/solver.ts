@@ -521,13 +521,24 @@ function exactMckpRelief(
   const groups = droppable.map((c) => {
     const keepW = c.option.tokens;
     const keepP = Math.max(0, Math.round((c.utility) * SCALE));
+    // Tombstone profit is NOT zero: the handle carries the item's future
+    // re-reference stream at qHandle (the same economics phase-1 gives
+    // zeroValue options — see solver §1 "its future stream is handle
+    // optionality (qHandle)"). Priced at 0 the solver correctly prefers
+    // FREE evict (0 tokens, 0 profit) over a 10-token tombstone — killing
+    // the recovery path the density loop preserved by construction.
+    const profile = ps.profiles[c.item.kind];
+    const deltaT = Math.max(0, turn - c.item.lastTouchTurn);
+    const tombFV = profile !== undefined
+      ? futureValue(profile.mu0, profile.alpha, deltaT, 0, ps.fv.qHandle, ps)
+      : 0;
     const opts: { id: string; weight: number; profit: number }[] = [
       { id: "keep", weight: keepW, profit: keepP },
       { id: "evict", weight: 0, profit: 0 },
     ];
     const tomb = c.option.zeroValue === true ? undefined : c.item.options().find((o) => o.zeroValue === true && o.tokens < c.option.tokens);
     if (tomb !== undefined) {
-      opts.push({ id: "tombstone:" + tomb.id, weight: tomb.tokens, profit: 0 });
+      opts.push({ id: "tombstone:" + tomb.id, weight: tomb.tokens, profit: Math.max(0, Math.round(tombFV * SCALE)) });
     }
     return { id: c.item.id, options: opts };
   });

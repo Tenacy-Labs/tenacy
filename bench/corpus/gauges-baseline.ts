@@ -10,6 +10,7 @@ import { MockProvider } from "../../src/optimizer/providers.ts";
 import { TurnBoundaryWatcher } from "../../src/optimizer/live-views.ts";
 import { executeIntent, type SteeringIntent } from "../../src/optimizer/intents.ts";
 import { paramSetV1 } from "../../src/optimizer/params.ts";
+import type { ParamSet } from "../../src/optimizer/params.ts";
 import { StandingItem } from "../../src/optimizer/items.ts";
 import { INTENT_PROTOCOL_DOC } from "../../src/optimizer/live.ts";
 import { Ledger } from "../../src/optimizer/ledger.ts";
@@ -31,7 +32,7 @@ async function main(): Promise<void> {
 
   // Budget pressure: the corpus reference configuration (Λ=2048).
   const cfg = loadHarnessConfig();
-  const ps = { ...paramSetFor("glm-5.2", cfg), budgetLambda: 2048 };
+  const ps = { ...paramSetFor("glm-5.2", cfg), budgetLambda: 2048, ...(process.env.RELIEF_MODE !== undefined ? { reliefMode: process.env.RELIEF_MODE as ParamSet["reliefMode"] } : {}) };
   const renderTexts: string[] = [];          // per-turn render bytes (LCP truth)
 
   for (const name of scenarioNames) {
@@ -61,12 +62,47 @@ async function main(): Promise<void> {
   const corpus = await loadCorpus([ledgerPath], "realized");
   // LCP truth map: independent recomputation over actual render bytes —
   // supplies Gauge 6 when providers report nothing (mock corpora).
+  // Alignment (2026-08-22 off-by-one fix): the turn-t cache record's
+  // expected hit is the LCP of renders (t−1, t) — the chain this turn's
+  // render was billed against. renderTexts[i] is the render of turn i+1,
+  // so the pair (renderTexts[i−1], renderTexts[i]) belongs to turn i.
+  // The old set(i+1, …) lagged one render; under monotone-append solvers
+  // that hid as a constant growth-rate gap, and under oscillating relief
+  // renders (exact-MCKP purge/re-expand) it blew up to ±Λ/2 swings.
   const truthByTurn = new Map<number, number>();
   renderTexts.forEach((text, i) => {
-    const prev = renderTexts[i - 1] ?? "";
-    truthByTurn.set(i + 1, lcpTokens(prev, text));
+    if (i === 0) return; // no prior render: turn-0 pair does not exist
+    const prev = renderTexts[i - 1]!;
+    truthByTurn.set(i, lcpTokens(prev, text));
   });
   const g = reportGauges(corpus, ps, { basis: "lcp-truth", truthByTurn } satisfies BeliefGapInput);
+  if (process.env.GAUGE_DEBUG !== undefined) {
+    // Per-turn gap dump: truth (LCP) vs believed (digest-chain). Diffing
+    // this against the raw counters localizes which turns the tombstone
+    // accounting contaminates.
+    for (const c of corpus.caches) {
+      const truth = truthByTurn.get(c.turn);
+      if (truth === undefined) continue;
+      const gap = truth - c.expected.hitTokens;
+      if (Math.abs(gap) > 1) {
+        console.log(`turn ${c.turn}: truth ${truth}t believed ${c.expected.hitTokens}t gap ${gap >= 0 ? "+" : ""}${gap}t`);
+      }
+    }
+    // Where does each walk break? LCP breaks at a char offset in the
+    // concatenated text; the chain breaks at a block index. If the chain
+    // breaks early while the LCP runs long, block-boundary alignment
+    // (tombstone insertion/removal shifting block indices) is the story.
+    for (let i = 1; i < renderTexts.length; i++) {
+      const prev = renderTexts[i - 1]!, cur = renderTexts[i]!;
+      let j = 0;
+      while (j < prev.length && j < cur.length && prev[j] === cur[j]) j++;
+      const lcpTokensVal = Math.floor(j / 4);
+      const believed = corpus.caches.find((c) => c.turn === i + 1)?.expected.hitTokens ?? 0;
+      if (Math.abs(lcpTokensVal - believed) > 40) {
+        console.log(`turn ${i + 1}: LCP breaks at char ${j} (~${lcpTokensVal}t); believed ${believed}t; first divergence context: ${JSON.stringify(cur.slice(Math.max(0, j - 30), j + 30))}`);
+      }
+    }
+  }
   console.log("── ADR-0006 §7 baseline gauges (current solver, pre-§2) ──");
   console.log(JSON.stringify({
     scenario: scenarioNames.join("+"),
