@@ -200,3 +200,43 @@ describe("harness config guard (review B2)", () => {
     }
   });
 });
+
+describe("harness config — context-window override", () => {
+  const tmp = `${import.meta.dir}/tmp-cw`;
+  function writeCfg(obj: unknown): string {
+    const fs = require("node:fs");
+    fs.mkdirSync(tmp, { recursive: true });
+    const f = `${tmp}/config.json`;
+    fs.writeFileSync(f, JSON.stringify(obj));
+    return f;
+  }
+  test("paramSetFor applies contextWindow override over paramSetV1 default", () => {
+    const { paramSetFor, loadHarnessConfig } = require("../src/optimizer/harness-config.ts");
+    const f = writeCfg({ version: 1, providers: { zai: { apiKey: "x" } }, contextWindow: 2048 });
+    const cfg = loadHarnessConfig(f);
+    if (cfg === null) throw new Error("config rejected");
+    const ps = paramSetFor("glm-5.2", cfg);
+    if (ps.budgetLambda !== 2048) throw new Error(`override not applied: ${ps.budgetLambda}`);
+    const dflt = paramSetFor("glm-5.2", null);
+    if (dflt.budgetLambda !== 24_000) throw new Error(`default wrong: ${dflt.budgetLambda}`);
+  });
+  test("invalid contextWindow values reject the config entirely", () => {
+    const { loadHarnessConfig } = require("../src/optimizer/harness-config.ts");
+    for (const bad of [0, -5, 2.5, "2048", true]) {
+      const f = writeCfg({ version: 1, providers: { zai: { apiKey: "x" } }, contextWindow: bad });
+      if (loadHarnessConfig(f) !== null) throw new Error(`accepted bad value: ${String(bad)}`);
+    }
+    // null = explicitly unset (blank-tier precedent): accepted, falls back to default
+    const fNull = writeCfg({ version: 1, providers: { zai: { apiKey: "x" } }, contextWindow: null });
+    const cfgNull = loadHarnessConfig(fNull);
+    if (cfgNull === null) throw new Error("null contextWindow should mean unset, not rejection");
+  });
+  test("contextWindow absent -> default budget unchanged (discriminating vs override path)", () =>  {
+    const { paramSetFor } = require("../src/optimizer/harness-config.ts");
+    const f = writeCfg({ version: 1, providers: { zai: { apiKey: "x" } } });
+    const { loadHarnessConfig } = require("../src/optimizer/harness-config.ts");
+    const cfg = loadHarnessConfig(f);
+    if (cfg === null) throw new Error("config without contextWindow rejected");
+    if (paramSetFor("glm-5.2", cfg).budgetLambda !== 24_000) throw new Error("absent field should not mutate budget");
+  });
+});

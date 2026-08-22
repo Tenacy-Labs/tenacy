@@ -22,8 +22,7 @@ import { createCliRenderer, type InputRenderable, type ScrollBoxRenderable } fro
 import { createRoot } from "@opentui/react";
 import { AgentLoop } from "../optimizer/loop.ts";
 import { MockProvider } from "../optimizer/providers.ts";
-import { buildProvider, availableProviders } from "../optimizer/registry.ts";
-import { paramSetV1 } from "../optimizer/params.ts";
+import { buildProvider, availableProviders, loadHarnessConfig, paramSetFor } from "../optimizer/registry.ts";
 import { Ledger } from "../optimizer/ledger.ts";
 import { StandingItem } from "../optimizer/items.ts";
 import { executeIntent } from "../optimizer/intents.ts";
@@ -48,7 +47,7 @@ if (providerName !== undefined) {
 const model = withIntentParsing(inner.modelId, inner);
 const dir = mkdtempSync(join(tmpdir(), "agent-kernel-tui-"));
 const ledger = new Ledger(join(dir, "ledger.jsonl"));
-const agent = new AgentLoop(model, paramSetV1(inner.modelId), ledger);
+const agent = new AgentLoop(model, paramSetFor(inner.modelId, loadHarnessConfig()), ledger);
 agent.store.add(new StandingItem("identity", "identity",
   "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator. " + INTENT_PROTOCOL_DOC,
 ).toContextItem());

@@ -14,7 +14,8 @@
  */
 import { AgentLoop } from "../optimizer/loop.ts";
 import { Ledger } from "../optimizer/ledger.ts";
-import { paramSetV1 } from "../optimizer/params.ts";
+import { paramSetFor } from "../optimizer/harness-config.ts";
+import { loadHarnessConfig } from "../optimizer/harness-config.ts";
 import { buildProvider } from "../optimizer/registry.ts";
 import { StandingItem } from "../optimizer/items.ts";
 import { INTENT_PROTOCOL_DOC, withIntentParsing } from "../optimizer/live.ts";
@@ -44,7 +45,7 @@ async function main(): Promise<void> {
   const parsed: Provider = withIntentParsing(provider.modelId, provider);
   const ledgerPath = "/tmp/agent-kernel-live-task.jsonl";
   const ledger = new Ledger(ledgerPath);
-  const loop = new AgentLoop(parsed, paramSetV1(provider.modelId), ledger);
+  const loop = new AgentLoop(parsed, paramSetFor(provider.modelId, loadHarnessConfig()), ledger);
   loop.store.add(new StandingItem("identity", "identity",
     "You are a meticulous file-reading agent. " + INTENT_PROTOCOL_DOC).toContextItem());
   loop.fileContent = () => NOTES;

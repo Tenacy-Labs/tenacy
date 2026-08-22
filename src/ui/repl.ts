@@ -29,8 +29,7 @@
  */
 import { AgentLoop } from "../optimizer/loop.ts";
 import { MockProvider } from "../optimizer/providers.ts";
-import { buildProvider, availableProviders } from "../optimizer/registry.ts";
-import { paramSetV1 } from "../optimizer/params.ts";
+import { buildProvider, availableProviders, loadHarnessConfig, paramSetFor } from "../optimizer/registry.ts";
 import { Ledger } from "../optimizer/ledger.ts";
 import { StandingItem } from "../optimizer/items.ts";
 import { executeIntent } from "../optimizer/intents.ts";
@@ -65,7 +64,7 @@ const model = withIntentParsing(inner.modelId, inner);
 const dir = mkdtempSync(join(tmpdir(), "agent-kernel-"));
 const ledgerPath = join(dir, "ledger.jsonl");
 const ledger = new Ledger(ledgerPath);
-const agent = new AgentLoop(model, paramSetV1(inner.modelId), ledger);
+const agent = new AgentLoop(model, paramSetFor(inner.modelId, loadHarnessConfig()), ledger);
 
 agent.store.add(new StandingItem("identity", "identity",
   "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator. " + INTENT_PROTOCOL_DOC,
@@ -199,7 +198,7 @@ async function command(line: string): Promise<void> {
       }
       try {
         const p = buildProvider(name, parts[2] !== undefined ? { model: parts[2] } : {});
-        agent.swapProvider(withIntentParsing(p.modelId, p), paramSetV1(p.modelId));
+        agent.swapProvider(withIntentParsing(p.modelId, p), paramSetFor(p.modelId, loadHarnessConfig()));
         console.log(`provider -> ${name} (${p.modelId})`);
       } catch (e) {
         console.log(String(e));
