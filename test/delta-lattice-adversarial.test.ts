@@ -372,7 +372,9 @@ describe("S3 accounting truth (File lens, AgentLoop-level)", () => {
       throw new Error("sessions gap: journal lost on save/restore — pendingDeltas not persisted");
     }
     const rj = (R as any).pendingDeltas as Array<{ turn: number; lines: number[] }>;
-    if (rj[0].turn !== 4 || rj[0].lines[0] !== 10 || rj[1].turn !== 5 || rj[1].lines[0] !== 20) {
+    const e0 = rj[0];
+    const e1 = rj[1];
+    if (e0 === undefined || e1 === undefined || e0.turn !== 4 || e0.lines[0] !== 10 || e1.turn !== 5 || e1.lines[0] !== 20) {
       throw new Error("journal entries corrupted in round-trip: " + JSON.stringify(rj));
     }
     if ((R as any).baseBlockTurn !== (L as any).baseBlockTurn) {
