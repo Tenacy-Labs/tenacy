@@ -73,6 +73,9 @@ This is the context-optimizer pattern (the accumulator keeps every chunk it ever
 The shipped solver is harvest-only: every discipline biases against ever paying a write voluntarily, so a restructure that pays one uncached bill to stabilize a better layout cannot be priced — the solver can strand itself in a locally-stable, globally-inferior arrangement.
 
 - **Layout moves as options.** Restructures join the option surface, priced against **continuation value** — never against an imagined static holding (the open-loop FV bias). A move's harvest counts only if the policy's own future realizes it.
+- **Exact suffix mass.** The shipped approximation prices the suffix after a changed block as a proportional token share — exact only for uniform block sizes; a 2,000-token lens before fifty 40-token turns misprices both directions (solver review open thread #2, resolved here). Transition costs price the suffix from actual placement mass.
+- **One cache break per position, not per item.** Per-item summation double-counts when multiple items restructure in one turn: the provider bills bytes after the *leftmost* changed block once, and a second restructure inside that already-invalidated region is free. The true bill is the cheapest break-set, never the sum over items. Greedy-plus-hysteresis rarely trips this today only because batching is unpriced; a correct implementation *wants* batched restructurings (one write, many moves) and must charge them as one write.
+- **Position prices restructure exposure.** The same move strands a different suffix by locale — tail: nearly nothing; head: the whole render. As a transition cost this becomes a deliberate placement incentive (items likely to restructure drift tailward) rather than an emergent accident of zone order; STRESS-A measured the emergent version (mutating lens tail-parked, history locked), the DP prices it.
 - **Suffix-liability trend.** Deferring an invalidation appends history after the eventual invalidation point; the same restructure grows monotonically dearer. `transactionCost`'s spot price becomes a trend: "later" stops being silently free.
 - **Anti-Zeno condition.** In closed-loop (Bellman) pricing, a policy that always re-invests books harvests its own continuation cancels; under γ < 1 it loses to harvesting even once. Combined with the growing deferral liability, both pathologies (always-harvest, always-invest) are self-liquidating; what survives is a stationary threshold policy — restructure when transient salvage falls below reset-cost growth.
 - **TTL-window timing.** Under believed TTL (`ttlTurns`, currently 6), restructuring inside an already-expired window destroys almost nothing — the prefix was dead regardless. Optimal policy concentrates restructures into post-expiry windows and lets fresh caches run their natural life.
@@ -136,12 +139,14 @@ Cold start is acknowledged: new items fall back to kind priors — no worse than
 - The per-item H-horizon DP over representation states (options × decay clock × hazard, coupled through ρ and the suffix) is the ruled implementation vehicle for §4–§5 pricing; the FV stream is the hold-forever value of that DP, which is why this decomposition is tractable. A formulation note accompanies implementation.
 - Hibernation agrees by construction: turn count (hence horizon) survives restore while the cache is cold — a long-lived session waking with an empty cache and a long horizon chooses the long-run layout on its first forced write.
 - Session-length survival fitting is explicitly **not** ruled out forever — it is ruled out *as the horizon mechanism*; if T\* proves systematically biased (windows turning over far from prediction), the ledger's turnover records are the corpus that would justify revisiting.
+- **The punchline is the algorithm, not just the parameters.** The parameter/schema work of §2 and the caps of §5 are prerequisites, but the destination this amendment rules is the sequence objective itself: layout moves priced by continuation value with exact, position-indexed suffix accounting, replacing four patches with one represented structure (§6 table). The patched-myopic core is a transitional state, not a final one. Delivery is phased so each stage is independently falsifiable per §7 — gauges (phase 0) → properties, additive (phase 1) → pricing switch (phase 2) → sequence objective (phase 3) — but phase 3 is in scope by this ruling, not deferred indefinitely.
 
 ### 9. Open questions
 
 - Exact posterior family for λᵢ (Beta-Bernoulli suggested; conjugacy vs. accessClass weighting trade-off).
 - Whether `velocity`'s UI/debug value justifies a derived view or deletion outright.
 - The pessimile's quantile for investment decisions (p20? calibrated from ledger turnover records once they exist).
+- Exact computation of the cheapest break-set bill (§4): true suffix accounting over a chosen layout is a set-cover-like combinatorial object; what approximation (leftmost-break? iterative?) is honest enough at v1 scale.
 
 ---
 
@@ -154,11 +159,11 @@ Sections:
 - 2. The revised property sheet — line 39
 - 3. Two-class recoverability — line 63
 - 4. Cache amortization: early invalidation as investment — line 71
-- 5. The horizon cap: T* — line 80
-- 6. Retired machinery — line 105
-- 7. Falsification — line 121
-- 8. Consequences — line 133
-- 9. Open questions — line 140
+- 5. The horizon cap: T* — line 83
+- 6. Retired machinery — line 108
+- 7. Falsification — line 124
+- 8. Consequences — line 136
+- 9. Open questions — line 144
 
 Key points:
 - Ruling: the solver is sequential in fact; properties, pricing, and horizons must let it decide over time — §1 — line 13
