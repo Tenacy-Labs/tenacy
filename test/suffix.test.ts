@@ -80,7 +80,7 @@ describe("ADR-0006 §4 — solver-level exact suffix + TTL window", () => {
     // rewrite "c" (position 3): suffix = 0 — the trailing region is TTL-cold
     // at turn 12 (block 1 written turn 4, age 8 > 6) → free restructure window
     const mk = (id: string, text: string): ContextItem => ({
-      id, kind: "directive", velocity: "volatile", immutable: false,
+      id, kind: "directive", immutable: false,
       tokens: estTokens(text),
       serialize: () => text, options: () => [{ id: "as-is", purelyAdditive: false, zones: ["foundational"], representation: "AS_IS", tokens: estTokens(text), text }],
       lastTouchTurn: 12, createdTurn: 4,

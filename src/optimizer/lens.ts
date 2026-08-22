@@ -19,9 +19,9 @@
  * substrate. FileLensItem keeps its exact byte-level output (cache
  * digests depend on it).
  */
-import type { ContextItem, LensState, RenderOption, Velocity } from "./types.ts";
 import { opt } from "./items.ts";
 import { estTokens } from "./renderer.ts";
+import type { ContextItem, LensState, RenderOption } from "./types.ts";
 
 export abstract class Lens {
   /** Coalesced ranges actually loaded, sorted. */
@@ -33,7 +33,6 @@ export abstract class Lens {
   constructor(
     public readonly id: string,          // "lens:src/kernel.ts"
     public readonly target: string,      // substrate address (fs path, dir, …)
-    public velocity: Velocity = "evolving",
     public immutable = false,
     public upstreams: readonly string[] = [],
     public hazardOverride?: number,
@@ -289,7 +288,7 @@ export abstract class Lens {
   }
   toContextItem(): ContextItem {
     return {
-      id: this.id, kind: "lens", velocity: this.velocity, immutable: this.immutable,
+      id: this.id, kind: "lens", immutable: this.immutable,
       tokens: this.tokens, serialize: () => this.serialize(), options: () => this.options(),
       upstreams: this.upstreams, lastRender: this.lastRender, lastTouchTurn: this.lastTouchTurn,
       createdTurn: this.createdTurn, hazardOverride: this.hazardOverride, valueBump: this.valueBump,
@@ -315,7 +314,6 @@ export class FileLensItem extends Lens {
     id: string,
     target: string,
     public content: string,             // current file content (producer-supplied)
-    velocity: Velocity = "evolving",
     immutable = false,
     upstreams: readonly string[] = [],
     hazardOverride?: number,
@@ -325,7 +323,7 @@ export class FileLensItem extends Lens {
     lastTouchTurn = 0,
     createdTurn = 0,
   ) {
-    super(id, target, velocity, immutable, upstreams, hazardOverride, valueBump, watch, lastRender, lastTouchTurn, createdTurn);
+    super(id, target, immutable, upstreams, hazardOverride, valueBump, watch, lastRender, lastTouchTurn, createdTurn);
   }
 
   protected substrateTag(): string { return "file"; }
@@ -349,7 +347,6 @@ export class DirectoryLensItem extends Lens {
     id: string,
     target: string,
     public listing: string,             // sorted entries, one per line (producer-supplied)
-    velocity: Velocity = "evolving",
     immutable = false,
     upstreams: readonly string[] = [],
     hazardOverride?: number,
@@ -359,7 +356,7 @@ export class DirectoryLensItem extends Lens {
     lastTouchTurn = 0,
     createdTurn = 0,
   ) {
-    super(id, target, velocity, immutable, upstreams, hazardOverride, valueBump, watch, lastRender, lastTouchTurn, createdTurn);
+    super(id, target, immutable, upstreams, hazardOverride, valueBump, watch, lastRender, lastTouchTurn, createdTurn);
   }
 
   protected substrateTag(): string { return "dir"; }
@@ -411,7 +408,7 @@ export class LensFragmentItem {
 
   toContextItem(): ContextItem {
     return {
-      id: this.id, kind: "lens", velocity: "evolving", immutable: false,
+      id: this.id, kind: "lens", immutable: false,
       tokens: this.tokens, serialize: () => this.bodyText(), options: () => this.options(),
       upstreams: [this.parent.id], lastTouchTurn: this.parent.lastTouchTurn,
       createdTurn: this.parent.createdTurn, watch: this.parent.watch === undefined ? "polled" : this.parent.watch,

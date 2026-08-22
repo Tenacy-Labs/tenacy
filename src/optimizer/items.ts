@@ -5,7 +5,7 @@
  * additive (backward-consistent — appends only, preserves the KV prefix).
  * The option space carries the policy; the solver carries the tradeoff.
  */
-import type { ConvoRep, ContextItem, ItemKind, LensState, RenderOption, Velocity, Zone } from "./types.ts";
+import type { ConvoRep, ContextItem, ItemKind, LensState, RenderOption, Zone } from "./types.ts";
 import { estTokens } from "./renderer.ts";
 
 export { FileLensItem, Lens, DirectoryLensItem } from "./lens.ts";
@@ -21,7 +21,6 @@ export class StandingItem {
     public readonly id: string,
     public readonly kind: "identity" | "directive",
     text: string,
-    public velocity: Velocity = "frozen",
     public immutable = true,
     public upstreams: readonly string[] = [],
     public hazardOverride?: number,
@@ -40,7 +39,7 @@ export class StandingItem {
   }
   toContextItem(): ContextItem {
     return {
-      id: this.id, kind: this.kind, velocity: this.velocity, immutable: this.immutable,
+      id: this.id, kind: "episodic", immutable: this.immutable,
       tokens: this.tokens, serialize: () => this.#text, options: () => this.options(),
       upstreams: this.upstreams, lastRender: this.lastRender, lastTouchTurn: this.lastTouchTurn,
       createdTurn: this.createdTurn, hazardOverride: this.hazardOverride, valueBump: this.valueBump,
@@ -58,7 +57,6 @@ export class GoalItem {
     text: string,
     public parentId?: string,
     public horizon: "session" | "task" | "standing" = "task",
-    public velocity: Velocity = "stable",
     public immutable = false,
     public upstreams: readonly string[] = [],
     public hazardOverride?: number,
@@ -93,7 +91,7 @@ export class GoalItem {
   }
   toContextItem(): ContextItem {
     return {
-      id: this.id, kind: "goal", velocity: this.velocity, immutable: this.immutable,
+      id: this.id, kind: "goal", immutable: this.immutable,
       tokens: this.tokens, serialize: () => this.serialize(), options: () => this.options(),
       upstreams: this.upstreams, lastRender: this.lastRender, lastTouchTurn: this.lastTouchTurn,
       createdTurn: this.createdTurn, hazardOverride: this.hazardOverride, valueBump: this.valueBump,
@@ -113,7 +111,6 @@ export class TurnItem {
     public readonly id: string,          // "turn-41"
     public readonly role: "model" | "tool-result" | "user",
     verbatim: string,
-    public velocity: Velocity = "stable",
     public immutable = true,
     public upstreams: readonly string[] = [],
     public hazardOverride?: number,
@@ -156,7 +153,7 @@ export class TurnItem {
   }
   toContextItem(): ContextItem {
     return {
-      id: this.id, kind: "episodic", velocity: this.velocity, immutable: this.immutable,
+      id: this.id, kind: "episodic", immutable: this.immutable,
       tokens: this.tokens, serialize: () => this.serialize(), options: () => this.options(),
       upstreams: this.upstreams, lastRender: this.lastRender, lastTouchTurn: this.lastTouchTurn,
       createdTurn: this.createdTurn, hazardOverride: this.hazardOverride, valueBump: this.valueBump,
@@ -203,7 +200,7 @@ export class MergeGroupItem {
   }
   toContextItem(): ContextItem {
     return {
-      id: this.id, kind: "episodic", velocity: "stable", immutable: false,
+      id: this.id, kind: "episodic", immutable: false,
       tokens: this.tokens, serialize: () => this.serialize(), options: () => this.options(),
       upstreams: this.memberIds, lastTouchTurn: this.createdTurn, createdTurn: this.createdTurn,
       watch: "frozen", valueMass: this.valueMass,
@@ -226,7 +223,6 @@ export class NoticeItem {
     public readonly id: string,
     public readonly kind: "notice" | "error",
     public readonly text: string,
-    public velocity: Velocity = "volatile",
     public immutable = false,
     public upstreams: readonly string[] = [],
     public hazardOverride?: number,
@@ -245,7 +241,7 @@ export class NoticeItem {
   }
   toContextItem(): ContextItem {
     return {
-      id: this.id, kind: this.kind, velocity: this.velocity, immutable: this.immutable,
+      id: this.id, kind: this.kind, immutable: this.immutable,
       tokens: this.tokens, serialize: () => this.serialize(), options: () => this.options(),
       upstreams: this.upstreams, lastRender: this.lastRender, lastTouchTurn: this.lastTouchTurn,
       createdTurn: this.createdTurn, hazardOverride: this.hazardOverride, valueBump: this.valueBump,

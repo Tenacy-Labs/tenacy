@@ -557,7 +557,7 @@ export function makeTurnItem(id: string, role: "user" | "model", text: string, t
   // Closure state for the convoTurn host proxy (verbatim + merge slot).
   const convo = { verbatim: text, mergedInto: undefined as string | undefined };
   const item: ContextItem = {
-    id, kind: "episodic", velocity: "stable", immutable: true,
+    id, kind: "episodic", immutable: true,
     tokens: estTokens(line),
     serialize: () => line,
     options: () => {
