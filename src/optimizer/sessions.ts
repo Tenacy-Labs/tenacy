@@ -31,8 +31,8 @@ export interface SessionHeader {
 
 interface StandingRow { t: "standing"; id: string; kind: "identity" | "directive"; text: string; immutable: boolean; watch: string | undefined }
 interface GoalRow { t: "goal"; id: string; text: string; parentId?: string | undefined; horizon?: string | undefined; status: "active" | "completed" }
-interface TurnRow { t: "turn"; id: string; role: "user" | "model" | "tool-result"; verbatim: string; summary?: string | undefined; rep: string }
-interface LensRow { t: "lens"; id: string; target: string; tag: string; ranges: Array<[number, number]>; baseBlockTurn: number; state: string }
+interface TurnRow { t: "turn"; id: string; role: "user" | "model" | "tool-result"; verbatim: string; summary?: string | undefined; rep: string; mergedInto?: string | undefined }
+interface LensRow { t: "lens"; id: string; target: string; tag: string; ranges: Array<[number, number]>; baseBlockTurn: number; state: string; selected?: string[]; prefixes?: string[]; projection?: string }
 interface NoticeRow { t: "notice"; id: string; text: string }
 type Row = StandingRow | GoalRow | TurnRow | LensRow | NoticeRow;
 
@@ -73,6 +73,8 @@ export function saveSession(loop: AgentLoop, path: string, providerName: string)
         const row: TurnRow = { t: "turn", id: it.id, role: roleFromId(it.id), verbatim: body, rep: turnRepOf(it) };
         const sum = turnSummaryOf(it);
         if (sum !== undefined) row.summary = sum;
+        const mi = (it as { mergedInto?: string | undefined }).mergedInto;
+        if (mi !== undefined) row.mergedInto = mi;
         rows.push(row);
       }
         break;
@@ -80,7 +82,12 @@ export function saveSession(loop: AgentLoop, path: string, providerName: string)
       case "lens": {
         const f = loop.lensRegistryView().get(it.id);
         if (f === undefined) break;  // orphaned lens row — skip honestly
-        rows.push({ t: "lens", id: f.id, target: f.target, tag: f.substrateTagView(), ranges: f.ranges, baseBlockTurn: f.baseBlockTurn, state: f.state });
+        const row: LensRow = { t: "lens", id: f.id, target: f.target, tag: f.substrateTagView(), ranges: f.ranges, baseBlockTurn: f.baseBlockTurn, state: f.state };
+        const extra = f as unknown as { selected?: string[]; prefixes?: string[]; projection?: string };
+        if (Array.isArray(extra.selected)) (row as { selected?: string[] }).selected = extra.selected;
+        if (Array.isArray(extra.prefixes)) (row as { prefixes?: string[] }).prefixes = extra.prefixes;
+        if (extra.projection !== undefined) (row as { projection?: string }).projection = extra.projection;
+        rows.push(row);
         break;
       }
       case "notice": {
@@ -133,11 +140,11 @@ export function restoreSession(loop: AgentLoop, path: string): { header: Session
           break;
         }
         case "turn": {
-          loop.addRestoredTurn(r.id, r.role, r.verbatim, r.summary, r.rep);
+          loop.addRestoredTurn(r.id, r.role, r.verbatim, r.summary, r.rep, r.mergedInto);
           break;
         }
         case "lens": {
-          loop.attachLens(r.id, r.target, r.ranges, r.baseBlockTurn, r.state as LensState, r.tag);
+          loop.attachLens(r.id, r.target, r.ranges, r.baseBlockTurn, r.state as LensState, r.tag, { selected: r.selected, prefixes: r.prefixes, projection: r.projection });
           break;
         }
         case "notice": {

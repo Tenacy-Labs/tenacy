@@ -4,8 +4,11 @@
  * signals; the solver stays single writer of render (signals not overrides).
  */
 import type { ContextStore } from "./store.ts";
+import type { ContextItem } from "./types.ts";
 import type { Ledger } from "./ledger.ts";
-import { GoalItem, FileLensItem, DirectoryLensItem } from "./items.ts";
+import { GoalItem, FileLensItem, DirectoryLensItem, MergeGroupItem } from "./items.ts";
+import { CodeLensItem } from "./code-lens.ts";
+import { NSLensItem } from "./ns-lens.ts";
 
 export type SteeringIntent =
   | { op: "say"; text: string }
@@ -21,7 +24,16 @@ export type SteeringIntent =
   | { op: "ctx.watch"; id: string; mode: "live" | "polled" | "frozen" }
   | { op: "ctx.search"; pattern: string }
   | { op: "dirs.expand"; target: string; from: number; to: number }
-  | { op: "dirs.release"; target: string; from: number; to: number };
+  | { op: "dirs.release"; target: string; from: number; to: number }
+  | { op: "code.expand"; target: string; symbols: string[] }
+  | { op: "code.release"; target: string; symbols: string[] }
+  | { op: "code.structure"; target: string }
+  | { op: "ns.focus"; target: string; prefix: string; projection?: "structure" | "content" }
+  | { op: "ns.unfocus"; target: string; prefix: string }
+  | { op: "convo.merge"; from: number; to: number }
+  | { op: "convo.reexpand"; id: string }
+  | { op: "ctx.reexpand"; id: string }
+  | { op: "goals.decompose"; id: string; sub: { id: string; text: string }[] };
 
 export type IntentResult = { op: string; ok: boolean; result: string };
 
@@ -29,8 +41,12 @@ export type IntentResult = { op: string; ok: boolean; result: string };
 export interface IntentHost {
   fileLens(target: string): FileLensItem;
   dirLens(target: string): DirectoryLensItem;
+  codeLens(target: string): CodeLensItem;
+  nsLens(target: string): NSLensItem;
+  convoTurn(id: string): { id: string; summary?: string | undefined; mergedInto?: string | undefined; verbatim(): string; markReexpanded(): void } | undefined;
   goal(id: string): GoalItem | undefined;
   setGoal(g: GoalItem): void;
+  addStoreItem(item: { toContextItem(): ContextItem }): void;
 }
 let host: IntentHost | null = null;
 export function bindHost(h: IntentHost): void { host = h; }
@@ -71,6 +87,93 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
       store.touch(lens.id);
       ledger?.recordSignal({ type: "dirs-release", itemId: lens.id, from: s.from, to: s.to, turn });
       return { op: s.op, ok: true, result: `released ${s.target} entries ${s.from}-${s.to} (${lens.ranges.length} remain)` };
+    }
+    case "code.expand": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const lens = host.codeLens(s.target);
+      for (const sym of s.symbols) lens.expandSymbol(sym);
+      store.touch(lens.id);
+      ledger?.recordSignal({ type: "code-expand", itemId: lens.id, symbols: s.symbols, turn });
+      return { op: s.op, ok: true, result: `anchored ${s.symbols.length} symbol(s) in ${s.target} (${lens.selected.length} selected)` };
+    }
+    case "code.release": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const lens = host.codeLens(s.target);
+      for (const sym of s.symbols) lens.releaseSymbol(sym);
+      store.touch(lens.id);
+      ledger?.recordSignal({ type: "code-release", itemId: lens.id, symbols: s.symbols, turn });
+      return { op: s.op, ok: true, result: `released ${s.symbols.length} symbol(s) (${lens.selected.length} remain)` };
+    }
+    case "code.structure": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const lens = host.codeLens(s.target);
+      store.touch(lens.id);
+      ledger?.recordSignal({ type: "code-structure", itemId: lens.id, turn });
+      return { op: s.op, ok: true, result: lens.structureText() };
+    }
+    case "ns.focus": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const lens = host.nsLens(s.target);
+      lens.focus(s.prefix);
+      if (s.projection !== undefined) lens.projection = s.projection;
+      store.touch(lens.id);
+      ledger?.recordSignal({ type: "ns-focus", itemId: lens.id, prefix: s.prefix, projection: lens.projection, turn });
+      return { op: s.op, ok: true, result: `focused ${s.prefix || "(root)"} under ${s.target} (${lens.prefixes.length} scope(s), ${lens.projection} projection)` };
+    }
+    case "ns.unfocus": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const lens = host.nsLens(s.target);
+      lens.unfocus(s.prefix);
+      store.touch(lens.id);
+      ledger?.recordSignal({ type: "ns-unfocus", itemId: lens.id, prefix: s.prefix, turn });
+      return { op: s.op, ok: true, result: `unfocused ${s.prefix} (${lens.prefixes.length} scope(s) remain)` };
+    }
+    case "convo.merge": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const members: string[] = [];
+      const texts: string[] = [];
+      for (let t = s.from; t <= s.to; t++) {
+        for (const role of ["user", "model"] as const) {
+          const m = host.convoTurn(`turn-${t}-${role}`);
+          if (m !== undefined) {
+            members.push(m.id);
+            texts.push(firstSentence(m.verbatim()));
+            m.mergedInto = `merge:turn-${s.from}-user..turn-${s.to}-model`;
+          }
+        }
+      }
+      if (members.length < 2) return { op: s.op, ok: false, result: "fewer than two turns in range" };
+      const groupId = `merge:turn-${s.from}-user..turn-${s.to}-model`;
+      const group = new MergeGroupItem(groupId, members, texts.join(" "), turn);
+      host.addStoreItem(group);
+      ledger?.recordSignal({ type: "convo-merge", itemId: groupId, members, turn });
+      return { op: s.op, ok: true, result: `merged ${members.length} turns into ${groupId}` };
+    }
+    case "convo.reexpand":
+    case "ctx.reexpand": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const m = host.convoTurn(s.id);
+      if (m === undefined) return { op: s.op, ok: false, result: `no such turn: ${s.id}` };
+      const wasLossy = m.summary !== undefined || m.mergedInto !== undefined;
+      m.mergedInto = undefined;
+      m.summary = undefined;
+      m.markReexpanded();
+      store.touch(s.id);
+      if (wasLossy) ledger?.recordSignal({ type: "realized-lossiness", itemId: s.id, turn });
+      return { op: s.op, ok: true, result: wasLossy ? `${s.id} restored to verbatim (realized lossiness journaled)` : `${s.id} was already verbatim` };
+    }
+    case "goals.decompose": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const parent = host.goal(s.id);
+      if (parent === undefined) return { op: s.op, ok: false, result: `no such goal: ${s.id}` };
+      let added = 0;
+      for (const sub of s.sub) {
+        const g = new GoalItem(sub.id, sub.text, s.id, "task");
+        host.setGoal(g);
+        added++;
+      }
+      ledger?.recordSignal({ type: "goals-decompose", itemId: s.id, subs: s.sub.map((x) => x.id), turn });
+      return { op: s.op, ok: true, result: `${s.id} decomposed into ${added} subgoal(s)` };
     }
     case "goals.set": {
       if (host === null) return { op: s.op, ok: false, result: "no host bound" };
@@ -153,4 +256,9 @@ function inspectStore(store: ContextStore, filter: "rendered" | "invisible" | "a
     parts.push(`${rendered ? "R" : "·"} ${it.id} [${it.kind}] ${it.tokens}t`);
   }
   return parts.length > 0 ? parts.join("\n") : "(empty)";
+}
+
+function firstSentence(text: string): string {
+  const m = /[.!?]\s/.exec(text);
+  return m === null ? text.slice(0, 200) : text.slice(0, m.index + 1);
 }

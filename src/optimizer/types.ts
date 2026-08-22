@@ -64,6 +64,11 @@ export interface ContextItem {
   signalClass?: "model-authored" | "optimizer" | undefined;
   /** Dream output (0002f §4): when set, a SUMMARY option joins the surface. Store record stays verbatim. */
   summary?: string | undefined;
+  /** Conversation lens (0002f §2): verbatim access for re-expansion; merge-group membership. */
+  verbatim?: () => string;
+  mergedInto?: string | undefined;
+  markReexpanded?: () => void;
+  setMergedInto?: (v: string | undefined) => void;
 }
 
 /** ItemSource — the generic validity interface, ADR-0002c §2. */

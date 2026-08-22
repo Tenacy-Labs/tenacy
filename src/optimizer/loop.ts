@@ -14,8 +14,11 @@ import { CacheModel } from "./cache-model.ts";
 import { Ledger } from "./ledger.ts";
 import type { Provider } from "./providers.ts";
 import { GoalItem, FileLensItem, DirectoryLensItem, NoticeItem, TurnItem, Lens } from "./items.ts";
+import { CodeLensItem } from "./code-lens.ts";
+import { NSLensItem, type NamespaceProducer } from "./ns-lens.ts";
 import { executeIntent, bindHost, type SteeringIntent } from "./intents.ts";
 import { dreamPass } from "./dream.ts";
+import { TurnBoundaryWatcher, applyDeltaToLens, type LensDelta } from "./live-views.ts";
 
 export type { SteeringIntent } from "./intents.ts";
 
@@ -55,6 +58,10 @@ export class AgentLoop {
     bindHost({
       fileLens: (t) => this.fileLens(t),
       dirLens: (t) => this.dirLens(t),
+      codeLens: (t) => this.codeLens(t),
+      nsLens: (t) => this.nsLens(t),
+      convoTurn: (id) => this.convoTurn(id),
+      addStoreItem: (it) => { this.store.add(it.toContextItem()); },
       goal: (id) => this.goalRegistry.get(id),
       setGoal: (g) => this.registerGoal(g),
     });
@@ -89,7 +96,9 @@ export class AgentLoop {
 
     this.store.nextTurn();
     this.turn = this.store.turn;
-    this.store.add(makeTurnItem(`turn-${this.turn}-user`, "user", userMessage, this.turn));
+    const userItem = makeTurnItem(`turn-${this.turn}-user`, "user", userMessage, this.turn);
+    this.turnRegistry.set(userItem.id, userItem as unknown as TurnItem);
+    this.store.add(userItem);
 
     const snap = this.store.snapshot();
     const solved = solve(snap, this.incumbent, this.ps, this.turn);
@@ -99,7 +108,9 @@ export class AgentLoop {
     const expected = this.cacheModel.expectedHit(rr.blocks);
     const response = await this.callWithRetry(rr.blocks, userMessage);
 
-    this.store.add(makeTurnItem(`turn-${this.turn}-model`, "model", response.text, this.turn));
+    const modelItem = makeTurnItem(`turn-${this.turn}-model`, "model", response.text, this.turn);
+    this.turnRegistry.set(modelItem.id, modelItem as unknown as TurnItem);
+    this.store.add(modelItem);
 
     // Model-proposed intents execute at the coordinator (proposer/applier split)
     if (response.intents !== undefined) {
@@ -122,6 +133,24 @@ export class AgentLoop {
 
     // Dream pass: aged episodic items gain SUMMARY options (0002f §4) —
     // off the hot path; the solver will price them next render.
+    // Live views (0002d §5): drain watcher events at the safe point —
+    // one committed delta per lens per turn; tail notices ride the render.
+    if (this.watcher !== null) {
+      const deltas = this.watcher.drain(this.turn);
+      for (const d of deltas) {
+        const lens = this.lensRegistry.get(d.lensId);
+        if (lens !== undefined) applyDeltaToLens(lens, d, this.turn);
+        this.ledger?.recordSignal({ type: "live-delta", itemId: d.lensId, markers: d.markers, coalesced: d.coalescedEvents, turn: this.turn });
+        if (this.watcher.shouldDemote(d.lensId)) {
+          const lens = this.lensRegistry.get(d.lensId);
+          if (lens !== undefined && lens.watch === "live") {
+            lens.watch = "polled";  // optimizer flip — never feeds value decay (§7)
+            this.ledger?.recordSignal({ type: "churn-demotion", itemId: d.lensId, churn: this.watcher.churnOf(d.lensId), turn: this.turn });
+          }
+        }
+      }
+    }
+
     const dreamt = dreamPass(this.store.all(), this.turn, 3);
     if (dreamt.length > 0) this.ledger?.recordSignal({ type: "dream-pass", count: dreamt.length, turn: this.turn });
 
@@ -219,24 +248,39 @@ export class AgentLoop {
     g.createdTurn = this.store.turn;
     this.registerGoal(g);
   }
-  addRestoredTurn(id: string, role: "user" | "model" | "tool-result", verbatim: string, summary: string | undefined, rep: string): void {
+  addRestoredTurn(id: string, role: "user" | "model" | "tool-result", verbatim: string, summary: string | undefined, rep: string, mergedInto?: string): void {
     this.store.remove(id);
     const t = new TurnItem(id, role, verbatim);
+    this.turnRegistry.set(id, t);
     if (summary !== undefined) t.summary = summary;
+    if (mergedInto !== undefined) t.mergedInto = mergedInto;
     t.rep = (rep === "SUMMARY" ? "SUMMARY" : "VERBATIM");
     t.lastTouchTurn = this.store.turn;
     t.createdTurn = this.store.turn;
     this.store.add(t.toContextItem());
   }
-  attachLens(id: string, target: string, ranges: Array<[number, number]>, baseBlockTurn: number, state: LensState, tag?: string): void {
+  attachLens(id: string, target: string, ranges: Array<[number, number]>, baseBlockTurn: number, state: LensState, tag?: string, extra?: { selected?: string[] | undefined; prefixes?: string[] | undefined; projection?: string | undefined }): void {
     let f: Lens;
     if (tag === "dir") {
       const listing = this.dirListing(target);
-      if (listing === "") return;  // directory gone — skip honestly
+      if (listing === "") return;
       f = new DirectoryLensItem(id, target, listing);
+    } else if (tag === "code") {
+      const content = this.fileContent(target.replace(/^code:/, ""));
+      if (content === "") return;
+      const c = new CodeLensItem(id, target, content);
+      if (extra?.selected !== undefined) c.selected = extra.selected;
+      f = c;
+    } else if (tag === "ns") {
+      const producer = this.nsProducer(target);
+      if (producer === null) return;
+      const n = new NSLensItem(id, target, producer);
+      if (extra?.prefixes !== undefined) n.prefixes = extra.prefixes;
+      if (extra?.projection !== undefined) n.projection = extra.projection as "structure" | "content";
+      f = n;
     } else {
       const content = this.fileContent(target);
-      if (content === "") return;  // file gone — skip honestly
+      if (content === "") return;
       f = new FileLensItem(id, target, content);
     }
     f.ranges = ranges;
@@ -250,6 +294,68 @@ export class AgentLoop {
   setTurn(turn: number): void {
     this.store.turn = turn;
   }
+
+  codeLens(target: string): CodeLensItem {
+    const id = `lens:code:${target}`;
+    let c = this.lensRegistry.get(id);
+    if (c === undefined) {
+      const content = this.fileContent(target);
+      if (content === "") throw new Error(`no such file: ${target}`);
+      c = new CodeLensItem(id, target, content);
+      c.lastTouchTurn = this.store.turn;
+      c.createdTurn = this.store.turn;
+      this.lensRegistry.set(id, c);
+      this.store.add(c.toContextItem());
+    }
+    if (!(c instanceof CodeLensItem)) throw new Error(`${id} is not a code lens`);
+    return c;
+  }
+  nsLens(target: string): NSLensItem {
+    // target = namespace root name; producer supplies children/commits
+    const id = `lens:ns:${target}`;
+    let n = this.lensRegistry.get(id);
+    if (n === undefined) {
+      const producer = this.nsProducer(target);
+      if (producer === null) throw new Error(`no namespace producer: ${target}`);
+      n = new NSLensItem(id, target, producer);
+      n.lastTouchTurn = this.store.turn;
+      n.createdTurn = this.store.turn;
+      this.lensRegistry.set(id, n);
+      this.store.add(n.toContextItem());
+    }
+    if (!(n instanceof NSLensItem)) throw new Error(`${id} is not a namespace lens`);
+    return n;
+  }
+  /** Namespace producer registry — injectable; default provides nothing. */
+  nsProducers = new Map<string, () => NamespaceProducer | null>();
+  nsProducer(name: string): NamespaceProducer | null {
+    const factory = this.nsProducers.get(name);
+    return factory === undefined ? null : factory();
+  }
+  convoTurn(id: string): { id: string; summary?: string | undefined; mergedInto?: string | undefined; verbatim(): string; markReexpanded(): void } | undefined {
+    const t = this.turnRegistry.get(id);
+    if (t === undefined) return undefined;
+    // Works for both real TurnItem instances and makeTurnItem closure items.
+    const anyT = t as unknown as {
+      summary?: string | undefined; mergedInto?: string | undefined;
+      verbatim?: () => string; markReexpanded?: () => void;
+    };
+    if (typeof anyT.verbatim !== "function") return undefined;
+    return {
+      id,
+      get summary() { return anyT.summary; },
+      set summary(v: string | undefined) { anyT.summary = v; },
+      get mergedInto() { return anyT.mergedInto; },
+      set mergedInto(v: string | undefined) {
+        anyT.mergedInto = v;
+        const setter = (t as unknown as { setMergedInto?: (x: string | undefined) => void }).setMergedInto;
+        if (setter !== undefined) setter(v);
+      },
+      verbatim: () => anyT.verbatim!(),
+      markReexpanded: () => { if (anyT.markReexpanded !== undefined) anyT.markReexpanded(); else t.lastTouchTurn = this.store.turn; },
+    };
+  }
+  private turnRegistry = new Map<string, TurnItem | ReturnType<typeof makeTurnItem>>();
 
   dirLens(target: string): DirectoryLensItem {
     const id = `lens:${target}`;
@@ -286,17 +392,31 @@ export class AgentLoop {
   }
   /** Unified lens registry — every substrate, keyed by lens id (OOP hierarchy). */
   private lensRegistry = new Map<string, Lens>();
+  /** Live-views watcher engine — set by the surface to enable push lenses. */
+  watcher: TurnBoundaryWatcher | null = null;
+  /** Tail change-notices from the last drain (sequence legibility §6). */
+  lastTailNotices: string[] = [];
   /** Content provider — injectable; default reads nothing. */
   fileContent: (target: string) => string = () => "";
 }
 
 export function makeTurnItem(id: string, role: "user" | "model", text: string, turn: number): ContextItem {
   const line = `[${role}] ${text}`;
+  // Closure state for the convoTurn host proxy (verbatim + merge slot).
+  const convo = { verbatim: text, mergedInto: undefined as string | undefined };
   const item: ContextItem = {
     id, kind: "episodic", velocity: "stable", immutable: true,
     tokens: estTokens(line),
     serialize: () => line,
     options: () => {
+      if (convo.mergedInto !== undefined) {
+        // member of a merge group: the group carries the representation
+        return [{
+          id: "in-merge", zones: ["evolving"], representation: "MERGED",
+          tokens: estTokens(`[${role}] [merged into ${convo.mergedInto}]`),
+          purelyAdditive: false, text: `[${role}] [merged into ${convo.mergedInto}]`,
+        }];
+      }
       const opts: RenderOption[] = [{
         id: "verbatim", zones: ["evolving"], representation: "VERBATIM",
         tokens: estTokens(line), purelyAdditive: true, text: line,
@@ -314,6 +434,11 @@ export function makeTurnItem(id: string, role: "user" | "model", text: string, t
       return opts;
     },
     lastTouchTurn: turn, createdTurn: turn, summary: undefined,
+    // Conversation-lens surface (0002f §2) — closure-backed:
+    verbatim: () => convo.verbatim,
+    mergedInto: undefined as string | undefined,
+    markReexpanded: () => { item.lastTouchTurn = turn; },
+    setMergedInto: (v: string | undefined) => { convo.mergedInto = v; item.mergedInto = v; },
   };
   return item;
 }

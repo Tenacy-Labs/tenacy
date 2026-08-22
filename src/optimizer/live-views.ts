@@ -1,0 +1,128 @@
+/**
+ * Live views — ADR-0002d §5/§6. Push-driven lenses: a coordinator-side
+ * watcher feeds invalidation without the model polling.
+ *
+ * - The turn is the sampling boundary: events debounce/coalesce to at
+ *   most ONE committed delta per lens per turn; they drain at the same
+ *   safe point as steering (no mid-turn mutation).
+ * - Render stays pure: the watcher mutates the store/lens outside render.
+ * - Sequence legibility (§6): identity stability (same id/slot — updates
+ *   mutate, never drop-and-recreate), marked deltas (+/−/→ with turn
+ *   citations), tail change-notices, unchanged-stamps.
+ * - Churn pricing (§5): realized invalidation cost vs rendered value —
+ *   a live lens that thrashes is demoted to polled (optimizer flip,
+ *   never feeds value decay).
+ *
+ * v1 ships the debounce/coalesce engine + fs watch adapter for file and
+ * directory lenses; the namespace lens subscribes via commit replay
+ * (its applyCommits), not fs events.
+ */
+import { watch, type FSWatcher } from "node:fs";
+import type { Lens } from "./lens.ts";
+
+export interface LensDelta {
+  lensId: string;
+  /** Turn the delta committed at (assigned at drain). */
+  committedTurn: number;
+  /** Marked changes, sequence-legible: +path / −path / →path @tN. */
+  markers: string[];
+  /** Event count coalesced into this delta (churn signal). */
+  coalescedEvents: number;
+}
+
+export interface WatchEvent {
+  lensId: string;
+  path: string;
+  kind: "change" | "rename" | "add" | "unlink";
+}
+
+/**
+ * TurnBoundaryWatcher — the coalescing engine. Producers push raw events;
+ * the loop drains at the turn boundary into one committed delta per lens.
+ * Debounce is structural: nothing commits between turns by construction.
+ */
+export class TurnBoundaryWatcher {
+  private pending = new Map<string, WatchEvent[]>();
+  private deltas: LensDelta[] = [];
+  private churn = new Map<string, number>();
+  /** Demotion policy: events per turn above this => demote to polled. */
+  churnDemoteThreshold = 40;
+
+  push(ev: WatchEvent): void {
+    const list = this.pending.get(ev.lensId);
+    if (list === undefined) this.pending.set(ev.lensId, [ev]);
+    else list.push(ev);
+  }
+
+  /** Drain at the safe point — returns one delta per lens with events. */
+  drain(turn: number): LensDelta[] {
+    const out: LensDelta[] = [];
+    for (const [lensId, events] of this.pending) {
+      const markers = new Set<string>();
+      for (const ev of events) {
+        const mk = ev.kind === "add" ? `+${ev.path}` : ev.kind === "unlink" ? `−${ev.path}` : ev.kind === "rename" ? `→${ev.path}` : `~${ev.path}`;
+        markers.add(`${mk} @t${turn}`);
+      }
+      const total = (this.churn.get(lensId) ?? 0) + events.length;
+      this.churn.set(lensId, total);
+      out.push({ lensId, committedTurn: turn, markers: [...markers], coalescedEvents: events.length });
+    }
+    this.pending.clear();
+    this.deltas.push(...out);
+    return out;
+  }
+
+  /** Realized churn for a lens (demotion input, 0002d §5). */
+  churnOf(lensId: string): number { return this.churn.get(lensId) ?? 0; }
+
+  /** Should this lens be demoted live→polled? (optimizer-authored flip) */
+  shouldDemote(lensId: string): boolean {
+    return this.churnOf(lensId) > this.churnDemoteThreshold;
+  }
+
+  /** Sequence-legibility render helpers (§6). */
+  static tailNotice(delta: LensDelta): string {
+    return `[changed @t${delta.committedTurn}: ${delta.markers.slice(0, 3).join(", ")}${delta.markers.length > 3 ? ", …" : ""}]`;
+  }
+  static unchangedStamp(lastChangeTurn: number | null): string {
+    return lastChangeTurn === null ? "unchanged since load" : `unchanged since turn ${lastChangeTurn}`;
+  }
+}
+
+/**
+ * fs watch adapter — watches a path for a lens, pushes raw events into
+ * the engine. Ignore-globs: .git, node_modules, build output (§5).
+ */
+export class FsWatchAdapter {
+  private watcher: FSWatcher | null = null;
+  constructor(
+    private readonly engine: TurnBoundaryWatcher,
+    private readonly lensId: string,
+    private readonly root: string,
+  ) {}
+
+  start(): void {
+    try {
+      this.watcher = watch(this.root, { recursive: true }, (_event, filename) => {
+        const f = filename === null ? "" : String(filename);
+        if (f === "" || f.includes(".git") || f.includes("node_modules") || f.includes("dist/")) return;
+        this.engine.push({ lensId: this.lensId, path: f, kind: "change" });
+      });
+    } catch {
+      // OS watch limits are real (§5 Risks) — degrade to polled silently
+      this.watcher = null;
+    }
+  }
+
+  stop(): void {
+    this.watcher?.close();
+    this.watcher = null;
+  }
+}
+
+/** Apply a committed delta to a lens's legibility fields (identity stable). */
+export function applyDeltaToLens(lens: Lens, delta: LensDelta, turn: number): void {
+  // Identity stability: mutate in place. lastDelta feeds the render header.
+  (lens as unknown as { lastDelta?: string[] }).lastDelta = delta.markers;
+  (lens as unknown as { lastChangeTurn?: number }).lastChangeTurn = turn;
+}

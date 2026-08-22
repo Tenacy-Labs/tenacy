@@ -100,8 +100,10 @@ export class GoalItem {
 /** Episodic turn record — immutable; the conversation lens substrate (ADR-0002f §2). */
 export class TurnItem {
   #verbatim: string;
-  summary?: string;
+  summary?: string | undefined;
   rep: ConvoRep = "VERBATIM";
+  /** MERGED: if set, this turn renders inside the merge-group item instead. */
+  mergedInto?: string | undefined;
   constructor(
     public readonly id: string,          // "turn-41"
     public readonly role: "model" | "tool-result" | "user",
@@ -126,6 +128,13 @@ export class TurnItem {
   }
   /** Conversation-lens options: VERBATIM (additive), SUMMARY (rewrite, penalized by A6 ramp). */
   options(): RenderOption[] {
+    if (this.mergedInto !== undefined) {
+      // member of a merge group: renders nothing of its own — the group
+      // item carries the MERGED representation (one transform, amortized)
+      return [
+        opt("in-merge", ["evolving"], "MERGED", `[${this.role}] [merged into ${this.mergedInto}]`, false),
+      ];
+    }
     const opts: RenderOption[] = [
       opt("verbatim", ["evolving"], "VERBATIM", `[${this.role}] ${this.#verbatim}`, true),
     ];
@@ -141,6 +150,38 @@ export class TurnItem {
       upstreams: this.upstreams, lastRender: this.lastRender, lastTouchTurn: this.lastTouchTurn,
       createdTurn: this.createdTurn, hazardOverride: this.hazardOverride, valueBump: this.valueBump,
       watch: this.watch,
+    };
+  }
+}
+
+/**
+ * MergeGroup — one lightweight-LLM transform combining several contiguous
+ * turns (ADR-0002f §2 MERGED). Members keep verbatim in the store; the
+ * group item carries the merged representation; boundaries chosen by the
+ * dream pass (v1: contiguous runs of aged turns).
+ */
+export class MergeGroupItem {
+  constructor(
+    public readonly id: string,          // "merge:3-6"
+    public readonly memberIds: readonly string[],
+    public text: string,                 // the merged representation
+    public createdTurn = 0,
+  ) {}
+  get tokens(): number { return estTokens(this.#header() + this.text); }
+  #header(): string { return `⟨merged ${this.memberIds[0]}..${this.memberIds[this.memberIds.length - 1]}⟩`; }
+  serialize(): string { return this.#header() + "\n" + this.text; }
+  options(): RenderOption[] {
+    return [
+      opt("merged", ["foundational"], "MERGED", this.serialize(), false),
+      opt("nothing", ["volatile"], "AS_IS", "", false),
+    ];
+  }
+  toContextItem(): ContextItem {
+    return {
+      id: this.id, kind: "episodic", velocity: "stable", immutable: false,
+      tokens: this.tokens, serialize: () => this.serialize(), options: () => this.options(),
+      upstreams: this.memberIds, lastTouchTurn: this.createdTurn, createdTurn: this.createdTurn,
+      watch: "frozen",
     };
   }
 }

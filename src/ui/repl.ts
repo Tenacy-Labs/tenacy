@@ -74,6 +74,27 @@ agent.store.add(new StandingItem("directive", "directive",
   "Work in typed cells against the namespace. Use files./ctx./goals. tools to operate your context. Be precise.").toContextItem());
 
 // Real file reads for lenses (expand fails honestly on unreadable targets)
+// Namespace producer v1: the optimizer's own exports as a browsable tree
+// (a real kernel wires its commons commit log; this proves the surface).
+agent.nsProducers.set("optimizer", () => ({
+  children(prefix: string) {
+    const all = [
+      { path: "optimizer/solver", kind: "group" as const },
+      { path: "optimizer/renderer", kind: "group" as const },
+      { path: "optimizer/store", kind: "cell" as const },
+      { path: "optimizer/solver/solve", kind: "binding" as const, repr: "MCKP over option surface" },
+      { path: "optimizer/solver/reliefByDensity", kind: "binding" as const, repr: "v1.1 worst-density drop" },
+      { path: "optimizer/renderer/render", kind: "binding" as const, repr: "zone-ordered deterministic" },
+      { path: "optimizer/renderer/estTokens", kind: "binding" as const, repr: "chars/4 heuristic" },
+    ];
+    return all.filter((n) => {
+      const parent = n.path.includes("/") ? n.path.slice(0, n.path.lastIndexOf("/")) : "";
+      return parent === prefix;
+    });
+  },
+  commitsSince() { return []; },  // static v1 — no commits yet
+}));
+
 agent.dirListing = (target: string): string => {
   try {
     const ents = readdirSync(target, { withFileTypes: true });

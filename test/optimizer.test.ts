@@ -484,3 +484,212 @@ describe("lens hierarchy — abstract base + substrate subclasses", () => {
     if (rl.ranges.length !== 1 || rl.ranges[0]?.[0] !== 1) throw new Error("dir lens ranges wrong after restore");
   });
 });
+
+// ── ADR lens family completion: code, ns, convo.merge, live views ──────
+
+describe("code lens — symbol-anchored ranges (0002d §4)", () => {
+  test("structure listing and symbol expand; anchor survives line shifts", async () => {
+    const { CodeLensItem, HeuristicTsExtractor } = await import("../src/optimizer/code-lens.ts");
+    const src1 = [
+      "import x from 'y';",
+      "",
+      "export function solve(a: number): number {",
+      "  return a + 1;",
+      "}",
+      "",
+      "export class Renderer {",
+      "  render() { return 'r'; }",
+      "}",
+    ].join("\n");
+    const c = new CodeLensItem("lens:code:t.ts", "t.ts", src1, new HeuristicTsExtractor());
+    const listing = c.listingLines();
+    if (!listing.some((l) => l.startsWith("solve"))) throw new Error("solve not in structure: " + JSON.stringify(listing));
+    if (!listing.some((l) => l.startsWith("Renderer"))) throw new Error("Renderer not in structure");
+    c.expandSymbol("solve");
+    const before = c.serialize();
+    if (!before.includes("return a + 1;")) throw new Error("solve body missing");
+    if (before.includes("render()")) throw new Error("unselected Renderer leaked into selection");
+
+    // LINE SHIFT: two lines inserted ABOVE solve — anchoring must hold
+    const src2 = ["// comment 1", "// comment 2", ...src1.split("\n")].join("\n");
+    c.content = src2;
+    const after = c.serialize();
+    if (!after.includes("return a + 1;")) throw new Error("ANCHORING FAILED: solve body lost after line shift");
+    if (!after.includes("solve|")) throw new Error("solve label missing after shift");
+  });
+
+  test("removed symbol renders honest placeholder; release drops anchor", async () => {
+    const { CodeLensItem, HeuristicTsExtractor } = await import("../src/optimizer/code-lens.ts");
+    const src = "export function alpha() { return 1; }\nexport function beta() { return 2; }";
+    const c = new CodeLensItem("lens:code:z.ts", "z.ts", src, new HeuristicTsExtractor());
+    c.expandSymbol("alpha");
+    c.expandSymbol("beta");
+    c.content = "export function beta() { return 2; }";  // alpha deleted
+    const out = c.serialize();
+    if (!out.includes("no longer present")) throw new Error("deleted symbol must render honestly");
+    c.releaseSymbol("beta");
+    if (c.serialize().includes("return 2;")) throw new Error("released symbol still rendered");
+  });
+
+  test("code.expand / code.structure intents flow through the host", async () => {
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("m"));
+    loop.fileContent = () => "export function greet() { return 'hi'; }\nexport const VERSION = 1;";
+    loop.store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    const r1 = executeIntent({ op: "code.structure", target: "mod.ts" }, loop.store, null);
+    if (!r1.ok || !r1.result.includes("greet")) throw new Error("structure failed: " + r1.result);
+    const r2 = executeIntent({ op: "code.expand", target: "mod.ts", symbols: ["greet", "VERSION"] }, loop.store, null);
+    if (!r2.ok) throw new Error("expand failed: " + r2.result);
+    const lens = loop.lensRegistryView().get("lens:code:mod.ts");
+    if (lens === undefined) throw new Error("code lens not registered");
+    const ci = loop.store.get("lens:code:mod.ts");
+    if (ci === undefined || !ci.serialize().includes("hi")) throw new Error("anchored source not in store render");
+  });
+});
+
+describe("namespace lens — recursive focus, projections, commit diffs (0002d §3)", () => {
+  test("focus prefix, structure vs content projection, expand-by-index", async () => {
+    const { NSLensItem } = await import("../src/optimizer/ns-lens.ts");
+    const producer = {
+      children(prefix: string) {
+        const nodes = [
+          { path: "mcp", kind: "group" as const },
+          { path: "mcp/tools", kind: "group" as const },
+          { path: "mcp/tools/http", kind: "binding" as const, repr: "fetch adapter" },
+          { path: "mcp/tools/fs", kind: "binding" as const, repr: "fs adapter" },
+          { path: "core", kind: "group" as const },
+          { path: "core/loop", kind: "cell" as const, repr: "AgentLoop" },
+        ];
+        return nodes.filter((n) => {
+          const parent = n.path.includes("/") ? n.path.slice(0, n.path.lastIndexOf("/")) : "";
+          return parent === prefix;
+        });
+      },
+      commitsSince() { return []; },
+    };
+    const ns = new NSLensItem("lens:ns:kernel", "kernel", producer);
+    ns.focus("mcp");
+    const structLines = ns.listingLines();
+    if (structLines.length === 0 || !structLines.some((l) => l.startsWith("mcp/tools/http"))) throw new Error("structure projection wrong: " + JSON.stringify(structLines));
+    if (structLines.some((l) => l.includes("fetch adapter"))) throw new Error("content leaked into structure projection");
+    ns.projection = "content";
+    const contentLines = ns.listingLines();
+    if (!contentLines.some((l) => l.includes("fetch adapter"))) throw new Error("content projection missing repr");
+    ns.unfocus("mcp");
+    if (ns.prefixes.length !== 0) throw new Error("unfocus failed");
+  });
+
+  test("commit replay yields sequence-legible markers (0002d §6)", async () => {
+    const { NSLensItem } = await import("../src/optimizer/ns-lens.ts");
+    let log = [
+      { turn: 2, changes: [{ marker: "+" as const, path: "mcp/tools/http" }] },
+      { turn: 5, changes: [{ marker: "->" as const, path: "mcp/tools/fs" }] },
+    ];
+    const producer = {
+      children: () => [],
+      commitsSince: (t: number) => log.filter((c) => c.turn > t),
+    };
+    const ns = new NSLensItem("lens:ns:k", "k", producer);
+    ns.applyCommits(7);
+    if (!ns.lastDelta.some((m) => m.includes("+mcp/tools/http @t2"))) throw new Error("add marker missing: " + JSON.stringify(ns.lastDelta));
+    if (!ns.lastDelta.some((m) => m.includes("→mcp/tools/fs @t5"))) throw new Error("move marker missing");
+    log = [];  // no new commits
+    ns.applyCommits(9);
+    if (ns.lastDelta.length !== 0) throw new Error("no commits should yield no markers");
+  });
+
+  test("ns.focus intent flows through the host with projection", async () => {
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("m"));
+    loop.nsProducers.set("kernel", () => ({
+      children: () => [{ path: "mcp/tools/http", kind: "binding" as const, repr: "fetch" }],
+      commitsSince: () => [],
+    }));
+    loop.store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    const r = executeIntent({ op: "ns.focus", target: "kernel", prefix: "mcp", projection: "content" }, loop.store, null);
+    if (!r.ok) throw new Error("ns.focus failed: " + r.result);
+    const ns = loop.lensRegistryView().get("lens:ns:kernel");
+    if (ns === undefined) throw new Error("ns lens not registered");
+    const ci = loop.store.get("lens:ns:kernel");
+    if (ci === undefined || !ci.serialize().includes("mcp/tools/http")) throw new Error("focused ns content not rendered");
+  });
+});
+
+describe("conversation MERGED + realized lossiness (0002f §2)", () => {
+  test("convo.merge groups turns; members render in-merge; reexpand journals lossiness", async () => {
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("m"));
+    loop.store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    await loop.run("first message");
+    await loop.run("second message");
+    await loop.run("third message");
+    // merge turns 1-2
+    const r = executeIntent({ op: "convo.merge", from: 1, to: 2 }, loop.store, null);
+    if (!r.ok) throw new Error("merge failed: " + r.result);
+    const group = loop.store.get("merge:turn-1-user..turn-2-model");
+    if (group === undefined) throw new Error("merge group item missing");
+    if (!group.serialize().startsWith("⟨merged turn-1-user..turn-2-model⟩")) throw new Error("group header wrong: " + group.serialize().slice(0, 60));
+    const member = loop.convoTurn("turn-1-user");
+    if (member === undefined || member.mergedInto === undefined) throw new Error("member not marked merged");
+    const memberItem = loop.store.get("turn-1-user");
+    if (memberItem === undefined) throw new Error("member item missing");
+    if (!memberItem.options().some((o) => o.id === "in-merge")) throw new Error("in-merge option missing");
+    // re-expand member: lossiness journaled
+    let lossy = "";
+    const r2 = executeIntent({ op: "convo.reexpand", id: "turn-1-user" }, loop.store, {
+      recordSignal: (x: { type: string }) => { if (x.type === "realized-lossiness") lossy = x.type; },
+    } as never);
+    if (!r2.ok) throw new Error("reexpand failed: " + r2.result);
+    if (lossy !== "realized-lossiness") throw new Error("lossiness not journaled");
+    const restored = loop.convoTurn("turn-1-user");
+    if (restored === undefined || restored.mergedInto !== undefined) throw new Error("member not restored to verbatim");
+  });
+});
+
+describe("live views — coalescing, tail notices, churn demotion (0002d §5/§6)", () => {
+  test("events coalesce to one delta per lens per turn; markers carry turn citations", async () => {
+    const { TurnBoundaryWatcher } = await import("../src/optimizer/live-views.ts");
+    const w = new TurnBoundaryWatcher();
+    w.push({ lensId: "lens:a", path: "x.ts", kind: "change" });
+    w.push({ lensId: "lens:a", path: "x.ts", kind: "change" });
+    w.push({ lensId: "lens:a", path: "y.ts", kind: "add" });
+    w.push({ lensId: "lens:b", path: "z.md", kind: "unlink" });
+    const deltas = w.drain(4);
+    if (deltas.length !== 2) throw new Error(`expected 2 deltas (one per lens), got ${deltas.length}`);
+    const a = deltas.find((d) => d.lensId === "lens:a")!;
+    if (a.coalescedEvents !== 3) throw new Error(`coalesced count wrong: ${a.coalescedEvents}`);
+    if (!a.markers.some((m) => m.includes("+y.ts @t4")) || !a.markers.some((m) => m.includes("~x.ts @t4"))) throw new Error("markers wrong: " + JSON.stringify(a.markers));
+    const b = deltas.find((d) => d.lensId === "lens:b")!;
+    if (!b.markers[0]?.includes("−z.md")) throw new Error("unlink marker wrong");
+    // second drain with no events: empty
+    if (w.drain(5).length !== 0) throw new Error("empty drain should yield nothing");
+  });
+
+  test("churn demotion trips above threshold; optimizer flip journals but never feeds decay", async () => {
+    const { TurnBoundaryWatcher } = await import("../src/optimizer/live-views.ts");
+    const w = new TurnBoundaryWatcher();
+    w.churnDemoteThreshold = 40;
+    for (let i = 0; i < 45; i++) w.push({ lensId: "lens:hot", path: `f${i}.ts`, kind: "change" });
+    w.drain(1);
+    if (!w.shouldDemote("lens:hot")) throw new Error("demotion should trip at 45 > 40");
+    if (w.shouldDemote("lens:cold")) throw new Error("cold lens must not demote");
+  });
+
+  test("loop drains watcher at turn boundary and journals live-delta signals", async () => {
+    const { TurnBoundaryWatcher } = await import("../src/optimizer/live-views.ts");
+    const ledger = new Ledger(join(mkdtempSync(join(tmpdir(), "ak-lv-")), "l.jsonl"));
+    const loop = new AgentLoop(new MockProvider(), ps_default(), ledger);
+    loop.watcher = new TurnBoundaryWatcher();
+    loop.watcher.push({ lensId: "lens:none", path: "q.ts", kind: "change" });
+    loop.store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    await loop.run("trigger a turn");
+    await ledger.drain();
+    // signal journaled
+    const lines = readFileSyncLines(join(dirname0(ledgerPathOf(ledger)), "l.jsonl"));
+    if (!lines.some((l) => l.includes("live-delta"))) throw new Error("live-delta signal not journaled");
+  });
+});
+
+function ps_default() { return paramSetV1("test-model"); }
+function ledgerPathOf(l: Ledger): string { return (l as unknown as { path: string }).path; }
+function dirname0(p: string): string { return p.slice(0, p.lastIndexOf("/")); }
+function readFileSyncLines(p: string): string[] {
+  try { return (require("node:fs").readFileSync(p, "utf8") as string).split("\n").filter((x) => x !== ""); } catch { return []; }
+}
