@@ -10,7 +10,6 @@
  * tree-sitter slots in without touching the lens or the solver.
  */
 import { Lens } from "./lens.ts";
-import type { LensState, RenderOption, Velocity } from "./types.ts";
 import { opt } from "./items.ts";
 import { estTokens } from "./renderer.ts";
 
@@ -79,7 +78,6 @@ export class CodeLensItem extends Lens {
     target: string,
     public content: string,                // current source (producer-supplied)
     public extractor: SymbolExtractor = new HeuristicTsExtractor(),
-    velocity: Velocity = "evolving",
     immutable = false,
     upstreams: readonly string[] = [],
     hazardOverride?: number,
@@ -89,7 +87,7 @@ export class CodeLensItem extends Lens {
     lastTouchTurn = 0,
     createdTurn = 0,
   ) {
-    super(id, target, velocity, immutable, upstreams, hazardOverride, valueBump, watch, lastRender, lastTouchTurn, createdTurn);
+    super(id, target, immutable, upstreams, hazardOverride, valueBump, watch, lastRender, lastTouchTurn, createdTurn);
   }
 
   protected substrateTag(): string { return "code"; }

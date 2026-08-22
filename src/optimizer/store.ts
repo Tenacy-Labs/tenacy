@@ -118,13 +118,8 @@ export type StoreJournalEvent =
   | { type: "watch-flip"; itemId: string; mode: "live" | "polled" | "frozen"; author: "model-authored" }
   | { type: "dag-invalidate"; itemId: string };
 
-/** Kind to default zone mapping (solver may override per option; zones are the cache layout). */
-export function kindZone(kind: ItemKind, velocity: ContextItem["velocity"]): Zone {
-  if (kind === "identity" || kind === "goal") return "identity";
-  if (kind === "directive" || kind === "reference" || kind === "error") return "foundational";
-  if (kind === "artifact" || kind === "kernelView") return "stable";
-  if (kind === "lens") return velocity === "volatile" ? "volatile" : "evolving";
-  return "evolving";
-}
+// kindZone removed with velocity (ADR-0006 §2, owner ruling 2026-08-22):
+// zones are chosen per-option by the solver (options carry their legal
+// zones); no kind-level default is consulted anywhere.
 
 export { ZONE_ORDER };

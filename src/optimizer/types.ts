@@ -11,7 +11,9 @@ export type ItemKind =
   | "identity" | "directive" | "goal" | "episodic" | "reference"
   | "lens" | "kernelView" | "artifact" | "notice" | "error";
 
-export type Velocity = "frozen" | "stable" | "evolving" | "volatile";
+// Velocity removed per ADR-0006 §2 (owner ruling 2026-08-22): duplicated
+// hazard (hazard IS velocity as a probability); zoneOfDyn derives dynamism
+// from observed state. Historical: docs/adr/0002*.md.
 
 export type Zone = "identity" | "foundational" | "stable" | "evolving" | "volatile";
 
@@ -44,7 +46,6 @@ export interface RenderOption {
 export interface ContextItem {
   id: string;                       // stable handle: "goal:1", "turn-41", "lens:src/kernel.ts", "mem:7"
   kind: ItemKind;
-  velocity: Velocity;
   immutable: boolean;               // episodic records never change once written
   tokens: number;                   // accounted at insertion (estimate: chars/4)
   /** Serialized bytes of the current representation (pure function of item state). */

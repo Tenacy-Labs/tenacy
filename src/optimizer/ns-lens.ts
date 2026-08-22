@@ -12,7 +12,6 @@
  *   injectable producer; a live kernel wires its real commit stream.
  */
 import { Lens } from "./lens.ts";
-import type { Velocity } from "./types.ts";
 
 export interface NamespaceNode {
   path: string;                 // "mcp/tools/http"
@@ -63,7 +62,6 @@ export class NSLensItem extends Lens {
     id: string,
     target: string,
     public producer: NamespaceProducer,
-    velocity: Velocity = "evolving",
     immutable = false,
     upstreams: readonly string[] = [],
     hazardOverride?: number,
@@ -73,7 +71,7 @@ export class NSLensItem extends Lens {
     lastTouchTurn = 0,
     createdTurn = 0,
   ) {
-    super(id, target, velocity, immutable, upstreams, hazardOverride, valueBump, watch, lastRender, lastTouchTurn, createdTurn);
+    super(id, target, immutable, upstreams, hazardOverride, valueBump, watch, lastRender, lastTouchTurn, createdTurn);
   }
 
   protected substrateTag(): string { return "ns"; }

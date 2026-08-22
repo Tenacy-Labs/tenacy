@@ -174,7 +174,7 @@ describe("review C-C1 — §3 two-class recoverability now has honest producers"
   });
   test("file lens stamps rereadable", async () => {
     const { FileLensItem } = await import("../src/optimizer/lens.ts");
-    const lens = new FileLensItem("lens:notes.txt", "notes.txt", "line one\nline two\nline three\n", "evolving");
+    const lens = new FileLensItem("lens:notes.txt", "notes.txt", "line one\nline two\nline three\n");
     loop_lens: {
       expect(lens.toContextItem().recoverability).toBe("rereadable");
       break loop_lens;
@@ -191,7 +191,7 @@ describe("review A-M2 — μ₀ double-count in valueMass future-value stream", 
     // matches the mass-only expectation (not 3× it).
     const ps = paramSetV1("mock");
     const mk = (id: string, text: string): ContextItem => ({
-      id, kind: "directive", velocity: "volatile", immutable: false,
+      id, kind: "directive", immutable: false,
       tokens: estTokens(text),
       serialize: () => text,
       options: () => [{
@@ -227,7 +227,7 @@ describe("review A-M4 — new-item hazard premium charges own tokens, not the wi
     // overpricing by hazard·(W/1000)·spread is gone.
     const ps = paramSetV1("mock");
     const solveAt = (windowTokens: number) => {
-      const notice = new NoticeItem("n:1", "notice", "short notice body", "volatile", false, [], 0.9).toContextItem();
+      const notice = new NoticeItem("n:1", "notice", "short notice body", false, [], 0.9).toContextItem();
       const items = new Map<string, ContextItem>([["n:1", notice]]);
       const incumbent = {
         rendered: new Map(), totalTokens: windowTokens, blockCount: Math.max(1, Math.round(windowTokens / 100)),

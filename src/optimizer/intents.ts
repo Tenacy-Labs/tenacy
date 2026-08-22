@@ -359,7 +359,7 @@ function fmtUsage(u: { calls: number; inputTokens: number; outputTokens: number;
 
 function itemStr(it: ReturnType<ContextStore["get"]> & {}): string {
   const opts = it.options().map((o) => o.id + (o.purelyAdditive ? "+" : "")).join(", ");
-  return `${it.id} [${it.kind}/${it.velocity}] ${it.tokens}t; options: ${opts}`;
+  return `${it.id} [${it.kind}] ${it.tokens}t; options: ${opts}`;
 }
 
 function inspectStore(store: ContextStore, filter: "rendered" | "invisible" | "all"): string {
