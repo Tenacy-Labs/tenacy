@@ -296,14 +296,16 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   // new items take density slots. Old rule (density-then-id) reordered the
   // evolving zone every turn as values decayed (turn-10 before turn-2), a
   // 100% cache miss the objective never saw.
+  // within-zone: incumbent items keep their relative order (stable, prefix-
+  // preserving); new items append after them, density-ranked among themselves.
+  // Review A-minor-10 (amended after profiling): hoist the position Map ABOVE
+  // the sort — constructing it inside the comparator allocated one Map per
+  // comparison (59% of suite CPU in the 2026-08-22 profile, a regression the
+  // original indexOf never had). Missing ids keep the −1 sentinel semantics.
+  const incumbentPos = new Map(incumbentOrder.map((id, i) => [id, i] as const));
   chosen.sort((a, b) => {
     const za = ZONE_ORDER.indexOf(zoneOfDyn(a, incumbent.rendered.get(a.item.id))), zb = ZONE_ORDER.indexOf(zoneOfDyn(b, incumbent.rendered.get(b.item.id)));
     if (za !== zb) return za - zb;
-    // within-zone: incumbent items keep their relative order (stable, prefix-
-    // preserving); new items append after them, density-ranked among themselves.
-    // Review A-minor-10: precompute positions — indexOf inside the comparator
-    // was O(n²·log n). Missing ids keep the old −1 sentinel semantics.
-    const incumbentPos = new Map(incumbentOrder.map((id, i) => [id, i] as const));
     const pa = incumbentPos.get(a.item.id) ?? -1;
     const pb = incumbentPos.get(b.item.id) ?? -1;
     if (pa >= 0 && pb >= 0) return pa - pb;
