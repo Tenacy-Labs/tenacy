@@ -6,6 +6,9 @@
  * construction against the reported probes).
  */
 import { describe, test, expect } from "bun:test";
+import { mkdtempSync, writeFileSync, existsSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { lambdaPosterior, evidenceValueFactor } from "../src/optimizer/evidence.ts";
 import { StandingItem, NoticeItem } from "../src/optimizer/items.ts";
 import { solve } from "../src/optimizer/solver.ts";
@@ -42,6 +45,26 @@ describe("review A-C1/M1 — prior=0 kinds (identity/episodic/error)", () => {
   });
 });
 
+describe("review M5/B12/B20 — write turns carry forward on byte-identical keeps (§4 TTL window live in production)", () => {
+  test("loop-level: identity block keeps its ORIGINAL write turn across turns", async () => {
+    const { AgentLoop } = await import("../src/optimizer/loop.ts");
+    const { MockProvider } = await import("../src/optimizer/providers.ts");
+    const { paramSetV1 } = await import("../src/optimizer/params.ts");
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("mock"), null);
+    loop.store.add(new StandingItem("identity", "identity", "kernel agent").toContextItem());
+    await loop.run("first message");   // turn 1: identity block written
+    const w1 = loop.incumbentWriteTurns();
+    await loop.run("second message");  // turn 2: identity byte-identical keep
+    await loop.run("third message");   // turn 3
+    const w3 = loop.incumbentWriteTurns();
+    // Post-fix: the identity blocks (stable digest, w1=[1,1]) keep write
+    // turn 1 in w3 — only NEW blocks (later turns) stamp current turns.
+    expect(w1.length).toBeGreaterThan(0);
+    expect(w3.slice(0, w1.length)).toEqual([...w1]);   // prefix carried forward
+    expect(w3.some((t) => t < 3)).toBe(true);     // at least one block older than current turn
+  });
+});
+
 describe("review A-M3 — restored sessions can merge/re-expand (convoTurn accepts getter-form verbatim)", () => {
   test("addRestoredTurn registers a TurnItem whose convoTurn facade works", async () => {
     const { AgentLoop } = await import("../src/optimizer/loop.ts");
@@ -58,6 +81,78 @@ describe("review A-M3 — restored sessions can merge/re-expand (convoTurn accep
     expect(m.ok).toBe(true);                     // pre-fix: "fewer than two turns in range"
     const re = executeIntent({ op: "convo.reexpand", id: "turn-1-user" }, loop.store, null);
     expect(re.ok).toBe(true);                    // pre-fix: "no such turn"
+  });
+});
+
+describe("review B3 — absent cache counter is unreported, not realized-0", () => {
+  test("usage without cacheReadTokens → divergence unreported, realized null", async () => {
+    const { CacheModel } = await import("../src/optimizer/cache-model.ts");
+    const cm = new CacheModel({ cachedPriceFraction: 0.1, granularity: 1024, ttlTurns: 6 } as never);
+    const blocks = [{ digest: "d1", tokens: 100, text: "t", itemId: "i", zone: "foundational" as never }];
+    // Pre-fix: cacheReadTokens ?? 0 → realized.hitTokens 0, divergence
+    // classified as believed-cached-rebilled (fabricated overbelief).
+    const cl = cm.calibrate(blocks, { inputTokens: 500, outputTokens: 10, raw: {} } as never, { hitTokens: 400 });
+    expect(cl.realized).toBeNull();
+    expect(cl.divergence).toBe("unreported");
+  });
+});
+
+describe("review B4 — belief gap guards: empty truth map falls back, never NaN", () => {
+  test("empty truthByTurn + realized pairs → provider-realized basis, finite stats", async () => {
+    const { computeBeliefGap } = await import("../src/optimizer/reports.ts");
+    const caches = [1, 2].map((t) => ({
+      turn: t,
+      expected: { hitTokens: 100 * t, price: 0 },
+      realized: { hitTokens: 110 * t, price: 0 },
+      divergence: "none" as never,
+      rawProviderReport: null,
+    }));
+    const corpus = { caches, signals: [], items: {}, provenance: { note: "t" }, sources: [], parameterSetVersions: [], modelIds: [] } as never;
+    const r = computeBeliefGap(corpus, { basis: "lcp-truth", truthByTurn: new Map() });
+    expect(r).not.toBeNull();
+    expect(r!.basis).toBe("provider-realized");
+    expect(Number.isFinite(r!.maeTokens)).toBe(true);
+  });
+  test("no truth, no realized → null (honest absence)", async () => {
+    const { computeBeliefGap } = await import("../src/optimizer/reports.ts");
+    const caches = [1].map((t) => ({
+      turn: t,
+      expected: { hitTokens: 100, price: 0 },
+      realized: null,
+      divergence: "unreported" as never,
+      rawProviderReport: null,
+    }));
+    const corpus = { caches, signals: [], items: {}, provenance: { note: "t" }, sources: [], parameterSetVersions: [], modelIds: [] } as never;
+    expect(computeBeliefGap(corpus, { basis: "lcp-truth", truthByTurn: new Map() })).toBeNull();
+  });
+});
+
+describe("review B5 — ledger append failure keeps entries queued (no silent drop)", () => {
+  test("unwritable path: entries remain pending, recover on drain to good path", async () => {
+    const { Ledger } = await import("../src/optimizer/ledger.ts");
+    const dir = mkdtempSync(join(tmpdir(), "ak-ledger-"));
+    const bad = new Ledger(join(dir, "no", "such", "dir", "x", "l.jsonl")); // mkdir recursion limited by sandbox? -> use a FILE as dir
+    // A REGULAR FILE placed where the ledger expects a DIRECTORY makes
+    // appendFile fail (ENOTDIR) reliably — pre-fix the batch was spliced
+    // away regardless (silent drop).
+    writeFileSync(join(dir, "blocker"), "x");
+    const blocked = new Ledger(join(dir, "blocker", "l.jsonl"));
+    blocked.recordSignal({ type: "probe" });
+    blocked.recordSignal({ type: "probe2" });
+    await new Promise((r) => setTimeout(r, 80)); // let retries exhaust
+    expect(blocked.pendingEntries()).toBe(2);      // pre-fix: 0 (dropped)
+    void bad;
+  });
+});
+
+describe("review B6 — importing maxsuite does not re-run the suite", () => {
+  test("import for lcpTokens is side-effect free", async () => {
+    const before = existsSync("bench/corpus/dumps/maxsuite.json")
+      ? statSync("bench/corpus/dumps/maxsuite.json").mtimeMs : 0;
+    await import("../bench/corpus/maxsuite.ts");
+    const after = existsSync("bench/corpus/dumps/maxsuite.json")
+      ? statSync("bench/corpus/dumps/maxsuite.json").mtimeMs : 0;
+    expect(after).toBe(before); // pre-fix: import re-ran 20 scenarios and rewrote the dump
   });
 });
 

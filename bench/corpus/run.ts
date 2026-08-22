@@ -234,6 +234,12 @@ async function main(): Promise<void> {
   }
   const fails = results.filter(([, p]) => !p).length;
   console.log(`\n${fails === 0 ? "ALL SCENARIOS PASS" : `${fails} SCENARIO(S) FAILED`}`);
+  // Review B11: budget violations are a hard gate, not a console note —
+  // CI must fail red when any render exceeds Λ.
+  if (budgetState.over) {
+    console.log(`BUDGET VIOLATION: peak render ${budgetState.max}t exceeded Λ=${budgetState.lambda} — exiting 2`);
+    process.exit(2);
+  }
   process.exit(fails === 0 ? 0 : 1);
 }
 

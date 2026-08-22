@@ -385,13 +385,18 @@ const ALL: Array<{ name: string; kind: "normal" | "stressA" | "stressB" }> = [
   { name: "STRESS-B-rollover", kind: "stressB" as const },
 ];
 
-const runs: RunRec[] = [];
-for (const { name, kind } of ALL) {
-  const spec = SPEC[name] ?? SPEC["s3-chunked-read"]!;
-  const k = await runKernel(name, spec, kind);
-  const a = runAccumulator(name, spec, kind);
-  runs.push(k, a);
-  console.log(`${name}: kernel ${k.peak}t peak / ${Object.values(k.facts).filter(Boolean).length}/${k.recall.length} facts · accum ${a.peak}t peak / ${Object.values(a.facts).filter(Boolean).length}/${a.recall.length} facts`);
+// Review B6: the suite body runs only when EXECUTED directly (import.meta.main).
+// Importing maxsuite for lcpTokens (gauges-baseline) must not re-run 20
+// corpus scenarios and clobber the dump.
+if (import.meta.main) {
+  const runs: RunRec[] = [];
+  for (const { name, kind } of ALL) {
+    const spec = SPEC[name] ?? SPEC["s3-chunked-read"]!;
+    const k = await runKernel(name, spec, kind);
+    const a = runAccumulator(name, spec, kind);
+    runs.push(k, a);
+    console.log(`${name}: kernel ${k.peak}t peak / ${Object.values(k.facts).filter(Boolean).length}/${k.recall.length} facts · accum ${a.peak}t peak / ${Object.values(a.facts).filter(Boolean).length}/${a.recall.length} facts`);
+  }
+  writeFileSync(resolve(ROOT, "bench/corpus/dumps/maxsuite.json"), JSON.stringify(runs, null, 1));
+  console.log(`\nwrote bench/corpus/dumps/maxsuite.json (${runs.length} runs)`);
 }
-writeFileSync(resolve(ROOT, "bench/corpus/dumps/maxsuite.json"), JSON.stringify(runs, null, 1));
-console.log(`\nwrote bench/corpus/dumps/maxsuite.json (${runs.length} runs)`);

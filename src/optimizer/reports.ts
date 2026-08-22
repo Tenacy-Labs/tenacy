@@ -394,12 +394,19 @@ export function computeBeliefGap(
       if (truth === undefined) continue;
       pairs.push({ turn: c.turn, gap: truth - c.expected.hitTokens });
     }
+    // Review B4: an empty truth map (harness supplied nothing for these
+    // turns) must not produce NaN stats — fall through to provider-realized.
+    if (pairs.length === 0 && realizedPairs.length >= 1) {
+      basis = "provider-realized";
+      pairs = realizedPairs;
+    }
   } else if (realizedPairs.length >= 1) {
     basis = "provider-realized";
     pairs = realizedPairs;
   } else {
     return null;
   }
+  if (pairs.length === 0) return null;
   const n = pairs.length;
   const mae = pairs.reduce((s, p) => s + Math.abs(p.gap), 0) / n;
   const signedMean = pairs.reduce((s, p) => s + p.gap, 0) / n;
