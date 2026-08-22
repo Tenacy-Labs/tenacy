@@ -41,8 +41,8 @@ for (const tree of TREES) {
       // "        123456  maximum resident set size"
       const real = r.stdout.match(/([0-9.]+)\s+real/);
       const rss = r.stdout.match(/(\d+)\s+maximum resident set size/);
-      const wall = real ? parseFloat(real[1]) * 1000 : NaN;
-      const rssMb = rss ? Number(rss[1]) / 1024 / 1024 : NaN;
+      const wall = real ? parseFloat(real[1] ?? "0") * 1000 : NaN;
+      const rssMb = rss ? Number(rss[1] ?? "0") / 1024 / 1024 : NaN;
       results.push({ label: tree.label, suite, iter: i, wallMs: wall, peakRssMb: rssMb, turns: 0 });
       console.log(`${tree.label} ${suite} iter ${i}: wall=${wall.toFixed(0)}ms rss=${rssMb.toFixed(1)}MB`);
     }
