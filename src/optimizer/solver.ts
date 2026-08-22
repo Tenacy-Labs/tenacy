@@ -117,9 +117,14 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
         decision = "move";
       }
     } else {
-      // New or re-entering item must clear the re-entry margin
+      // New or re-entering item must clear the re-entry margin. EXCEPT a
+      // tombstone/handle best (zeroValue): a ~10t handle that keeps the
+      // item's re-expand path in the window is not representation churn —
+      // hysteresis does not apply to it (emergence pass 2026-08-22: the
+      // reservation price otherwise rejects oversized fresh lenses before
+      // relief can tombstone them, dropping the handle entirely).
       margin = best.utility - ps.hysteresisMargin;
-      if (margin < 0 && !ALWAYS_HELD.has(item.kind)) {
+      if (margin < 0 && !ALWAYS_HELD.has(item.kind) && best.o.zeroValue !== true) {
         itemLedgers.push(rejectedLedger(turn, item, best, margin));
         continue;
       }
