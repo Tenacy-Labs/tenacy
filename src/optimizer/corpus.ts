@@ -14,16 +14,27 @@ export interface Corpus {
   turns: TurnLedger[];
   items: ItemLedger[];
   caches: CacheLedger[];
+  /** ADR-0006 §0 gauges: intent signals (expand/release/…) journaled per turn. */
+  signals: SignalRecord[];
   provenance: Provenance;
   sources: string[];
   parameterSetVersions: string[];
   modelIds: string[];
 }
 
+/** One journaled intent signal (ledger `t:"signal"` records — intents.ts). */
+export interface SignalRecord {
+  type: string;
+  itemId?: string | undefined;
+  turn?: number | undefined;
+  [k: string]: unknown;
+}
+
 export async function loadCorpus(paths: string[], provenance: Provenance = "realized"): Promise<Corpus> {
   const turns: TurnLedger[] = [];
   const items: ItemLedger[] = [];
   const caches: CacheLedger[] = [];
+  const signals: SignalRecord[] = [];
   for (const path of paths) {
     const raw = await readFile(path, "utf8");
     for (const line of raw.split("\n")) {
@@ -32,11 +43,12 @@ export async function loadCorpus(paths: string[], provenance: Provenance = "real
       if (rec.t === "turn") turns.push(rec as unknown as TurnLedger);
       else if (rec.t === "item") items.push(rec as unknown as ItemLedger);
       else if (rec.t === "cache") caches.push(rec as unknown as CacheLedger);
+      else if (rec.t === "signal") signals.push(rec as unknown as SignalRecord);
     }
   }
   const versions = [...new Set(turns.map((t) => t.parameterSetVersion))];
   const models = [...new Set(turns.map((t) => t.modelId))];
-  return { turns, items, caches, provenance, sources: [...paths], parameterSetVersions: versions, modelIds: models };
+  return { turns, items, caches, signals, provenance, sources: [...paths], parameterSetVersions: versions, modelIds: models };
 }
 
 /** Every report emits a corpus card (0003 §3): coverage + missing labels + param versions. */

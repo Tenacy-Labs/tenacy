@@ -118,6 +118,7 @@ export function generateSynthetic(spec: PlantedSpec = DEFAULT_SPEC): { corpus: C
   return {
     corpus: {
       turns, items, caches,
+      signals: [],
       provenance: "synthetic",
       // Record the seed actually used by rng() — the truncated value, so
       // the source line is reproducible for any seed input (finding 4).
