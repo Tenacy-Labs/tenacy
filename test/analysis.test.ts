@@ -145,6 +145,26 @@ function buildProviderMissingKey(): void {
   if (key === "") throw new Error("OPENAI_API_KEY not set — openai is bring-your-own-key");
 }
 
+// ── second-pass findings: synthetic detachment + seed honesty ──────────
+describe("synthetic truth detachment (second-pass finding 3)", () => {
+  test("mutating returned truth does not poison the next generation", () => {
+    const a = generateSynthetic();
+    a.truth.lensHazard = 0.99; // mutate the returned truth
+    const b = generateSynthetic();
+    expect(b.truth.lensHazard).not.toBe(0.99);
+    expect(DEFAULT_SPEC.lensHazard).not.toBe(0.99);
+  });
+});
+
+describe("seed truncation honesty (second-pass finding 4)", () => {
+  test("sources records the truncated seed the rng actually used", () => {
+    const big = 2 ** 35 + 42;
+    const g = generateSynthetic({ ...DEFAULT_SPEC, seed: big });
+    expect(g.corpus.sources[0]).toBe(`synthetic:${big >>> 0}`);
+    expect(g.corpus.sources[0]).not.toBe(`synthetic:${big}`);
+  });
+});
+
 // ── review findings: config guard + credential tier blanks ─────────────
 describe("harness config guard (review B2)", () => {
   const tmp = mkdtempSync(join(tmpdir(), "ak-cfg-"));
@@ -178,5 +198,45 @@ describe("harness config guard (review B2)", () => {
       if (prev === undefined) delete process.env.AGENT_KERNEL_CONFIG;
       else process.env.AGENT_KERNEL_CONFIG = prev;
     }
+  });
+});
+
+describe("harness config — context-window override", () => {
+  const tmp = `${import.meta.dir}/tmp-cw`;
+  function writeCfg(obj: unknown): string {
+    const fs = require("node:fs");
+    fs.mkdirSync(tmp, { recursive: true });
+    const f = `${tmp}/config.json`;
+    fs.writeFileSync(f, JSON.stringify(obj));
+    return f;
+  }
+  test("paramSetFor applies contextWindow override over paramSetV1 default", () => {
+    const { paramSetFor, loadHarnessConfig } = require("../src/optimizer/harness-config.ts");
+    const f = writeCfg({ version: 1, providers: { zai: { apiKey: "x" } }, contextWindow: 2048 });
+    const cfg = loadHarnessConfig(f);
+    if (cfg === null) throw new Error("config rejected");
+    const ps = paramSetFor("glm-5.2", cfg);
+    if (ps.budgetLambda !== 2048) throw new Error(`override not applied: ${ps.budgetLambda}`);
+    const dflt = paramSetFor("glm-5.2", null);
+    if (dflt.budgetLambda !== 24_000) throw new Error(`default wrong: ${dflt.budgetLambda}`);
+  });
+  test("invalid contextWindow values reject the config entirely", () => {
+    const { loadHarnessConfig } = require("../src/optimizer/harness-config.ts");
+    for (const bad of [0, -5, 2.5, "2048", true]) {
+      const f = writeCfg({ version: 1, providers: { zai: { apiKey: "x" } }, contextWindow: bad });
+      if (loadHarnessConfig(f) !== null) throw new Error(`accepted bad value: ${String(bad)}`);
+    }
+    // null = explicitly unset (blank-tier precedent): accepted, falls back to default
+    const fNull = writeCfg({ version: 1, providers: { zai: { apiKey: "x" } }, contextWindow: null });
+    const cfgNull = loadHarnessConfig(fNull);
+    if (cfgNull === null) throw new Error("null contextWindow should mean unset, not rejection");
+  });
+  test("contextWindow absent -> default budget unchanged (discriminating vs override path)", () =>  {
+    const { paramSetFor } = require("../src/optimizer/harness-config.ts");
+    const f = writeCfg({ version: 1, providers: { zai: { apiKey: "x" } } });
+    const { loadHarnessConfig } = require("../src/optimizer/harness-config.ts");
+    const cfg = loadHarnessConfig(f);
+    if (cfg === null) throw new Error("config without contextWindow rejected");
+    if (paramSetFor("glm-5.2", cfg).budgetLambda !== 24_000) throw new Error("absent field should not mutate budget");
   });
 });

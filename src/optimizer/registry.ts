@@ -18,7 +18,9 @@ import type { ModelResponse, Provider } from "./providers.ts";
 import { PrefixCacheSim } from "./providers.ts";
 import type { Block } from "./types.ts";
 import type { UsageReport } from "./cache-model.ts";
-import { loadHarnessConfig } from "./harness-config.ts";
+import { loadHarnessConfig, paramSetFor } from "./harness-config.ts";
+export { loadHarnessConfig, paramSetFor };
+export type { HarnessConfig, HarnessProviderConfig } from "./harness-config.ts";
 
 export interface ProviderSpec {
   name: string;

@@ -63,3 +63,60 @@ export function dreamPass(items: ContextItem[], turn: number, minAgeTurns = 3): 
   }
   return results;
 }
+
+
+/**
+ * MERGED group formation (ADR-0002f §2): contiguous runs of aged episodic
+ * turns merge under one group item — one transform amortized over the run.
+ * Members keep verbatim in the store; only their option surface changes
+ * (in-merge). Deterministic given the store and the age threshold.
+ */
+export interface MergeGroupPlan {
+  groupId: string;
+  memberIds: string[];
+  mergedText: string;
+}
+
+export function planMergeGroups(
+  items: Array<{ id: string; kind: string; createdTurn: number; serialize(): string }>,
+  turn: number,
+  minAgeTurns = 6,
+  minGroupSize = 2,
+): MergeGroupPlan[] {
+  const aged = items
+    .filter((i) => i.kind === "episodic" && turn - i.createdTurn >= minAgeTurns && i.id.startsWith("turn-"))
+    .sort((a, b) => a.createdTurn - b.createdTurn || a.id.localeCompare(b.id));
+  const plans: MergeGroupPlan[] = [];
+  let run: typeof aged = [];
+  const flush = (): void => {
+    if (run.length >= minGroupSize) {
+      const ids = run.map((r) => r.id);
+      const groupId = `merge:${ids[0]}..${ids[ids.length - 1]}`;
+      const mergedText = run.map((r) => firstSentence(r.serialize())).join(" ");
+      plans.push({ groupId, memberIds: ids, mergedText });
+    }
+    run = [];
+  };
+  let prevTurn: number | null = null;
+  for (const it of aged) {
+    if (prevTurn !== null && it.createdTurn - prevTurn > 1) flush();
+    run.push(it);
+    prevTurn = it.createdTurn;
+  }
+  flush();
+  return plans;
+}
+
+function firstSentence(text: string): string {
+  const m = /[.!?]\s/.exec(text);
+  return m === null ? text.slice(0, 200) : text.slice(0, m.index + 1);
+}
+
+/**
+ * Realized lossiness (ADR-0002f §2): a re-expansion after summarization —
+ * the model restoring verbatim is reporting the summary was premature.
+ * Journaled so the A6 confidence ramp and the 0003 value audit can learn.
+ */
+export function realizedLossiness(item: { id: string; summary?: string; mergedInto?: string }): boolean {
+  return item.summary !== undefined || item.mergedInto !== undefined;
+}

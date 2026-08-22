@@ -8,7 +8,9 @@
 import type { ConvoRep, ContextItem, ItemKind, LensState, RenderOption, Velocity, Zone } from "./types.ts";
 import { estTokens } from "./renderer.ts";
 
-function opt(id: string, zones: readonly Zone[], representation: RenderOption["representation"], text: string, purelyAdditive: boolean): RenderOption {
+export { FileLensItem, Lens, DirectoryLensItem } from "./lens.ts";
+
+export function opt(id: string, zones: readonly Zone[], representation: RenderOption["representation"], text: string, purelyAdditive: boolean): RenderOption {
   return { id, zones, representation, tokens: estTokens(text), purelyAdditive, text };
 }
 
@@ -81,7 +83,12 @@ export class GoalItem {
     }
     return [
       opt("active-full", ["identity"], "AS_IS", this.serialize(), true),
-      opt("active-compact", ["foundational"], "AS_IS", `[g] ${this.text.slice(0, 60)}`, false),
+      // Multi-period honesty (2026-08-22): the compact form is a LOSSY
+      // truncation (60 chars) — typed SUMMARY so the A6 fidelity penalty and
+      // qLossy price its future stream. Typed AS_IS it rode at full
+      // realization while costing less seat, undercutting the full goal in
+      // identity — goals stopped riding identity (goal-zone test failure).
+      opt("active-compact", ["foundational"], "SUMMARY", `[g] ${this.text.slice(0, 60)}`, false),
     ];
   }
   toContextItem(): ContextItem {
@@ -98,8 +105,10 @@ export class GoalItem {
 /** Episodic turn record — immutable; the conversation lens substrate (ADR-0002f §2). */
 export class TurnItem {
   #verbatim: string;
-  summary?: string;
+  summary?: string | undefined;
   rep: ConvoRep = "VERBATIM";
+  /** MERGED: if set, this turn renders inside the merge-group item instead. */
+  mergedInto?: string | undefined;
   constructor(
     public readonly id: string,          // "turn-41"
     public readonly role: "model" | "tool-result" | "user",
@@ -124,6 +133,19 @@ export class TurnItem {
   }
   /** Conversation-lens options: VERBATIM (additive), SUMMARY (rewrite, penalized by A6 ramp). */
   options(): RenderOption[] {
+    if (this.mergedInto !== undefined) {
+      // member of a merge group: the group carries the bytes. in-merge is a
+      // zeroValue 0-byte ride (no content, no value, no free FV); verbatim
+      // stays available — the coupling pass swaps to it when the group does
+      // NOT carry (purged/dropped), so member content never vanishes with
+      // the group's tombstone.
+      const inMerge = opt("in-merge", ["evolving"], "MERGED", "", false);
+      inMerge.zeroValue = true;
+      return [
+        inMerge,
+        opt("verbatim", ["evolving"], "VERBATIM", `[${this.role}] ${this.#verbatim}`, true),
+      ];
+    }
     const opts: RenderOption[] = [
       opt("verbatim", ["evolving"], "VERBATIM", `[${this.role}] ${this.#verbatim}`, true),
     ];
@@ -139,6 +161,55 @@ export class TurnItem {
       upstreams: this.upstreams, lastRender: this.lastRender, lastTouchTurn: this.lastTouchTurn,
       createdTurn: this.createdTurn, hazardOverride: this.hazardOverride, valueBump: this.valueBump,
       watch: this.watch,
+      // ADR-0006 §3 (review C-C1): the turn's verbatim never leaves the
+      // store — SUMMARY renders (dream output) stay re-expandable.
+      recoverability: "verbatim-preserving",
+    };
+  }
+}
+
+/**
+ * MergeGroup — one lightweight-LLM transform combining several contiguous
+ * turns (ADR-0002f §2 MERGED). Members keep verbatim in the store; the
+ * group item carries the merged representation; boundaries chosen by the
+ * dream pass (v1: contiguous runs of aged turns).
+ */
+export class MergeGroupItem {
+  /**
+   * Value mass: the SUM of member values at merge time (multi-period pass
+   * 2026-08-22). A group carrying eight members' content has eight members'
+   * value — a single episodic profile on the group undercounts the mass and
+   * structurally biases against transforms ever amortizing. The group's own
+   * decay clock is fresh (the transform re-presents aged content).
+   */
+  valueMass = 0;
+  constructor(
+    public readonly id: string,          // "merge:3-6"
+    public readonly memberIds: readonly string[],
+    public text: string,                 // the merged representation
+    public createdTurn = 0,
+  ) {}
+  get tokens(): number { return estTokens(this.#header() + this.text); }
+  #header(): string { return `⟨merged ${this.memberIds[0]}..${this.memberIds[this.memberIds.length - 1]}⟩`; }
+  serialize(): string { return this.#header() + "\n" + this.text; }
+  options(): RenderOption[] {
+    const purge = opt("purge", ["volatile"], "PURGED",
+      `⟨merged ${this.memberIds[0]}..${this.memberIds[this.memberIds.length - 1]}: purged; convo.reexpand restores verbatim⟩`, false);
+    purge.zeroValue = true;   // handle only — re-expand pays the writeback
+    return [
+      opt("merged", ["foundational"], "MERGED", this.serialize(), false),
+      purge,
+    ];
+  }
+  toContextItem(): ContextItem {
+    return {
+      id: this.id, kind: "episodic", velocity: "stable", immutable: false,
+      tokens: this.tokens, serialize: () => this.serialize(), options: () => this.options(),
+      upstreams: this.memberIds, lastTouchTurn: this.createdTurn, createdTurn: this.createdTurn,
+      watch: "frozen", valueMass: this.valueMass,
+      // ADR-0006 §3 (review C-C1): merge groups keep every member's verbatim
+      // in the store — the MERGED render is re-expandable to full value.
+      recoverability: "verbatim-preserving",
     };
   }
 }
@@ -149,106 +220,6 @@ export class TurnItem {
  * (BASE+DELTA) alternatives — the A4 ruling made concrete: the solver
  * trades cache invalidation against content length, not a hard-coded rule.
  */
-export class FileLensItem {
-  /** Coalesced ranges actually loaded, sorted. */
-  ranges: Array<[number, number]> = [];
-  baseBlockTurn = -1;   // when the base block was written (-1: no base yet)
-  state: LensState = "FULL";
-  constructor(
-    public readonly id: string,          // "lens:src/kernel.ts"
-    public readonly target: string,      // fs path
-    public content: string,             // current file content (producer-supplied)
-    public velocity: Velocity = "evolving",
-    public immutable = false,
-    public upstreams: readonly string[] = [],
-    public hazardOverride?: number,
-    public valueBump?: { amount: number; untilTurn: number },
-    public watch: "live" | "polled" | "frozen" = "polled",
-    public lastRender?: { position: number; digest: string },
-    public lastTouchTurn = 0,
-    public createdTurn = 0,
-  ) {}
-
-  #lines(): string[] { return this.content.split("\n"); }
-
-  expand(from: number, to: number): void {
-    // merge into coalesced ranges (idempotent re-expand)
-    this.ranges.push([from, to]);
-    this.ranges.sort((a, b) => a[0] - b[0]);
-    const merged: Array<[number, number]> = [];
-    for (const r of this.ranges) {
-      const last = merged[merged.length - 1];
-      if (last !== undefined && r[0] <= last[1] + 1) last[1] = Math.max(last[1], r[1]);
-      else merged.push([r[0], r[1]]);
-    }
-    this.ranges = merged;
-  }
-
-  release(from: number, to: number): void {
-    this.ranges = this.ranges.flatMap(([a, b]): Array<[number, number]> => {
-      if (to < a || from > b) return [[a, b]];
-      const parts: Array<[number, number]> = [];
-      if (from > a) parts.push([a, from - 1]);
-      if (to < b) parts.push([to + 1, b]);
-      return parts;
-    });
-  }
-
-  #selectedText(): string {
-    const lines = this.#lines();
-    return this.ranges
-      .map(([a, b]) => lines.slice(a - 1, b).map((l, i) => `${a + i}| ${l}`).join("\n"))
-      .join("\n...\n");
-  }
-
-  serialize(): string { return this.#fullText(); }
-
-  #fullText(): string {
-    return `⟨file ${this.target} ${this.ranges.length} range(s)⟩\n${this.#selectedText()}`;
-  }
-  #deltaText(): string {
-    return `⟨file ${this.target} +Δ⟩\n${this.#selectedText()}`;
-  }
-
-  /**
-   * The option surface (A4/A5): compact front block vs distributed
-   * deltas vs consolidation vs purge. The solver picks per turn.
-   */
-  options(): RenderOption[] {
-    if (this.ranges.length === 0) return [];   // nothing loaded — presents no options
-    const full = this.#fullText();
-    const compact = `⟨file ${this.target}: ${this.ranges.length} range(s), ${this.ranges.map(([a, b]) => `${a}-${b}`).join(",")}⟩`;
-    const opts: RenderOption[] = [];
-    if (this.baseBlockTurn < 0) {
-      // No base yet: FULL is the ONLY first write. A content-free compact
-      // header is not a representation of unseen data — offering it let the
-      // solver drop bytes the model had never received (caught live by
-      // glm-5.2 refusing to answer from an empty lens).
-      opts.push(opt("full", ["stable"], "FULL", full, true));
-    } else {
-      // base exists: deltas are the additive path; re-consolidation is a rewrite
-      opts.push(opt("base+delta", ["stable"], "BASE+DELTA", this.#deltaText(), true));
-      opts.push(opt("consolidated", ["stable"], "CONSOLIDATED", full, false));
-      opts.push(opt("compact", ["foundational"], "FULL", compact, false));
-    }
-    if (this.tokens > 1500) {
-      opts.push(opt("purge", ["volatile"], "PURGED", `⟨file ${this.target}: purged; re-expand on demand⟩`, false));
-    }
-    return opts;
-  }
-
-  get tokens(): number { return estTokens(this.#fullText()); }
-  toContextItem(): ContextItem {
-    return {
-      id: this.id, kind: "lens", velocity: this.velocity, immutable: this.immutable,
-      tokens: this.tokens, serialize: () => this.serialize(), options: () => this.options(),
-      upstreams: this.upstreams, lastRender: this.lastRender, lastTouchTurn: this.lastTouchTurn,
-      createdTurn: this.createdTurn, hazardOverride: this.hazardOverride, valueBump: this.valueBump,
-      watch: this.watch,
-    };
-  }
-}
-
 /** Notice / error evidence — transient tail items (error: A1 slow-decay profile). */
 export class NoticeItem {
   constructor(

@@ -139,11 +139,20 @@ exist). Turns are crash-safe: if the worker exits mid-cell the turn resolves
 inline critical path: it primarily adds style and policy checks, not stronger
 type correctness. It can be added later as an asynchronous policy pass.
 
-- [ ] Agent loop: model calls, tool-call parsing, turn dispatch into the kernel
-- [ ] `ops.*` host surface: `ops.rlm_spawn`, `ops.goal_set`, `ops.memory_search` —
-      credentials and providers stay host-side (prime-agent's trust boundary)
-- [ ] rlm(): child agents with typed handles and usage attribution
-- [ ] Worker-per-session isolation + hibernation (idle sessions serialize to disk)
-- [ ] Semantic session memory (jcode concept) backed by bun:sqlite
+- [x] Agent loop: model calls, tool-call parsing, turn dispatch into the kernel
+      (live on glm-5.2 via the Vercel AI SDK registry; PR #5)
+- [x] `ops.*` host surface: `ops.rlm_spawn`, `ops.goal_set`, `ops.memory_search` —
+      credentials and providers stay host-side (prime-agent's trust boundary).
+      Shipped as `ops.ts` (host caps registry) + `rlm.*`/`memory.*` intents
+      (rlm.spawn/turn/status/stop/final, memory.remember/search), bound at boot.
+- [x] rlm(): child agents with typed handles and usage attribution
+      (`rlm.ts`: AttributionProvider, per-child + rollup usage, completion
+      reports priced into the parent store as notices)
+- [x] Worker-per-session isolation + hibernation (idle sessions serialize to
+      disk; graceful stop leaves the snapshot; revive() re-attaches a fresh
+      worker that recovers from the snapshot — never replays the journal)
+- [x] Semantic session memory (jcode concept) backed by bun:sqlite
+      (`memory.ts`: FTS5 BM25 + optional embedding blend; `/save` auto-indexes
+      sessions; REPL `/mem` search/add; cross-session recall)
 - [ ] Graduation path: if scale demands, port the ops surface to a Rust host on
       deno_core — the narrow interface is the insurance policy

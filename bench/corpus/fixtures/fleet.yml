@@ -1,0 +1,38 @@
+# fleet.yml — warehouse fleet configuration (fixture)
+version: 3
+
+fleet:
+  warehouses:
+    - id: depot-north
+      region: us-east
+      coolant: pumped-loop
+      dock-doors: 12
+    - id: depot-south
+      region: us-southeast
+      coolant: air-cooled
+      dock-doors: 6
+    - id: remote-3
+      region: apac
+      coolant: pumped-loop
+      dock-doors: 3
+
+routing:
+  priority-tiers:
+    standard: { mode: ground, max-qty: 12000 }
+    expedited: { mode: air-freight, max-qty: 8000 }
+    critical: { mode: charter, max-qty: 500 }
+  constraints:
+    - critical never ships from remote-3
+    - coolant pump B on depot-north has a known micro-fracture; do not
+      route pumped-loop coolant through pump B until replaced
+    - drawer 4 in the parts cage holds the spare pump-B seals
+
+maintenance:
+  schedule:
+    - asset: pump-B
+      site: depot-north
+      action: inspect-micro-fracture
+      cadence: weekly
+  parts-cage:
+    drawer-4: [pump-B seal kit, gasket set 881]
+    drawer-7: [air-filter set, belt kit 41]

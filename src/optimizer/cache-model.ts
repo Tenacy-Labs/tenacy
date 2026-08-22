@@ -11,6 +11,21 @@ import type { Block, CacheLedger, DivergenceClass } from "./types.ts";
 import type { CacheModelParams } from "./params.ts";
 import { createHash } from "node:crypto";
 
+/**
+ * Review B7: divergence classification thresholds, pinned and named.
+ * Values unchanged from their inline ancestors — this is a pin, not a retune.
+ */
+export const DIVERGENCE_THRESHOLDS = {
+  /** cacheRead > 2.5× true inputTokens ⇒ provider sums internal reads (A3). */
+  cacheReadMultipleOfInput: 2.5,
+  /** rebilled class only fires on a material expected base (tokens). */
+  expectedFloor: 200,
+  /** realized < 25% of expected ⇒ believed-cached block was rebilled. */
+  rebilledFraction: 0.25,
+  /** expected 0 but realized > this ⇒ an eviction we did not model. */
+  evictedHitFloor: 500,
+} as const;
+
 export function blockDigest(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
@@ -67,17 +82,24 @@ export class CacheModel {
 
     if (usage === null) {
       divergence = "unreported";
+    } else if (usage.cacheReadTokens === undefined) {
+      // Review B3: an absent cache counter is UNREPORTED, not "realized 0".
+      // Recording 0 fabricated overbelief evidence in Gauge 6 on live
+      // corpora whose providers omit the counter.
+      realized = null;
+      divergence = "unreported";
     } else {
       realized = {
-        hitTokens: usage.cacheReadTokens ?? 0,
-        price: ((usage.cacheReadTokens ?? 0) / 1000) * this.params.pricePer1kCached,
+        hitTokens: usage.cacheReadTokens,
+        price: (usage.cacheReadTokens / 1000) * this.params.pricePer1kCached,
       };
-      const anomalous = usage.cacheReadTokens !== undefined
-        && usage.cacheReadTokens > 2.5 * usage.inputTokens;      // summed internal reads (A3)
+      // Review B7: divergence thresholds pinned as named constants (ADR
+      // discipline: every classification boundary is inspectable).
+      const anomalous = usage.cacheReadTokens > DIVERGENCE_THRESHOLDS.cacheReadMultipleOfInput * usage.inputTokens;   // summed internal reads (A3; 2.5×)
       if (anomalous) divergence = "provider-usage-semantics";
-      else if (expected.hitTokens > 200 && realized.hitTokens < expected.hitTokens * 0.25)
+      else if (expected.hitTokens > DIVERGENCE_THRESHOLDS.expectedFloor && realized.hitTokens < expected.hitTokens * DIVERGENCE_THRESHOLDS.rebilledFraction)
         divergence = "believed-cached-rebilled";
-      else if (expected.hitTokens === 0 && realized.hitTokens > 500)
+      else if (expected.hitTokens === 0 && realized.hitTokens > DIVERGENCE_THRESHOLDS.evictedHitFloor)
         divergence = "believed-evicted-hit";
     }
 

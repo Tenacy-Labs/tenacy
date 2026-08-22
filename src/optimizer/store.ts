@@ -92,6 +92,22 @@ export class ContextStore {
     if (it) it.lastTouchTurn = this.turn;
   }
 
+  /** ADR-0006 §2.1: record an access event — the refEvidence loop closes here. */
+  recordAccess(id: string, accessClass: "cited" | "distilledFrom" | "searchHit" | "reExpanded", turn?: number): void {
+    const it = this.items.get(id);
+    if (!it) return;
+    const t = turn ?? this.turn;
+    if (it.refEvidence === undefined) {
+      it.refEvidence = { hits: [], accessClass };
+    } else {
+      it.refEvidence.accessClass = accessClass;
+    }
+    it.refEvidence.hits.push(t);
+    if (it.refEvidence.hits.length > 64) {
+      it.refEvidence.hits = it.refEvidence.hits.slice(-64);
+    }
+  }
+
   #emit(e: StoreJournalEvent): void {
     for (const fn of this.journalListeners) fn(e);
   }

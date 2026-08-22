@@ -14,10 +14,11 @@
  */
 import { AgentLoop } from "../optimizer/loop.ts";
 import { Ledger } from "../optimizer/ledger.ts";
-import { paramSetV1 } from "../optimizer/params.ts";
+import { paramSetFor } from "../optimizer/harness-config.ts";
+import { loadHarnessConfig } from "../optimizer/harness-config.ts";
 import { buildProvider } from "../optimizer/registry.ts";
 import { StandingItem } from "../optimizer/items.ts";
-import { INTENT_PROTOCOL_DOC, parseIntentsFromText } from "../optimizer/live.ts";
+import { INTENT_PROTOCOL_DOC, withIntentParsing } from "../optimizer/live.ts";
 import type { ModelResponse } from "../optimizer/providers.ts";
 import type { Provider } from "../optimizer/providers.ts";
 import type { SteeringIntent } from "../optimizer/intents.ts";
@@ -33,20 +34,6 @@ const planted = (i: number): string => {
 
 const NOTES = Array.from({ length: LINES }, (_, i) => planted(i)).join("\n");
 
-interface ParseProviderArgs {
-  modelId: string;
-  call: Provider["call"];
-}
-function withIntentParsing(modelId: string, inner: Provider): Provider {
-  return {
-    modelId,
-    call: async (blocks, userMessage) => {
-      const r = await inner.call(blocks, userMessage);
-      const { text, intents } = parseIntentsFromText(r.text);
-      return { ...r, text, intents };
-    },
-  };
-}
 
 async function main(): Promise<void> {
   const name = process.argv[2] ?? "zai";
@@ -58,7 +45,7 @@ async function main(): Promise<void> {
   const parsed: Provider = withIntentParsing(provider.modelId, provider);
   const ledgerPath = "/tmp/agent-kernel-live-task.jsonl";
   const ledger = new Ledger(ledgerPath);
-  const loop = new AgentLoop(parsed, paramSetV1(provider.modelId), ledger);
+  const loop = new AgentLoop(parsed, paramSetFor(provider.modelId, loadHarnessConfig()), ledger);
   loop.store.add(new StandingItem("identity", "identity",
     "You are a meticulous file-reading agent. " + INTENT_PROTOCOL_DOC).toContextItem());
   loop.fileContent = () => NOTES;

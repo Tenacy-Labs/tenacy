@@ -50,14 +50,35 @@ export class Ledger {
     void this.#flush();
   }
 
+  /** Entries queued but not yet durably written (B5 retry surface). */
+  pendingEntries(): number {
+    return this.queue.length;
+  }
+
   async #flush(): Promise<void> {
     if (this.flushing) return;
     this.flushing = true;
     try {
       while (this.queue.length > 0) {
-        const batch = this.queue.splice(0, 256).join("\n") + "\n";
-        await mkdir(dirname(this.path), { recursive: true });
-        await appendFile(this.path, batch);
+        // Review B5: append failures retry with backoff; entries leave the
+        // queue ONLY after a successful write — a failed batch is re-served
+        // by the next flush, never silently dropped. Splice exactly the
+        // entries in THIS batch: records pushed while we await the append
+        // must survive for the next loop iteration.
+        const n = Math.min(256, this.queue.length);
+        const batch = this.queue.slice(0, n).join("\n") + "\n";
+        let written = false;
+        for (let attempt = 0; attempt < 3 && !written; attempt++) {
+          try {
+            await mkdir(dirname(this.path), { recursive: true });
+            await appendFile(this.path, batch);
+            written = true;
+          } catch {
+            await new Promise((r) => setTimeout(r, 10 * (attempt + 1)));
+          }
+        }
+        if (!written) break; // entries stay queued; next record*() retries
+        this.queue.splice(0, n);
       }
     } finally {
       this.flushing = false;

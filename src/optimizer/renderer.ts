@@ -31,7 +31,7 @@ export function estTokens(text: string): number {
  * Render placements → blocks → text. Deterministic: same placements, same bytes.
  * Zones appear in canonical order; items within a zone keep solver order.
  */
-export function render(placements: Placement[], items: Map<string, ContextItem>, ps: ParamSet): RenderResult {
+export function render(placements: Placement[], items: Map<string, ContextItem>, ps: ParamSet, tailNotices: string[] = []): RenderResult {
   const zoneHistograms = emptyHistograms();
   const parts: string[] = [];
   const blocks: Block[] = [];
@@ -58,8 +58,14 @@ export function render(placements: Placement[], items: Map<string, ContextItem>,
     }
   }
 
+  // Sequence-legibility tail (0002d §6): live-delta notices ride the render
+  // tail — the model reads what changed WITHOUT polling (push, not pull).
+  let tail = parts.join("\n\n") + "\n";
+  if (tailNotices.length > 0) {
+    tail += "\n## CHANGES (live since your last turn)\n" + tailNotices.join("\n") + "\n";
+  }
   return {
-    text: parts.join("\n\n") + "\n",
+    text: tail,
     blocks,
     placements: placements.map((p) => ({ ...p })),
     zoneHistograms,

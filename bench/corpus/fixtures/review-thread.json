@@ -1,0 +1,50 @@
+[
+ [
+  "reviewer",
+  "The routeOrder cap logic mixes concerns \u2014 routing mode and shipment splitting are separate decisions."
+ ],
+ [
+  "author",
+  "Agreed. I kept the cap in routing because split-shipment needs warehouse visibility."
+ ],
+ [
+  "reviewer",
+  "Then the cap constant should live with warehouse policy, not inline. Also 12,500 is oddly specific \u2014 where does it come from?"
+ ],
+ [
+  "author",
+  "It is the Miller consolidation tier limit. Finance owns it; we hardcode until they expose an API."
+ ],
+ [
+  "reviewer",
+  "Document it. Next: validateOrder's remote-3 rule duplicates fleet.yml constraints. One source of truth."
+ ],
+ [
+  "author",
+  "The YAML is not loaded in the hot path \u2014 a config read per order was too slow, so it is mirrored in code. Comment added."
+ ],
+ [
+  "reviewer",
+  "Then the mirror is a hazard: YAML changes will drift. Add a config-consistency test."
+ ],
+ [
+  "author",
+  "Filed INTAKE-231 for the drift test. Anything else blocking merge?"
+ ],
+ [
+  "reviewer",
+  "The ORCHID_BATCH constant is referenced nowhere. Dead code or future work?"
+ ],
+ [
+  "author",
+  "ORCHID-7 is the pilot batch id for the flower-cold-chain program. Kept for the Q4 rollout; do not remove."
+ ],
+ [
+  "reviewer",
+  "Noted \u2014 that is a business-critical identifier. Last thing: coolant constraints mention drawer 4 seals; the parts-cage mapping lives in fleet.yml only. If someone edits fleet.yml without seeing maintenance parts-cage, seals get lost."
+ ],
+ [
+  "author",
+  "fleet.yml has the cross-reference; leaving as-is for now. Merging with INTAKE-231, INTAKE-232 (coolant docs) filed."
+ ]
+]

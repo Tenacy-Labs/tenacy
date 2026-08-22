@@ -18,7 +18,7 @@ export type Zone = "identity" | "foundational" | "stable" | "evolving" | "volati
 export const ZONE_ORDER: readonly Zone[] = ["identity", "foundational", "stable", "evolving", "volatile"] as const;
 
 /** Lens representation states — ADR-0002b §5. */
-export type LensState = "FULL" | "BASE+DELTA" | "CONSOLIDATED" | "PURGED";
+export type LensState = "FULL" | "BASE+DELTA" | "CONSOLIDATED" | "SPLIT" | "PURGED";
 
 /** Conversation representations — ADR-0002f §2. */
 export type ConvoRep = "VERBATIM" | "SUMMARY" | "MERGED";
@@ -36,6 +36,8 @@ export interface RenderOption {
   tokens: number;
   /** The deterministic bytes this option renders (ADR-0004: an option IS a representation). */
   text: string;
+  /** Renders no content — scores zero value (purge/compact-head/range-drop): you cannot derive utility from bytes you do not render. */
+  zeroValue?: boolean | undefined;
 }
 
 /** The stored record — never rendered directly (ADR-0002 §2). */
@@ -58,12 +60,30 @@ export interface ContextItem {
   hazardOverride?: number | undefined;
   /** Value bump signals (ctx.promote / explicit invocation) — decay-exempt adders, per 0002g. */
   valueBump?: { amount: number; untilTurn: number } | undefined;
+  /** Merge-group value mass (multi-period pass 2026-08-22): sum of member
+   *  values at merge time — overrides the kind profile for group scoring,
+   *  so a group carrying eight members' content is priced with eight
+   *  members' value mass and a fresh decay clock. */
+  valueMass?: number | undefined;
   /** Toggle state — ADR-0002d §7 (live | polled | frozen); default polled. */
   watch?: "live" | "polled" | "frozen" | undefined;
   /** Marks store-level authored signals (model ctx / goals flips) — never optimizer-authored. */
   signalClass?: "model-authored" | "optimizer" | undefined;
   /** Dream output (0002f §4): when set, a SUMMARY option joins the surface. Store record stays verbatim. */
   summary?: string | undefined;
+  /** ADR-0006 §2.1: per-item re-reference evidence ledger → λᵢ posterior (absent → kind prior). */
+  refEvidence?: { hits: number[]; accessClass: "cited" | "distilledFrom" | "searchHit" | "reExpanded" } | undefined;
+  /** ADR-0006 §2.2: substrate recoverability class (absent → "unknown"). */
+  recoverability?: "verbatim-preserving" | "rereadable" | "lossy" | "unknown" | undefined;
+  /** ADR-0006 §2.3: content-churn descriptor (absent → prior behavior). */
+  churnProfile?: { ewmaChurn: number; lastChangeTurn?: number | undefined } | undefined;
+  /** ADR-0006 §2.4: forecast variance σ² (computed; absent → no variance pricing). */
+  forecastVariance?: number | undefined;
+  /** Conversation lens (0002f §2): verbatim access for re-expansion; merge-group membership. */
+  verbatim?: () => string;
+  mergedInto?: string | undefined;
+  markReexpanded?: () => void;
+  setMergedInto?: (v: string | undefined) => void;
 }
 
 /** ItemSource — the generic validity interface, ADR-0002c §2. */
@@ -128,12 +148,14 @@ export interface TurnLedger {
 export interface ItemLedger {
   turn: number;
   id: string;
-  forecast: { mu0: number; alpha: number; deltaT: number; hazard: number; basis: "prior" | "observed"; expectedValue: number };
+  forecast: { mu0: number; alpha: number; deltaT: number; hazard: number; basis: "prior" | "observed"; expectedValue: number; futureValue?: number };
   utility: { benefit: number; cacheCost: number; rotShare: number; total: number };
   decision: "keep" | "drop" | "move" | "consolidate" | "promote" | "purge" | "summarize-intent";
   accepted: boolean;
   marginVsHysteresis: number;       // negative for rejected near-misses
   optionChosen?: string | undefined;
+  /** Coupled-cost reason (0005): fragment forced by parent's aggregated choice. */
+  coupledReason?: "parent-carries-bytes" | "budget-tombstone" | "group-purged-verbatim-fallback" | undefined;
 }
 
 export interface CacheLedger {
