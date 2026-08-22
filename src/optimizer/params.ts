@@ -59,6 +59,17 @@ export interface ParamSet {
    */
   reservationPrice: number;
   /**
+   * Budget-relief selection mode (ADR-0005 baseline vs knapsack-swap I1).
+   * "density" — the ruled v1.1 relief: drop worst utility-per-token
+   * (density), ALWAYS_HELD exempt. Default.
+   * "exact-mckp" — Stage 2 of the @connectotron/knapsack swap: relief is
+   * formulated as a pure MCKP (one choice per droppable item: keep at
+   * current tokens, tombstone to its zeroValue handle, or evict freeing
+   * all tokens) and solved exactly through the library. Flag-gated: the
+   * ruled default stays density until evidence justifies a flip.
+   */
+  reliefMode: "density" | "exact-mckp";
+  /**
    * Future-utility capture (Daniel, 2026-08-22: "we may need to think more
    * about how we capture the future utility of our context objects over
    * future turns"). Benefit is a discounted re-reference stream, not a k=0
@@ -128,6 +139,7 @@ export function paramSetV1(modelId: string): ParamSet {
     // chunk must carry > 1.35. Decay + reservation evicts stale content
     // WITHOUT relief flapping (re-entry needs to re-clear the bar).
     reservationPrice: 0.002,
+    reliefMode: "density",
     // Future-utility capture (2026-08-22 multi-period pass). Defaults are
     // the sweep's tuned argmin-achieving set — see ADR-0006 for the grid.
     fv: {

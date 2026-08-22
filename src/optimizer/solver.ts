@@ -17,6 +17,7 @@ import { suffixMassAfter } from "./suffix.ts";
 import { sharedBillSurcharge } from "./suffix.ts";
 import { blockDigest } from "./cache-model.ts";
 import { estTokens } from "./renderer.ts";
+import { solve as solveMckp } from "@connectotron/knapsack";
 
 export interface Incumbent {
   /** Previous render's per-item state; empty map on first render. */
@@ -330,6 +331,10 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   // now the item minimizing value-per-(tokens + prefix damage): density
   // with the cache suffix it would strand priced in.
   let totalTokens = chosen.reduce((s, c) => s + c.option.tokens, 0);
+  if (ps.reliefMode === "exact-mckp" && totalTokens > ps.budgetLambda) {
+    exactMckpRelief(chosen, itemLedgers, incumbent, ps, turn);
+    totalTokens = chosen.reduce((s, c) => s + c.option.tokens, 0);
+  }
   while (totalTokens > ps.budgetLambda) {
     const idx = worstDensityDroppable(chosen, incumbent, ps);
     if (idx < 0) break; // only always-held remain
@@ -458,6 +463,106 @@ function worstDensityDroppable(chosen: { item: ContextItem; option: RenderOption
     if (relief > bestRelief) { bestRelief = relief; worstIdx = i; }
   }
   return worstIdx;
+}
+
+/**
+ * Exact MCKP budget relief (knapsack-swap Stage 2, flag `reliefMode:
+ * "exact-mckp"`). Formulates relief as a pure MCKP and solves it exactly
+ * through @connectotron/knapsack:
+ *
+ *   groups   = droppable items (ALWAYS_HELD exempt)
+ *   options  = keep (weight: current tokens, profit: utility)
+ *              tombstone (weight: handle tokens, profit: 0) when a strictly
+ *              smaller zeroValue option exists
+ *              evict (weight 0, profit 0)
+ *   capacity = Λ (budget); held-prefix items are constants — their tokens
+ *              are subtracted from capacity, not modeled as groups.
+ *
+ * Integer discipline: the library requires non-negative integer
+ * weights/profits. Utilities are floats in [0, ~50]; SCALE=1000 preserves
+ * three decimals — ordering-stable for every observed utility magnitude.
+ * Profits are floored at 0 (negative-utility items contribute nothing;
+ * the keep-option dominates at identical weight).
+ *
+ * Cache-strand damage (the density path's prefix pricing) enters as a
+ * profit adjustment on keep? NO — on the *evict/tombstone* options: an
+ * item whose eviction re-bills the suffix loses its keep-profit only,
+ * but the STRAND COST is charged to the relief alternatives, making the
+ * solver see the true cost of freeing front bytes. Charged as
+ * profit_keep = utility − strandCost? No — that would bias against
+ * keeping low-damage items. The strand cost is a real cost of RELIEF,
+ * so: profit_evict = −strandCost clamped to 0 for the integer domain
+ * (the library rejects negatives). Clamp-to-0 keeps ordering faithful:
+ * among eviction candidates the least-damaging still sorts first.
+ */
+function exactMckpRelief(
+  chosen: { item: ContextItem; option: RenderOption; utility: number }[],
+  itemLedgers: ItemLedger[],
+  incumbent: Incumbent,
+  ps: ParamSet,
+  turn: number,
+): void {
+  const SCALE = 1000;
+  // Held prefix (ALWAYS_HELD): constant load, never a decision group.
+  const heldTokens = chosen.reduce((s, c) => ALWAYS_HELD.has(c.item.kind) ? s + c.option.tokens : s, 0);
+  const droppable = chosen.filter((c) => !ALWAYS_HELD.has(c.item.kind));
+  if (droppable.length === 0) return;
+  const capacity = Math.max(0, ps.budgetLambda - heldTokens);
+
+  // Strand cost per item (utility units): same model as the density path.
+  const strandCost = new Map<string, number>();
+  for (const c of droppable) {
+    const pos = incumbent.rendered.get(c.item.id)?.position ?? 0;
+    const blocksAfter = Math.max(0, incumbent.blockCount - pos);
+    const strandTokens = incumbent.totalTokens * (blocksAfter / Math.max(1, incumbent.blockCount));
+    strandCost.set(c.item.id, (strandTokens / PremiumScale) * (ps.cache.pricePer1kUncached - ps.cache.pricePer1kCached));
+  }
+
+  const groups = droppable.map((c) => {
+    const keepW = c.option.tokens;
+    const keepP = Math.max(0, Math.round((c.utility) * SCALE));
+    const opts: { id: string; weight: number; profit: number }[] = [
+      { id: "keep", weight: keepW, profit: keepP },
+      { id: "evict", weight: 0, profit: 0 },
+    ];
+    const tomb = c.option.zeroValue === true ? undefined : c.item.options().find((o) => o.zeroValue === true && o.tokens < c.option.tokens);
+    if (tomb !== undefined) {
+      opts.push({ id: "tombstone:" + tomb.id, weight: tomb.tokens, profit: 0 });
+    }
+    return { id: c.item.id, options: opts };
+  });
+
+  const res = solveMckp({ groups, capacity });
+  if (res.status !== "optimal" || res.choices === null) return; // density loop is the fallback below
+
+  const choiceById = new Map(res.choices.map((ch) => [ch.groupId, ch.optionId] as const));
+  for (let i = chosen.length - 1; i >= 0; i--) {
+    const c = chosen[i]!;
+    const pick = choiceById.get(c.item.id);
+    if (pick === undefined || pick === "keep") continue;
+    if (pick.startsWith("tombstone:")) {
+      const tomb = c.item.options().find((o) => o.id === pick.slice("tombstone:".length));
+      if (tomb === undefined) continue;
+      itemLedgers.push({
+        turn, id: c.item.id,
+        forecast: { mu0: ps.profiles[c.item.kind]?.mu0 ?? 1, alpha: ps.profiles[c.item.kind]?.alpha ?? 1, deltaT: turn - c.item.lastTouchTurn, hazard: ps.hazardPriors[c.item.kind] ?? 0.05, basis: "prior", expectedValue: 0 },
+        utility: { benefit: 0, cacheCost: 0, rotShare: 0, total: 0 },
+        decision: "purge", accepted: true, marginVsHysteresis: ps.budgetLambda, optionChosen: tomb.id,
+        coupledReason: "budget-tombstone-exact",
+      });
+      c.option = tomb;
+    } else {
+      const strand = strandCost.get(c.item.id) ?? 0;
+      chosen.splice(i, 1);
+      itemLedgers.push({
+        turn, id: c.item.id,
+        forecast: { mu0: ps.profiles[c.item.kind]?.mu0 ?? 1, alpha: ps.profiles[c.item.kind]?.alpha ?? 1, deltaT: turn - c.item.lastTouchTurn, hazard: ps.hazardPriors[c.item.kind] ?? 0.05, basis: "prior", expectedValue: c.utility },
+        utility: { benefit: c.utility, cacheCost: 0, rotShare: 0, total: c.utility },
+        decision: "drop", accepted: true, marginVsHysteresis: ps.budgetLambda,
+      });
+      void strand;
+    }
+  }
 }
 
 /** Transaction cost: additive append is cheap; a rewrite re-prices the suffix (0004 §5–6). */

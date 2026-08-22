@@ -11,6 +11,7 @@
         "@opentui/core": "^0.5.6",
         "@opentui/react": "^0.5.6",
         "ai": "^7.0.74",
+        "@connectotron/knapsack": "file:../knapsack",
         "react": "^19",
       },
       "devDependencies": {
@@ -34,6 +35,8 @@
     "@ai-sdk/provider-utils": ["@ai-sdk/provider-utils@5.0.28", "", { "dependencies": { "@ai-sdk/provider": "4.0.7", "@standard-schema/spec": "^1.1.0", "@workflow/serde": "4.1.0", "eventsource-parser": "^3.0.8", "undici": "^7.28.0" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-TnHUyd/rCYQqHg5RuiOaz/hUql6U+kbUaBW0Rp+0N5UhnAInA9CzzV0HXvuAAPwppDsK6fAx9Rd+tRawpJ/3pg=="],
 
     "@ai-sdk/xai": ["@ai-sdk/xai@4.0.42", "", { "dependencies": { "@ai-sdk/provider": "4.0.7", "@ai-sdk/provider-utils": "5.0.28" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-RJV/EmEWa2ExPLc8x1TLcvUWQuZcLN2SIs5Ii6CQNE4J4Fs7yEgGrEoBg5byTLL/nNT2sF6uBb+Qk+KRvKlXeg=="],
+
+    "@connectotron/knapsack": ["@connectotron/knapsack@file:../knapsack", { "devDependencies": { "@types/bun": "^1.4.0", "typescript": "5.9.2" } }],
 
     "@opentui/core": ["@opentui/core@0.5.6", "", { "dependencies": { "bun-ffi-structs": "0.3.1", "diff": "9.0.0", "marked": "17.0.1", "string-width": "7.2.0", "strip-ansi": "7.1.2" }, "optionalDependencies": { "@opentui/core-darwin-arm64": "0.5.6", "@opentui/core-darwin-x64": "0.5.6", "@opentui/core-linux-arm64": "0.5.6", "@opentui/core-linux-arm64-musl": "0.5.6", "@opentui/core-linux-x64": "0.5.6", "@opentui/core-linux-x64-musl": "0.5.6", "@opentui/core-win32-arm64": "0.5.6", "@opentui/core-win32-x64": "0.5.6" }, "peerDependencies": { "web-tree-sitter": "0.25.10" } }, "sha512-e38H1VceXoSSOEYmhUeHDE3F3LHXn/sFEZ6NhbXkbYdrkdV+1MMTgEkGZJ9I5fHhBlJdGJ1LDTPw8V0ZSUXSyQ=="],
 
