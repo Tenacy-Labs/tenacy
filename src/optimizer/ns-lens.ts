@@ -121,6 +121,14 @@ export class NSLensItem extends Lens {
     };
     const roots = this.prefixes.length === 0 ? [""] : this.prefixes;
     for (const r of roots) walk(r, 0);
+    // Wholesale-replace honesty (fresh-context review 2026-08-22, MAJOR-2):
+    // if every focused prefix now returns zero children, the substrate was
+    // replaced out from under the lens — the old prefixes are dangling. The
+    // listing must fall back to the root walk so the lens can present the
+    // new truth instead of silently rendering nothing forever.
+    if (out.length === 0 && this.prefixes.length > 0) {
+      walk("", 0);
+    }
     return out;
   }
 

@@ -123,13 +123,16 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       value += item.valueBump.amount;
     }
 
-    const hazard = item.hazardOverride !== undefined
-      // Review A-minor-9: clamp overrides to [0, 1] — a fuzz-passed 1.2 let
-      // the premium exceed the full spread cost; overrides are producer
-      // hints, not trust boundaries.
-      ? Math.min(1, Math.max(0, item.hazardOverride))
+    const rawHazard = item.hazardOverride ?? ps.hazardPriors[item.kind] ?? 0.05;
+    const hazard = Number.isFinite(rawHazard)
+      // Review A-minor-9 + C2 fix: clamp overrides to [0, 1] AND reject
+      // non-finite values — Math.min/Math.max do not sanitize NaN, so a
+      // fuzz-passed NaN previously flowed into hazardPremium → utility →
+      // the knapsack validator, throwing out of solve(). Overrides are
+      // producer hints, not trust boundaries.
+      ? Math.min(1, Math.max(0, rawHazard))
       : ps.hazardPriors[item.kind] ?? 0.05;
-    const hazardBasis: "prior" | "observed" = item.hazardOverride !== undefined ? "observed" : "prior";
+    const hazardBasis: "prior" | "observed" = item.hazardOverride !== undefined && Number.isFinite(item.hazardOverride) ? "observed" : "prior";
 
     // ADR-0006 §2.1: evidence-priced value. λᵢ posterior (shrinkage toward
     // the kind prior) rescales the value forecast; absent evidence → factor
