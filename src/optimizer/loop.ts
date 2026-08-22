@@ -46,6 +46,8 @@ export class AgentLoop {
     totalTokens: number;
     blockCount: number;
     standingMassDrift?: number | undefined;
+    blockMass?: readonly number[] | undefined;
+    blockWriteTurns?: readonly number[] | undefined;
   } = { rendered: new Map(), totalTokens: 0, blockCount: 0 };
   /** ADR-0006 §5: EWMA state for the standing-mass drift a_t. */
   private driftEwmaState: number | undefined;
@@ -205,6 +207,10 @@ export class AgentLoop {
           ? rr.blocks.reduce((s, b) => s + b.tokens, 0) - this.incumbent.totalTokens
           : undefined,
       ),
+      // ADR-0006 §4: exact per-block mass + write turns feed suffix pricing
+      // and the TTL-expiry free-restructure windows.
+      blockMass: rr.blocks.map((b) => b.tokens),
+      blockWriteTurns: rr.blocks.map((b) => this.turn),
     };
 
     const outcome: TurnOutcome = {

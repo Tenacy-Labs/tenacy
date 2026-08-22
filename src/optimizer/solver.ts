@@ -13,6 +13,8 @@ import { evidenceValueFactor } from "./evidence.ts";
 import { ZONE_ORDER } from "./types.ts";
 import type { ParamSet } from "./params.ts";
 import { capHorizons, effectiveHysteresis } from "./horizon.ts";
+import { suffixMassAfter } from "./suffix.ts";
+import { sharedBillSurcharge } from "./suffix.ts";
 import { blockDigest } from "./cache-model.ts";
 import { estTokens } from "./renderer.ts";
 
@@ -25,12 +27,22 @@ export interface Incumbent {
   /** ADR-0006 §5: EWMA of net durable standing-mass drift (tokens/turn).
    *  Maintained by the loop; absent → T* = ∞ → fixed-cap fallback. */
   standingMassDrift?: number | undefined;
+  /** ADR-0006 §4 (phase 3): per-block token mass, 1-based position index.
+   *  Absent → proportional-share fallback (bit-identical legacy behavior). */
+  blockMass?: readonly number[] | undefined;
+  /** ADR-0006 §4: write turn per block (1-based position) — TTL-expiry
+   *  windows collapse suffix terms to zero (free restructures). */
+  blockWriteTurns?: readonly number[] | undefined;
 }
 
 export interface SolverResult {
   placements: Placement[];
   itemLedgers: ItemLedger[];
   totalTokens: number;
+  /** ADR-0006 §4: turn-level shared-bill credit (≤ 0) — the overcount when
+   *  multiple restructures were each billed their full suffix. Journaled,
+   *  not a selection input. */
+  sharedBillCredit: number;
 }
 
 /** Positional rot weight — lost-in-the-middle shape (head/tail best). */
@@ -131,7 +143,7 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       const fvDeltaT = item.valueMass !== undefined && item.valueMass > 0
         ? Math.max(0, turn - item.createdTurn) : deltaT;
       const fv = futureValue(mass * profile.mu0, profile.alpha, fvDeltaT, o.tokens, q, ps, caps.hValue);
-      const cacheCost = transactionCost(item, o, prev === null ? undefined : prev, incumbent, ps);
+      const cacheCost = transactionCost(item, o, prev === null ? undefined : prev, incumbent, ps, turn);
       // ADR-0006 §3 (fidelity half): the summary-confidence prior prices
       // information LOSS; a recoverable consolidation loses none — the
       // re-expansion writeback is priced where it occurs (transactionCost).
@@ -311,6 +323,19 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   }
 
   // ── 4. Positions, digests, rot shares from the final layout ────────────────
+  // ADR-0006 §4 shared-bill accounting: the per-item suffix terms each
+  // charged the full re-bill after their own position; the provider bills
+  // ONE break (leftmost changed block). The overcount is credited back at
+  // the turn level — journaled, not a selection input (ADR-0005 §4:
+  // pricing modifies values, never structure).
+  const restructures = [...chosen].filter((c) => {
+    const prev = incumbent.rendered.get(c.item.id);
+    return prev !== undefined && prev.digest !== blockDigest(c.option.text);
+  }).map((c) => {
+    const prev = incumbent.rendered.get(c.item.id)!;
+    return { position: prev.position, mass: suffixMassAfter(incumbent, prev.position) };
+  });
+  const sharedBillCredit = sharedBillSurcharge(ps, restructures);
   const placements: Placement[] = [];
   let position = 0;
   const suffixTokens = totalTokens; // for rot share attribution
@@ -334,7 +359,7 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     c.item.lastRender = { position, digest };
   }
 
-  return { placements, itemLedgers, totalTokens };
+  return { placements, itemLedgers, totalTokens, sharedBillCredit };
 }
 
 function zoneOf(c: { item: ContextItem; option: RenderOption }): Zone {
@@ -396,7 +421,7 @@ function worstDensityDroppable(chosen: { item: ContextItem; option: RenderOption
 
 /** Transaction cost: additive append is cheap; a rewrite re-prices the suffix (0004 §5–6). */
 interface PrevRender { position: number; zone: Zone; digest: string; representation: string; optionId: string }
-function transactionCost(item: ContextItem, o: RenderOption, prev: PrevRender | undefined, incumbent: Incumbent, ps: ParamSet): number {
+function transactionCost(item: ContextItem, o: RenderOption, prev: PrevRender | undefined, incumbent: Incumbent, ps: ParamSet, turn?: number): number {
   const cache = ps.cache;
   if (prev !== undefined && prev.digest === blockDigest(o.text)) {
     // KEEP (Daniel, 2026-08-22): bytes identical to the incumbent render —
@@ -415,12 +440,16 @@ function transactionCost(item: ContextItem, o: RenderOption, prev: PrevRender | 
   }
   // rewrite in place: own tokens at full uncached price + the suffix after
   // the item's old block position re-billed at the spread. prev.position is
-  // the 1-based block index in the incumbent render; the suffix is the token
-  // mass of blocks AFTER it (approximated from the incumbent placements
-  // token-share; exact when positions are dense).
+  // the 1-based block index in the incumbent render. ADR-0006 §4 (phase 3):
+  // exact per-block mass replaces the proportional share; a suffix whose
+  // blocks are already TTL-expired (cold) collapses to zero.
   const own = (o.tokens / 1000) * cache.pricePer1kUncached;
-  const blocksAfter = Math.max(0, incumbent.blockCount - prev.position);
-  const tokensAfter = incumbent.totalTokens * (blocksAfter / Math.max(1, incumbent.blockCount));
+  const expired = incumbent.blockWriteTurns !== undefined
+    && incumbent.blockWriteTurns.length > 0
+    && turn !== undefined
+    && incumbent.blockWriteTurns.slice(prev.position).every((wt) => wt !== undefined && turn - wt > cache.ttlTurns);
+  if (expired) return own;   // free restructure: the suffix is already cold
+  const tokensAfter = suffixMassAfter(incumbent, prev.position);
   const suffixCost = (tokensAfter / 1000) * (cache.pricePer1kUncached - cache.pricePer1kCached);
   return own + suffixCost;
 }
