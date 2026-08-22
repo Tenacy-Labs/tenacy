@@ -386,7 +386,12 @@ export class AgentLoop {
       summary?: string | undefined; mergedInto?: string | undefined;
       verbatim?: () => string; markReexpanded?: () => void;
     };
-    if (typeof anyT.verbatim !== "function") return undefined;
+    // Review A-M3: real TurnItems expose `verbatim` as a getter (string),
+    // not a method — only live makeTurnItem closures have the function form.
+    // Restored sessions register real TurnItems; requiring the function form
+    // broke convo.merge / ctx.reexpand across hibernation.
+    const v = (t as { verbatim?: (() => string) | string | undefined }).verbatim;
+    if (typeof v !== "function" && typeof v !== "string") return undefined;
     return {
       id,
       get summary() { return anyT.summary; },
@@ -397,7 +402,9 @@ export class AgentLoop {
         const setter = (t as unknown as { setMergedInto?: (x: string | undefined) => void }).setMergedInto;
         if (setter !== undefined) setter(v);
       },
-      verbatim: () => anyT.verbatim!(),
+      // A-M3 cont.: the facade must serve BOTH shapes — call the closure
+      // form, return the getter string directly.
+      verbatim: () => (typeof anyT.verbatim === "function" ? anyT.verbatim() : anyT.verbatim as unknown as string),
       markReexpanded: () => { if (anyT.markReexpanded !== undefined) anyT.markReexpanded(); else t.lastTouchTurn = this.store.turn; },
     };
   }

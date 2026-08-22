@@ -142,7 +142,13 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
           : ps.fv.qRendered;
       const fvDeltaT = item.valueMass !== undefined && item.valueMass > 0
         ? Math.max(0, turn - item.createdTurn) : deltaT;
-      const fv = futureValue(mass * profile.mu0, profile.alpha, fvDeltaT, o.tokens, q, ps, caps.hValue);
+      // Review A-M2: merge mass already includes each member's decayed μ₀
+      // (intents.ts merge factory bakes 3.0·(1+age)⁻¹ per member into the
+      // mass), so multiplying by profile.mu0 again double-counts it. The
+      // valueMass stream is the mass alone.
+      const fv = futureValue(item.valueMass !== undefined && item.valueMass > 0
+        ? mass
+        : mass * profile.mu0, profile.alpha, fvDeltaT, o.tokens, q, ps, caps.hValue);
       const cacheCost = transactionCost(item, o, prev === null ? undefined : prev, incumbent, ps, turn);
       // ADR-0006 §3 (fidelity half): the summary-confidence prior prices
       // information LOSS; a recoverable consolidation loses none — the
@@ -154,7 +160,13 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       // Hosting it mid-render means each rewrite re-bills the suffix after
       // it — hazard × suffix tokens × spread is the honest expectation.
       const hz = o.zeroValue === true ? 0 : hazard;
-      const suffixTokensH = Math.max(0, incumbent.totalTokens - (prev?.position ?? 0) * Math.max(1, incumbent.totalTokens / Math.max(1, incumbent.blockCount)));
+      // Review A-M4: a NEW item (prev === undefined) lands at its zone's
+      // entry position — fresh volatile notices append at the tail and strand
+      // ≈nothing — so the hazard premium must not charge the full incumbent
+      // window. Charge the honest minimum: the item's own tokens.
+      const suffixTokensH = prev == null
+        ? o.tokens
+        : Math.max(0, incumbent.totalTokens - prev.position * Math.max(1, incumbent.totalTokens / Math.max(1, incumbent.blockCount)));
       const hazardPremium = hz * (suffixTokensH / PremiumScale) * (ps.cache.pricePer1kUncached - ps.cache.pricePer1kCached);
       // No-content options (zeroValue) render nothing — their value is zero,
       // not the item's vᵢ: utility cannot flow from bytes not rendered.

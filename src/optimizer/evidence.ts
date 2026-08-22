@@ -54,6 +54,17 @@ export function lambdaPosterior(item: ContextItem, prior: number, turn?: number)
  */
 export function evidenceValueFactor(item: ContextItem, prior: number, turn?: number): number {
   if (item.refEvidence === undefined) return 1;
+  // Review A-C1/M1: kinds with hazard prior 0 (identity/episodic/error —
+  // the "never re-referenced" class) made lam/prior = 0/0 = NaN with zero
+  // hits, and x/0 = ∞ → clamp 4 with one hit. Zero evidence on a prior-0
+  // kind is neutral (1.0); positive evidence floors the prior in the ratio
+  // so the factor is finite and evidence-thickening, not ceiling-pinned.
+  if (prior <= 0) {
+    const hits = item.refEvidence.hits.filter((h) => (turn === undefined ? true : h <= turn)).length;
+    if (hits === 0) return 1;
+    const lam = lambdaPosterior(item, prior, turn); // (0 + hits)/(κ + n)
+    return clamp(lam / Math.max(KAPPA * 0.05, 1), 0.25, 4); // effective floor prior
+  }
   const lam = lambdaPosterior(item, prior, turn);
   return clamp(lam / prior, 0.25, 4);
 }
