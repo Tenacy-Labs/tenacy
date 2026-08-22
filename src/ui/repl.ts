@@ -38,7 +38,8 @@ import { ZONE_ORDER } from "../optimizer/types.ts";
 import type { Provider, ModelResponse } from "../optimizer/providers.ts";
 import type { Block } from "../optimizer/types.ts";
 import type { SteeringIntent } from "../optimizer/intents.ts";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
+import { saveSession, restoreSession, sessionsDir } from "../optimizer/sessions.ts";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -164,7 +165,7 @@ async function command(line: string): Promise<void> {
   const cmd = parts[0];
   switch (cmd) {
     case "/help":
-      console.log("local: /status /context [zone] /why <id> /inspect [filter] /search <re> /goal <text> /file <path> <a-b> /release <path> <a-b> /promote <id> /demote <id> /watch <id> <mode> /provider [name] [model] /ledger /quit");
+      console.log("local: /status /context [zone] /why <id> /inspect [filter] /search <re> /goal <text> /file <path> <a-b> /release <path> <a-b> /promote <id> /demote <id> /watch <id> <mode> /provider [name] [model] /save [name] /resume <name> /sessions /ledger /quit");
       break;
     case "/status": {
       if (lastOutcome === null) { console.log("no turns yet"); break; }
@@ -202,6 +203,41 @@ async function command(line: string): Promise<void> {
         console.log(`provider -> ${name} (${p.modelId})`);
       } catch (e) {
         console.log(String(e));
+      }
+      break;
+    }
+    case "/save": {
+      const name = parts[1] ?? `session-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+      const dir = sessionsDir();
+      mkdirSync(dir, { recursive: true });
+      const path = `${dir}/${name}.json`;
+      const sf = saveSession(agent, path, bootedLive ? (process.argv[2] ?? availableProviders()[0] ?? "mock") : "mock");
+      console.log(`saved ${sf.rows.length} rows -> ${path} (turn ${sf.header.turn}, ${sf.header.modelId})`);
+      break;
+    }
+    case "/resume": {
+      const name = parts[1];
+      if (name === undefined) { console.log("usage: /resume <name> (see /sessions)"); break; }
+      const path = name.includes("/") ? name : `${sessionsDir()}/${name}.json`;
+      try {
+        const { header, restored } = restoreSession(agent, path);
+        console.log(`resumed ${restored} rows from ${path} (saved turn ${header.turn}, ${header.modelId})`);
+        lastOutcome = null;
+      } catch (e) {
+        console.log(String(e));
+      }
+      break;
+    }
+    case "/sessions": {
+      const dir = sessionsDir();
+      if (!existsSync(dir)) { console.log(`no sessions dir yet (${dir})`); break; }
+      const files = readdirSync(dir).filter((f) => f.endsWith(".json")).sort().reverse();
+      if (files.length === 0) { console.log("no saved sessions"); break; }
+      for (const f of files.slice(0, 15)) {
+        try {
+          const sf = JSON.parse(readFileSync(`${dir}/${f}`, "utf8"));
+          console.log(`${f.slice(0, -5).padEnd(34)} turn ${String(sf.header?.turn ?? "?").padStart(3)}  ${sf.header?.modelId ?? "?"}  ${sf.rows?.length ?? 0} rows  ${sf.header?.savedAt ?? ""}`);
+        } catch { console.log(f); }
       }
       break;
     }

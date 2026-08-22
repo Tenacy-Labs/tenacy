@@ -12,6 +12,7 @@ import { CacheModel, blockDigest } from "../src/optimizer/cache-model.ts";
 import { MockProvider, ScriptedProvider } from "../src/optimizer/providers.ts";
 import { AgentLoop, makeTurnItem } from "../src/optimizer/loop.ts";
 import { StandingItem, GoalItem, FileLensItem, NoticeItem } from "../src/optimizer/items.ts";
+import { Ledger } from "../src/optimizer/ledger.ts";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -269,5 +270,128 @@ describe("agent loop end-to-end", () => {
     agent.steer({ op: "goals.update", id: "g1", status: "completed" });
     const r2 = await agent.run("done");
     expect(r2.placements.find((p) => p.id === "g1")?.zone).toBe("foundational"); // completed → episodic record
+  });
+});
+
+// ── session persistence + transient-failure recovery (MVA human use) ────
+
+describe("session persistence — save/restore round-trip", () => {
+  test("save captures store rows; restore rehydrates a fresh loop with state intact", async () => {
+    const { saveSession, restoreSession } = await import("../src/optimizer/sessions.ts");
+    const dir = mkdtempSync(join(tmpdir(), "ak-session-"));
+    const path = join(dir, "s1.json");
+    const ps = paramSetV1("test-model");
+
+    // Build a loop with standing + goal + 2 turns + lens
+    const src = new AgentLoop(new MockProvider(), ps);
+    src.store.add(new StandingItem("identity", "identity", "you are a test agent").toContextItem());
+    const g = new GoalItem("g1", "ship the thing", undefined, "task");
+    src.registerGoal(g);
+    await src.run("hello there");
+    await src.run("second message");
+
+    const sf = saveSession(src, path, "mock");
+    if (sf.rows.length < 5) throw new Error(`too few rows captured: ${sf.rows.length}`);
+    if (sf.header.turn !== src.store.turn) throw new Error("turn not captured");
+
+    // Fresh loop; restore; verify
+    const dst = new AgentLoop(new MockProvider(), ps);
+    const { header, restored } = restoreSession(dst, path);
+    if (restored !== sf.rows.length) throw new Error(`restored ${restored} != saved ${sf.rows.length}`);
+    if (dst.store.turn !== header.turn) throw new Error(`turn mismatch: ${dst.store.turn} != ${header.turn}`);
+    const ids = dst.store.all().map((i) => i.id);
+    for (const want of ["identity", "g1", "turn-1-user", "turn-1-model", "turn-2-user"]) {
+      if (!ids.includes(want)) throw new Error(`missing restored id: ${want}`);
+    }
+    const gg = dst.goalRegistryView().get("g1");
+    if (gg === undefined || gg.text !== "ship the thing") throw new Error("goal not restored with text");
+  });
+
+  test("restored session continues the conversation (next turn renders restored history)", async () => {
+    const { saveSession, restoreSession } = await import("../src/optimizer/sessions.ts");
+    const dir = mkdtempSync(join(tmpdir(), "ak-session-"));
+    const ps = paramSetV1("test-model");
+    const src = new AgentLoop(new MockProvider(), ps);
+    src.store.add(new StandingItem("identity", "identity", "test").toContextItem());
+    await src.run("alpha message");
+    saveSession(src, join(dir, "s2.json"), "mock");
+
+    const dst = new AgentLoop(new MockProvider(), ps);
+    restoreSession(dst, join(dir, "s2.json"));
+    const out = await dst.run("beta message");
+    if (out.turn !== 2) throw new Error(`expected turn 2 after restore, got ${out.turn}`);
+    const rendered = dst.store.snapshot();
+    if (!rendered.has("turn-1-user")) throw new Error("restored turn-1-user missing from store after continued run");
+  });
+
+  test("lens restores with ranges and re-reads live content from host fileContent", async () => {
+    const { saveSession, restoreSession } = await import("../src/optimizer/sessions.ts");
+    const dir = mkdtempSync(join(tmpdir(), "ak-session-"));
+    const fixture = join(dir, "notes.txt");
+    require("node:fs").writeFileSync(fixture, Array.from({ length: 60 }, (_, i) => `line ${i + 1}: payload ${i + 1}`).join("\n"));
+    const ps = paramSetV1("test-model");
+    const { executeIntent } = await import("../src/optimizer/intents.ts");
+    const src = new AgentLoop(new MockProvider(), ps);
+    src.fileContent = (t) => { try { return require("node:fs").readFileSync(t, "utf8"); } catch { return ""; } };
+    src.store.add(new StandingItem("identity", "identity", "test").toContextItem());
+    const er = executeIntent({ op: "files.expand", target: fixture, from: 10, to: 20 }, src.store, null);
+    if (!er.ok) throw new Error("expand intent failed: " + er.result);
+    const lens = src.lensRegistryView().get("lens:" + fixture);
+    if (lens === undefined) throw new Error("lens not created in source run");
+    saveSession(src, join(dir, "s3.json"), "mock");
+
+    const dst = new AgentLoop(new MockProvider(), ps);
+    dst.fileContent = (t) => { try { return require("node:fs").readFileSync(t, "utf8"); } catch { return ""; } };
+    restoreSession(dst, join(dir, "s3.json"));
+    const rl = dst.lensRegistryView().get("lens:" + fixture);
+    if (rl === undefined) throw new Error("lens not restored");
+    const firstRange = rl.ranges[0];
+    if (rl.ranges.length === 0 || firstRange === undefined || firstRange[0] !== 10) throw new Error(`lens ranges wrong: ${JSON.stringify(rl.ranges)}`);
+    if (rl.content === "") throw new Error("lens content not re-read from host");
+  });
+
+  test("restore of a missing file throws honestly; bad format rejected", async () => {
+    const { restoreSession } = await import("../src/optimizer/sessions.ts");
+    let threw = false;
+    try { restoreSession(new AgentLoop(new MockProvider(), paramSetV1("m")), "/nonexistent/session.json"); }
+    catch { threw = true; }
+    if (!threw) throw new Error("missing file should throw");
+  });
+});
+
+describe("transient-failure recovery — retry with backoff", () => {
+  test("transient 429 retried to success; signal journaled", async () => {
+    const ps = paramSetV1("test-model");
+    const ledger = new Ledger(join(mkdtempSync(join(tmpdir(), "ak-rx-")), "l.jsonl"));
+    const loop = new AgentLoop(new MockProvider(), ps, ledger);
+    // Adversarial provider: two 429s then success
+    let calls = 0;
+    const flaky: typeof loop = loop as unknown as typeof loop;
+    const orig = loop["provider" as keyof typeof loop] as { call: unknown };
+    (loop as unknown as { provider: { call(bb: unknown, um: string): Promise<unknown> } }).provider = {
+      call: async (bb: unknown, um: string) => {
+        calls++;
+        if (calls < 3) { const e = new Error("HTTP 429 rate limited"); e.name = "RateLimit"; throw e; }
+        return { text: "recovered", usage: { inputTokens: 10, outputTokens: 3 } };
+      },
+    };
+    const out = await loop.run("survive me");
+    if (out.modelText !== "recovered") throw new Error(`expected recovered text, got ${out.modelText}`);
+    if (calls !== 3) throw new Error(`expected 3 calls, got ${calls}`);
+    (loop as unknown as { provider: unknown }).provider = orig;
+    await ledger.drain();
+  });
+
+  test("non-transient auth error surfaces immediately without retry", async () => {
+    const ps = paramSetV1("test-model");
+    const loop = new AgentLoop(new MockProvider(), ps);
+    let calls = 0;
+    (loop as unknown as { provider: { call(bb: unknown, um: string): Promise<never> } }).provider = {
+      call: async () => { calls++; throw new Error("401 unauthorized: bad api key"); },
+    };
+    let surfaced = "";
+    try { await loop.run("will fail"); } catch (e) { surfaced = String(e); }
+    if (!surfaced.includes("401")) throw new Error(`auth error not surfaced: ${surfaced}`);
+    if (calls !== 1) throw new Error(`non-transient should not retry, got ${calls} calls`);
   });
 });

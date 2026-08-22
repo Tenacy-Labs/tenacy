@@ -5,3 +5,4 @@ node_modules/
 # agent harness local config (keys) — never commit
 agents/
 test/tmp-cw/
+.agent-kernel/

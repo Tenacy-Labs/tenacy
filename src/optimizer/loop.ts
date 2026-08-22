@@ -5,7 +5,7 @@
  * journal reply → cacheModel.calibrate(usage) → incumbent update.
  * Tools execute at the coordinator (proposer/applier split, 0002g/K7).
  */
-import type { ContextItem, Placement, RenderOption, RenderResult, Zone } from "./types.ts";
+import type { Block, ContextItem, Placement, RenderOption, RenderResult, Zone, LensState } from "./types.ts";
 import type { ParamSet } from "./params.ts";
 import { ContextStore } from "./store.ts";
 import { render, estTokens } from "./renderer.ts";
@@ -13,7 +13,7 @@ import { solve } from "./solver.ts";
 import { CacheModel } from "./cache-model.ts";
 import { Ledger } from "./ledger.ts";
 import type { Provider } from "./providers.ts";
-import { GoalItem, FileLensItem, NoticeItem } from "./items.ts";
+import { GoalItem, FileLensItem, NoticeItem, TurnItem } from "./items.ts";
 import { executeIntent, bindHost, type SteeringIntent } from "./intents.ts";
 import { dreamPass } from "./dream.ts";
 
@@ -96,7 +96,7 @@ export class AgentLoop {
     this.hooks.onRender?.(rr, this.ps);
 
     const expected = this.cacheModel.expectedHit(rr.blocks);
-    const response = await this.provider.call(rr.blocks, userMessage);
+    const response = await this.callWithRetry(rr.blocks, userMessage);
 
     this.store.add(makeTurnItem(`turn-${this.turn}-model`, "model", response.text, this.turn));
 
@@ -157,6 +157,31 @@ export class AgentLoop {
   private goalRegistry = new Map<string, GoalItem>();
 
   /** Swap the live provider mid-session (REPL /provider). Re-pins the param set per A2. */
+  /**
+   * Transient-failure recovery: retry provider calls with exponential
+   * backoff (1s, 2s, 4s). Non-transient errors (auth, bad request) and
+   * exhaustion rethrow — the surface layer reports them honestly.
+   */
+  private async callWithRetry(blocks: Block[], userMessage: string, maxAttempts = 3): Promise<Awaited<ReturnType<Provider["call"]>>> {
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        return await this.provider.call(blocks, userMessage);
+      } catch (e) {
+        lastErr = e;
+        const msg = String(e).toLowerCase();
+        const transient = msg.includes("429") || msg.includes("rate") || msg.includes("overload") ||
+          msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("timeout") ||
+          msg.includes("econnreset") || msg.includes("econnrefused") || msg.includes("fetch failed") ||
+          msg.includes("network") || msg.includes("eai_again");
+        if (!transient || attempt === maxAttempts) throw e;
+        this.ledger?.recordSignal({ type: "provider-retry", turn: this.turn, attempt, error: msg.slice(0, 120) });
+        await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
+      }
+    }
+    throw lastErr;
+  }
+
   swapProvider(provider: Provider, ps: ParamSet): void {
     this.provider = provider;
     this.ps = ps;
@@ -171,6 +196,53 @@ export class AgentLoop {
     g.createdTurn = this.store.turn;
     this.store.add(g.toContextItem());
   }
+  // ── session persistence surface (sessions.ts is the only consumer) ─────
+
+  /** Read access for session serialization — lenses with live content. */
+  lensRegistryView(): ReadonlyMap<string, FileLensItem> { return this.fileRegistry; }
+  /** Read access for session serialization — goals. */
+  goalRegistryView(): ReadonlyMap<string, GoalItem> { return this.goalRegistry; }
+
+  /** Restore primitives (sessions.ts) — rehydrate without turn-stamp clobber. */
+  addRestoredItem(item: ContextItem, createdTurn: number, lastTouchTurn: number): void {
+    // Idempotent restore: boot-time standing items (identity) may already
+    // exist — the session's copy wins (it carries the saved turn stamps).
+    this.store.remove(item.id);
+    item.createdTurn = createdTurn;
+    item.lastTouchTurn = lastTouchTurn;
+    this.store.add(item);
+  }
+  registerGoalRow(g: GoalItem): void {
+    this.store.remove(g.id);
+    g.lastTouchTurn = this.store.turn;
+    g.createdTurn = this.store.turn;
+    this.registerGoal(g);
+  }
+  addRestoredTurn(id: string, role: "user" | "model" | "tool-result", verbatim: string, summary: string | undefined, rep: string): void {
+    this.store.remove(id);
+    const t = new TurnItem(id, role, verbatim);
+    if (summary !== undefined) t.summary = summary;
+    t.rep = (rep === "SUMMARY" ? "SUMMARY" : "VERBATIM");
+    t.lastTouchTurn = this.store.turn;
+    t.createdTurn = this.store.turn;
+    this.store.add(t.toContextItem());
+  }
+  attachLens(id: string, target: string, ranges: Array<[number, number]>, baseBlockTurn: number, state: LensState): void {
+    const content = this.fileContent(target);
+    if (content === "") return;  // file gone — skip honestly, lens not restored
+    const f = new FileLensItem(id, target, content);
+    f.ranges = ranges;
+    f.baseBlockTurn = baseBlockTurn;
+    f.state = state;
+    f.lastTouchTurn = this.store.turn;
+    f.createdTurn = this.store.turn;
+    this.fileRegistry.set(id, f);
+    this.store.add(f.toContextItem());
+  }
+  setTurn(turn: number): void {
+    this.store.turn = turn;
+  }
+
   fileLens(target: string): FileLensItem {
     const id = `lens:${target}`;
     let f = this.fileRegistry.get(id);
