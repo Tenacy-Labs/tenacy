@@ -13,6 +13,7 @@ import { evidenceValueFactor } from "./evidence.ts";
 import { ZONE_ORDER } from "./types.ts";
 import type { ParamSet } from "./params.ts";
 import { capHorizons, effectiveHysteresis } from "./horizon.ts";
+import { effectiveDeltaT } from "./churn.ts";
 import { suffixMassAfter } from "./suffix.ts";
 import { sharedBillSurcharge } from "./suffix.ts";
 import { blockDigest } from "./cache-model.ts";
@@ -91,7 +92,11 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   // ── 1. Value forecasts and option selection per item ──────────────────────
   for (const item of items.values()) {
     const profile = ps.profiles[item.kind]!;
-    const deltaT = Math.max(0, turn - item.lastTouchTurn);
+    const rawDeltaT = Math.max(0, turn - item.lastTouchTurn);
+    // ADR-0006 §2.3: content renewal refreshes the decay clock — a churning
+    // item's bytes are fresh, so its FV must not decay as if stale. Credit
+    // churn-renewed turns; hazardPremium keeps pricing change risk at k=0.
+    const deltaT = effectiveDeltaT(item, rawDeltaT);
 
     // v_i = μ₀·(1+Δt)^−α, with profile exemptions/floors/bumps (0002b §2, 0002f §3, 0004 §2)
     // valueMass (multi-period 2026-08-22): a merge group carries its members'
