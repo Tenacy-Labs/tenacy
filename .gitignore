@@ -6,3 +6,5 @@ node_modules/
 agents/
 test/tmp-cw/
 .agent-kernel/
+bench/corpus/dumps/
+bench/corpus/fixtures/thrash.log

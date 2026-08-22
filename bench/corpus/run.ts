@@ -19,7 +19,9 @@ import { paramSetV1 } from "../../src/optimizer/params.ts";
 import { StandingItem } from "../../src/optimizer/items.ts";
 import { buildProvider, loadHarnessConfig, paramSetFor } from "../../src/optimizer/registry.ts";
 import { withIntentParsing, INTENT_PROTOCOL_DOC } from "../../src/optimizer/live.ts";
-import { readFileSync, appendFileSync, writeFileSync, readdirSync } from "node:fs";
+import type { RenderResult } from "../../src/optimizer/types.ts";
+type RenderResultLike = RenderResult;
+import { readFileSync, appendFileSync, writeFileSync, readdirSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..", "..");
@@ -34,6 +36,8 @@ interface Scenario {
 
 const args = process.argv.slice(2);
 const LIVE = args.includes("--live");
+const dumpIdx = args.indexOf("--dump");
+const DUMP_DIR = dumpIdx !== -1 ? (args[dumpIdx + 1] ?? "bench/corpus/dumps") : null;
 const liveOnly = LIVE ? args[args.indexOf("--live") + 1] : undefined;
 if (args.includes("--list")) {
   for (const [k, v] of Object.entries(SPEC)) {
@@ -48,11 +52,15 @@ type Turn = { i: number; who: string; text: string };
 
 const budgetState = { max: 0, over: false, lambda: 0 };
 const scenarioRenders: string[] = [];
+const scenarioRenderResults: RenderResultLike[] = [];
 
 function newLoop(): { loop: AgentLoop; engine: TurnBoundaryWatcher } {
   const engine = new TurnBoundaryWatcher();
   const hooks = {
-    onRender: (rr: { text: string }): void => { scenarioRenders.push(rr.text); },
+    onRender: (rr: RenderResultLike): void => {
+      scenarioRenders.push(rr.text);
+      scenarioRenderResults.push(rr);
+    },
     onTurn: (o: { turn: number; renderTokens: number }): void => {
       budgetState.max = Math.max(budgetState.max, o.renderTokens);
       if (LIVE && budgetState.lambda > 0 && o.renderTokens > budgetState.lambda) {
@@ -68,12 +76,14 @@ function newLoop(): { loop: AgentLoop; engine: TurnBoundaryWatcher } {
     const provider = withIntentParsing("zai", buildProvider("zai", {}));
     const ps = paramSetFor(provider.modelId, cfg);
     budgetState.lambda = ps.budgetLambda;
-    console.log(`  live: ${provider.modelId} | Λ=${ps.budgetLambda}t (contextWindow=${cfg.contextWindow ?? "unset"})`);
     loop = new AgentLoop(provider, ps, null, hooks);
   } else {
-    loop = new AgentLoop(new MockProvider(), paramSetV1("m"), null, hooks);
+    const ps = paramSetV1("m");
+    ps.budgetLambda = 2048;   // mock runs at the SAME pressure as live
+    loop = new AgentLoop(new MockProvider(), ps, null, hooks);
   }
   loop.watcher = engine;
+  if (!LIVE) budgetState.lambda = 2048;
   loop.fileContent = (t) => {
     try { return readFileSync(resolve(ROOT, t), "utf8"); } catch { try { return readFileSync(t, "utf8"); } catch { return ""; } }
   };
@@ -88,6 +98,20 @@ function newLoop(): { loop: AgentLoop; engine: TurnBoundaryWatcher } {
     " Work under a tight token budget: expand only the ranges you need, distill what matters into your replies, release ranges when done. " +
     "When your accumulated notes grow long, consolidate them with convo.merge (merge older turns into one summary turn) so findings survive.").toContextItem());
   return { loop, engine };
+}
+
+function dumpTurn(scenario: string, turn: number, prompt: string): void {
+  if (DUMP_DIR === null) return;
+  const rr = scenarioRenderResults.at(-1);
+  if (rr === undefined) return;
+  const lines: string[] = [];
+  lines.push(`=== TURN ${turn} | prompt: ${prompt.slice(0, 100)}`);
+  lines.push(`render ${rr.text.length} chars ~${Math.ceil(rr.text.length / 4)}t`);
+  for (const b of rr.blocks) lines.push(`  [${b.zone}] ${(b.itemId + " ").padEnd(34).slice(0, 34)} ${b.digest} ${String(b.tokens).padStart(5)}t`);
+  lines.push("");
+  lines.push(rr.text);
+  mkdirSync(DUMP_DIR, { recursive: true });
+  writeFileSync(`${DUMP_DIR}/${scenario}-t${String(turn).padStart(2, "0")}.txt`, lines.join("\n"));
 }
 
 async function runScenario(name: string, spec: Scenario): Promise<boolean> {
@@ -111,11 +135,12 @@ async function runScenario(name: string, spec: Scenario): Promise<boolean> {
   const record = (who: string, text: string): void => { transcript.push({ i: turnIdx, who, text }); };
 
   const useScript = !LIVE && spec.script !== undefined;
+  let scriptStep = 1;
   if (useScript) {
     // SCRIPTED: intents drive the loop directly; say-lines are distilled
     // notices recorded as model-side output.
     for (const line of spec.script ?? []) {
-      if (line.startsWith("say ")) { record("model", line.slice(4)); continue; }
+      if (line.startsWith("say ")) { record("model", line.slice(4)); dumpTurn(name, scriptStep, "say"); scriptStep += 1; continue; }
       let intent: SteeringIntent | undefined;
       try { intent = JSON.parse(line) as SteeringIntent; } catch { intent = undefined; }
       if (intent === undefined || typeof intent.op !== "string") { console.log(`  ✗ unparseable: ${line}`); ok = false; continue; }
@@ -124,6 +149,7 @@ async function runScenario(name: string, spec: Scenario): Promise<boolean> {
       if (!r.ok) { console.log(`  ✗ intent failed: ${line} → ${r.result}`); ok = false; }
       // after every intent batch, advance a turn so renders/solver stay honest
       await loop.run(line);   // mock model observes the intent result
+      dumpTurn(name, scriptStep, line.slice(0, 100)); scriptStep += 1;  // AFTER re-render
       turnIdx += 1;
     }
   } else {
@@ -131,8 +157,9 @@ async function runScenario(name: string, spec: Scenario): Promise<boolean> {
     for (const t of turns) {
       if (t.mutation === "append-alert") { mutationAlert(); continue; }
       if (t.msg === undefined) continue;
-      const res = await loop.run(t.msg);
+      const res = await loop.run((t as { msg?: string }).msg ?? "");
       record("model", res.modelText);
+      if (DUMP_DIR !== null) dumpTurn(name, turnIdx + 1, t.msg);
       console.log(`  t${turnIdx + 1} model: ${res.modelText.slice(0, 140).replace(/\n/g, " ")}`);
       for (const tr of res.toolResults) console.log(`    intent ${tr.op}: ${tr.ok ? "ok" : "FAIL"} — ${tr.result.slice(0, 90)}`);
       const lastRender = scenarioRenders.at(-1) ?? "";
