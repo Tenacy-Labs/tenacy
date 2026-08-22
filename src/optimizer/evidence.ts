@@ -80,8 +80,16 @@ export function evidenceVariance(item: ContextItem, prior: number, turn?: number
   if (item.refEvidence === undefined) return null;
   const n = observedTurns(item, turn);
   const hits = item.refEvidence.hits.filter((h) => (turn === undefined ? true : h <= turn)).length;
+  // Review C1 fix (2026-08-22): hits can exceed n (multiple access events
+  // per turn — search-heavy turns, re-expands), which made b negative and
+  // the Beta variance negative → sqrt → NaN hysteresis (silently disabled).
+  // Count observed turns by DISTINCT hit turns — the Beta's n must count
+  // observation opportunities, not raw access events.
+  const hitTurns = new Set(item.refEvidence.hits.filter((h) => (turn === undefined ? true : h <= turn)));
+  const nEff = Math.max(n, hitTurns.size);
   const a = KAPPA * prior + hits;
-  const b = KAPPA * (1 - prior) + (n - hits);
+  const b = KAPPA * (1 - prior) + (nEff - hits);
+  if (b <= 0 || a <= 0 || a + b <= 0) return null;
   return (a * b) / ((a + b) ** 2 * (a + b + 1));
 }
 

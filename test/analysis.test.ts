@@ -5,7 +5,7 @@
 import { describe, test, expect } from "bun:test";
 import { loadCorpus, corpusCard } from "../src/optimizer/corpus.ts";
 import { loadHarnessConfig } from "../src/optimizer/harness-config.ts";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { reportValueForecast, reportHazard, reportRot, reportDecision } from "../src/optimizer/reports.ts";
@@ -17,7 +17,7 @@ import { AgentLoop } from "../src/optimizer/loop.ts";
 import { ScriptedProvider } from "../src/optimizer/providers.ts";
 import { StandingItem } from "../src/optimizer/items.ts";
 import { Ledger } from "../src/optimizer/ledger.ts";
-import { availableProviders, REGISTRY } from "../src/optimizer/registry.ts";
+import { availableProviders, REGISTRY, buildProvider } from "../src/optimizer/registry.ts";
 
 const FILES_200 = Array.from({ length: 200 }, (_, i) => `line ${i + 1} — payload text ${i}`).join("\n");
 
@@ -121,12 +121,30 @@ describe("provider registry", () => {
     expect(REGISTRY.zai!.defaultModel).toBe("glm-4.7");
   });
 
-  test("buildProvider throws honestly when key absent", () => {
-    const saved = process.env.TEST_REG_KEY;
-    delete process.env.OPENAI_API_KEY;
-    expect(() => REGISTRY.openai!.build({ apiKey: "", model: "x" })).not.toThrow(); // building a wire needs no net
-    expect(() => buildProviderMissingKey()).toThrow(/not set/);
-    if (saved !== undefined) process.env.OPENAI_API_KEY = saved;
+  test("buildProvider throws honestly when key absent (real path, all tiers controlled)", () => {
+    // MAJOR-1 fix (fresh-context review 2026-08-22): the old test called a
+    // local stub that throws by construction — the real registry.ts
+    // buildProvider was never exercised. Drive the REAL function with all
+    // three credential tiers controlled: opts absent, env blank-deleted,
+    // config file redirected to an empty scratch file.
+    const savedKey = process.env.OPENAI_API_KEY;
+    const savedCfg = process.env.AGENT_KERNEL_CONFIG;
+    const scratch = join(tmpdir(), `ak-cfg-empty-${Date.now()}.json`);
+    writeFileSync(scratch, "{}");
+    process.env.AGENT_KERNEL_CONFIG = scratch;
+    try {
+      delete process.env.OPENAI_API_KEY;
+      expect(() => buildProvider("openai")).toThrow(/not set and no harness config entry/);
+      // And the wiring succeeds once the key exists (env tier) — proving the
+      // check gates rather than always throwing.
+      process.env.OPENAI_API_KEY = "test-key";
+      expect(() => buildProvider("openai")).not.toThrow();
+    } finally {
+      if (savedKey !== undefined) process.env.OPENAI_API_KEY = savedKey;
+      if (savedCfg !== undefined) process.env.AGENT_KERNEL_CONFIG = savedCfg;
+      else delete process.env.AGENT_KERNEL_CONFIG;
+      rmSync(scratch, { force: true });
+    }
   });
 
   test("availableProviders lists only keyed providers", () => {

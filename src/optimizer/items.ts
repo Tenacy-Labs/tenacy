@@ -39,7 +39,7 @@ export class StandingItem {
   }
   toContextItem(): ContextItem {
     return {
-      id: this.id, kind: "episodic", immutable: this.immutable,
+      id: this.id, kind: this.kind, immutable: this.immutable,
       tokens: this.tokens, serialize: () => this.#text, options: () => this.options(),
       upstreams: this.upstreams, lastRender: this.lastRender, lastTouchTurn: this.lastTouchTurn,
       createdTurn: this.createdTurn, hazardOverride: this.hazardOverride, valueBump: this.valueBump,

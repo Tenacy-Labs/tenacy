@@ -430,19 +430,29 @@ describe("S2 substrate movement (per substrate)", () => {
     });
 
     test(`${sub.name}: wholesale replace — the lens must not pretend continuity`, () => {
-      const lens = sub.makeLens(LENSID(sub.name));
+      const lens = sub.makeLens(`adv:${sub.name}`);
       armBase(sub, lens, 2);
-            sub.mutate("replace-all", 1);
+      sub.mutate("replace-all", 1, "fresh/dir-a.ts\nfresh/dir-b.ts");
       sub.refresh(lens);
-      // everything is alien to the base; no lattice option may claim additivity
-      const adds = lens.options().filter((o) => o.purelyAdditive);
-      // With no pending deltas, the pre-lattice surface offers base+delta
-      // (additive) and consolidated — but base+delta's bytes include the alien
-      // substrate: it is an APPEND of the new truth, which IS additive-honest.
-      // The invariant: no crash, and options exist.
-      const ids = lens.options().map((o) => o.id);
-      if (ids.length === 0) throw new Error(`${sub.name}: no options after wholesale replace`);
-      void adds;
+      const opts = lens.options();
+      if (opts.length === 0) throw new Error(`${sub.name}: no options after wholesale replace`);
+      // Honest invariant (MAJOR-2 fix, fresh-context review 2026-08-22): the
+      // substrate is now 100% alien to the base. (a) SOME option must carry
+      // the fresh truth — a lens that offers only base-derived bytes is
+      // pretending the replace never happened. (b) No ADDITIVE option may
+      // exclude the fresh truth: additivity claims "base + append of new
+      // truth"; an additive option with zero fresh bytes is base-continuity
+      // wearing an additive badge — exactly the pretense this test names.
+      const freshBytes = sub.freshSlice(1, sub.lineCount());
+      const freshMarker = freshBytes.split("\n")[0]!.split("| ")[1] ?? freshBytes;
+      const carrier = opts.filter((o) => o.text.includes(freshMarker));
+      if (carrier.length === 0) {
+        throw new Error(`${sub.name}: no option carries the fresh truth after wholesale replace (ids: ${opts.map((o) => o.id).join(",")})`);
+      }
+      const badAdditive = opts.filter((o) => o.purelyAdditive && !o.text.includes(freshMarker));
+      if (badAdditive.length > 0) {
+        throw new Error(`${sub.name}: additive options excluding fresh truth: ${badAdditive.map((o) => o.id).join(",")}`);
+      }
     });
   }
 });

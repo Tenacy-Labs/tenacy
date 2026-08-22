@@ -71,6 +71,13 @@ export class TurnBoundaryWatcher {
       }
       const total = (this.churn.get(lensId) ?? 0) + events.length;
       this.churn.set(lensId, total);
+      // Per-turn churn EWMA (review C3 fix, 2026-08-22): churnOf must feed
+      // churn.ts a per-TURN rate (contract: "EWMA of events per turn; 1 =
+      // every turn"), not the lifetime total. Same EWMA discipline as the
+      // hazard signal: blend this turn's event count, decay when quiet.
+      const perTurn = events.length;                     // this turn's count
+      const prevC = this.churnEwma.get(lensId) ?? 0;
+      this.churnEwma.set(lensId, 0.5 * prevC + 0.5 * perTurn);
       // Observed-hazard EWMA (0002d §5 churn pricing): binary did-change
       // signal — a file that mutates every turn converges to hazard 1.0,
       // a quiet one decays to 0. Feeds item.hazardOverride → solver.
@@ -90,16 +97,20 @@ export class TurnBoundaryWatcher {
   }
 
   private observedHazard = new Map<string, number>();
+  private churnEwma = new Map<string, number>();
 
   /** Realized per-turn hazard belief for a lens (solver input, EWMA). */
   observedHazardOf(lensId: string): number { return this.observedHazard.get(lensId) ?? 0; }
 
-  /** Realized churn for a lens (demotion input, 0002d §5). */
-  churnOf(lensId: string): number { return this.churn.get(lensId) ?? 0; }
+  /** Realized per-turn churn rate for a lens (EWMA; churnProfile input). */
+  churnOf(lensId: string): number { return this.churnEwma.get(lensId) ?? 0; }
+
+  /** Lifetime event total (demotion input, 0002d §5). */
+  churnLifetimeOf(lensId: string): number { return this.churn.get(lensId) ?? 0; }
 
   /** Should this lens be demoted live→polled? (optimizer-authored flip) */
   shouldDemote(lensId: string): boolean {
-    return this.churnOf(lensId) > this.churnDemoteThreshold;
+    return this.churnLifetimeOf(lensId) > this.churnDemoteThreshold;
   }
 
   /** Sequence-legibility render helpers (§6). */

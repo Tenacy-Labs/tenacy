@@ -537,6 +537,12 @@ export class AgentLoop {
         if (id.startsWith(`${lens.id}#`) && !want.has(id)) this.store.remove(id);
       }
       for (const f of frags) {
+        // Upsert, not add (fresh-context review 2026-08-22): fragments() mints
+        // a fresh LensFragmentItem each turn; store.add throws on the second
+        // turn of a split lens (duplicate item id: lens:X#1). The store copy
+        // must be refreshed, not re-inserted.
+        const existing = this.store.get(f.id);
+        if (existing !== undefined) this.store.remove(f.id);
         this.store.add(f.toContextItem());
       }
     }
