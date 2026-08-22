@@ -31,17 +31,39 @@ this branch with discriminating regression pins; majors tracked below
   forever. FIX: true per-turn EWMA in the watcher (`churnEwma`), lifetime
   total kept for `shouldDemote` (also fixes B-9's conflation); pinned.
 
+## Provenance
+
+Four reviewer runs total: A (initial dispatch, recovered from a mangled
+goal — completed 2026-08-22 19:xx), A′ (re-dispatch), B, C. C1 and the
+strand / prior-0 / H-floor findings were found INDEPENDENTLY by both A
+runs — concurrence noted inline. First-A's verified-correct list
+additionally cleared: churn credit semantics, sharedBillSurcharge math,
+prior-0 zero-hits neutrality, write-turn/mass carry-forward on
+digest-identical keeps.
+
 ## MAJORS — verified, tracked (recommended next session)
 
 - **A-M1** Exact-MCKP relief strand-blind (`void strand`): evicts front
   items, eats prefix re-bill. The docstring's strand pricing never wired.
 - **A-M2** T*=0 clamp defeated by `Math.max(1, floor(hValue))` at solver
-  L77 — over-budget window still collects a full FV turn.
+  L77 — over-budget window still collects a full FV turn. (Found
+  independently by both A runs; first-A measured −2.125 leaked at T*=0.)
 - **A-M3** Thrash detector dead after B9 dedupe — thrashCount identically 0.
 - **A-M4** Gauge 4 wrong both directions (per-item vs per-token ρ;
   (turn,id) join lets rejected row overwrite accepted keep).
 - **A-M5** Prior-0 evidence branch: any access evidence quarters value
-  (`Math.max(KAPPA*0.05, 1)` identically 1 — dead subexpression).
+  (`Math.max(KAPPA*0.05, 1)` identically 1 — dead subexpression). (Found
+  independently by both A runs.) Owner ruling wanted: this is the
+  prior-0 semantics decision, not a mechanical fix.
+- **A-M10** (first-A M2, measured) Tombstone-relief FV uses the UNCAPPED
+  horizon (default 20) while keeps are T*-capped — over-budget windows
+  overprice tombstones 0.419 util (419 MCKP units vs margin 0.15), biasing
+  toward tombstoning exactly when the window is fullest. Threads
+  `caps.hValue` into `tombFV`.
+- **A-M11** (first-A minor, promoted) New-item re-entry margin at solver
+  L245 uses flat `ps.hysteresisMargin` while incumbent comparison uses
+  variance-scaled `effectiveHysteresis` — inconsistent hysteresis pricing
+  across the two paths (and the NaN-immune one).
 - **A-M6** `hazardBasis` computed but never journaled — observed-hazard
   items pool into prior buckets, contaminating hazard calibration.
 - **A-M7** Hysteresis-held items keep §1 rot estimate; Map-with-last-row-
@@ -73,7 +95,9 @@ with same lens throws; B-12 code: prefix stripping inconsistent. C: C-m1
 battery wholesale-replace vacuous assertion — REPAIRED this session into a
 falsifying test that caught the NS dangling-prefix defect (fixed with
 root-walk fallback); C-m2 review-fixes.test.ts M5/B12/B20 prefix-stable
-only; C-m9 suite lacks hazardBasis coverage.
+only; C-m9 suite lacks hazardBasis coverage. First-A adds: ttlWindowFree
+now also dead-export (only own-file tests consume); m2's H-floor leak is
+the T*=0 case of A-M2.
 
 ## Security
 
