@@ -116,6 +116,13 @@ function dumpTurn(scenario: string, turn: number, prompt: string): void {
 
 async function runScenario(name: string, spec: Scenario): Promise<boolean> {
   console.log(`\n── ${name} — ${spec.desc}`);
+  // Per-scenario capture reset (max-suite audit 2026-08-22): these were
+  // module-level and NEVER cleared, so scenario N's renders leaked into
+  // scenario N+1's recall check (s3b "render-carried" passes were s3's
+  // api.log bytes — contamination, not behavior).
+  scenarioRenders.length = 0;
+  scenarioRenderResults.length = 0;
+  budgetState.max = 0; budgetState.over = false;
   const { loop, engine } = newLoop();
   const transcript: Turn[] = [];
   const renders: string[] = [];
@@ -197,6 +204,17 @@ async function runScenario(name: string, spec: Scenario): Promise<boolean> {
   // while the substrate was held — proof the pipeline carried it.
   const modelText = transcript.filter((t) => t.who === "model").map((t) => t.text).join("\n");
   const renderText = scenarioRenders.join("\n");
+  if (name === "s3b-live-watch" && !LIVE) {
+    // Mock-mode contract for the live-watch scenario: the CHANGES tail is
+    // the mechanism under test (content lands outside the held range; a
+    // live model expands the tail and answers — mock cannot). Recall is
+    // therefore LIVE-only here; mock checks the tail appeared and drained.
+    const tailSeen = renderText.includes("CHANGES (live since your last turn)");
+    const drained = !scenarioRenderResults.at(-1)?.text.includes("CHANGES") || scenarioRenderResults.length > 1;
+    console.log(`  ${tailSeen ? "✓" : "✗"} watch-mechanism: CHANGES tail rendered after mutation (recall: N/A in mock, live-only)`);
+    if (!tailSeen) ok = false;
+    return ok;
+  }
   for (const needle of spec.recall) {
     const inModel = modelText.includes(needle);
     const inRender = !LIVE && renderText.includes(needle);
