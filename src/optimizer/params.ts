@@ -50,6 +50,14 @@ export interface ParamSet {
   cache: CacheModelParams;
   /** ADR-0004 §7 (A6): starting fidelity penalty for lossy representations. */
   summaryConfidencePrior: number;
+  /**
+   * Reservation (shadow) price per rendered token — the emergence pass's
+   * knapsack dual (2026-08-22). An item must earn its seat: v_i must exceed
+   * rho × tokens + transaction costs, else the byte is better left for
+   * fresher content. Tuned so a fully-decayed turn (value → 0) leaves the
+   * window within ~2 turns of its value crossing rho × its tokens.
+   */
+  reservationPrice: number;
 }
 
 export const PROFILES_V1: Record<ItemKind, ValueProfile> = {
@@ -77,7 +85,10 @@ export function paramSetV1(modelId: string): ParamSet {
     modelId,
     lambda: 0.8,
     budgetLambda: 24_000,
-    rotCurve: { sizeCoef: 0.00015, midPenalty: 0.3 },
+    // Emergence pass (2026-08-22): 0.00015 was decorative — ~0.003 utility
+    // against item values of 2–10. At 0.0015 a 2,000t render carries ~2.4
+    // rot-disutility units: bloat now competes with item value in the argmin.
+    rotCurve: { sizeCoef: 0.0015, midPenalty: 0.3 },
     hysteresisMargin: 0.15,
     profiles: structuredClone(PROFILES_V1),
     hazardPriors: structuredClone(HAZARD_PRIORS_V1),
@@ -90,5 +101,10 @@ export function paramSetV1(modelId: string): ParamSet {
       pricePer1kOutput: 15.0,
     },
     summaryConfidencePrior: 2.0,   // A6: lossy reps start heavily penalized
+    // 0.002 util/token: a 24t turn item must carry > 0.048 utility to hold a
+    // seat (decay takes a turn-2 item there in ~4 turns at α=1); a 676t
+    // chunk must carry > 1.35. Decay + reservation evicts stale content
+    // WITHOUT relief flapping (re-entry needs to re-clear the bar).
+    reservationPrice: 0.002,
   };
 }

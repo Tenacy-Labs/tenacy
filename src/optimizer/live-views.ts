@@ -71,12 +71,28 @@ export class TurnBoundaryWatcher {
       }
       const total = (this.churn.get(lensId) ?? 0) + events.length;
       this.churn.set(lensId, total);
+      // Observed-hazard EWMA (0002d §5 churn pricing): binary did-change
+      // signal — a file that mutates every turn converges to hazard 1.0,
+      // a quiet one decays to 0. Feeds item.hazardOverride → solver.
+      const obs = events.length > 0 ? 1 : 0;
+      const prevH = this.observedHazard.get(lensId) ?? 0;
+      this.observedHazard.set(lensId, 0.5 * prevH + 0.5 * obs);
       out.push({ lensId, committedTurn: turn, markers: [...markers], coalescedEvents: events.length });
+    }
+    const fired = new Set(out.map((d) => d.lensId));
+    // Quiet lenses settle toward 0; lenses that fired keep this turn's blend.
+    for (const [lensId, h] of this.observedHazard) {
+      if (!fired.has(lensId)) this.observedHazard.set(lensId, 0.5 * h);
     }
     this.pending.clear();
     this.deltas.push(...out);
     return out;
   }
+
+  private observedHazard = new Map<string, number>();
+
+  /** Realized per-turn hazard belief for a lens (solver input, EWMA). */
+  observedHazardOf(lensId: string): number { return this.observedHazard.get(lensId) ?? 0; }
 
   /** Realized churn for a lens (demotion input, 0002d §5). */
   churnOf(lensId: string): number { return this.churn.get(lensId) ?? 0; }

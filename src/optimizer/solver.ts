@@ -33,6 +33,10 @@ const ZONE_ROT_WEIGHT: Record<Zone, number> = {
   identity: 0.5, foundational: 0.8, stable: 1.0, evolving: 1.2, volatile: 0.7,
 };
 
+/** Utility-per-thousand-suffix-tokens scale for the hazard premium (so the
+ *  premium lands in the same units as item value, ~O(1) at 1k suffix). */
+const PremiumScale = 1000;
+
 /** Kinds always held — the risk-free anchor (0002b §1). */
 const ALWAYS_HELD = new Set(["identity", "goal"]);
 
@@ -70,11 +74,26 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       const cacheCost = transactionCost(item, o, prev === null ? undefined : prev, incumbent, ps);
       const fidelity = fidelityPenalty(o, ps);
       const rotEstimate = ps.lambda * ps.rotCurve.sizeCoef * (incumbent.totalTokens + o.tokens) * 0.01;
+      // Expected-invalidation risk premium (emergence pass 2026-08-22):
+      // hazard is the per-turn change probability this item will rewrite.
+      // Hosting it mid-render means each rewrite re-bills the suffix after
+      // it — hazard × suffix tokens × spread is the honest expectation.
+      const hz = o.zeroValue === true ? 0 : hazard;
+      const suffixTokensH = Math.max(0, incumbent.totalTokens - (prev?.position ?? 0) * Math.max(1, incumbent.totalTokens / Math.max(1, incumbent.blockCount)));
+      const hazardPremium = hz * (suffixTokensH / PremiumScale) * (ps.cache.pricePer1kUncached - ps.cache.pricePer1kCached);
       // No-content options (zeroValue) render nothing — their value is zero,
       // not the item's vᵢ: utility cannot flow from bytes not rendered.
       const optValue = o.zeroValue === true ? 0 : value;
-      const utility = optValue - cacheCost - fidelity - rotEstimate;
-      return { o, cacheCost, fidelity, rotEstimate, utility, optValue };
+      // Reservation price (emergence pass 2026-08-22): the shadow price of a
+      // rendered byte in a bounded window. Without it utility >= 0 whenever
+      // value > 0, so decayed items squat seats forever and evicted items
+      // resurrect the very next turn (measured: relief in/out flapping,
+      // turn-14/15 dropping and re-entering mid-zone). With rho, an item
+      // must EARN its seat: v_i > rho * tokens + costs, else the window is
+      // better spent on fresher content. This is the knapsack dual price.
+      const seat = o.zeroValue === true ? 0 : ps.reservationPrice * o.tokens;
+      const utility = optValue - cacheCost - fidelity - rotEstimate - hazardPremium - seat;
+      return { o, cacheCost, fidelity, rotEstimate, hazardPremium, seat, utility, optValue };
     });
     scored.sort((a, b) => b.utility - a.utility || a.o.id.localeCompare(b.o.id));
     let best = scored[0]!;
@@ -161,9 +180,16 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   });
 
   // ── 3. Budget: drop lowest-utility droppable items until within Λ ─────────
+  // Emergence pass (2026-08-22): the drop CHOICE must price prefix damage.
+  // Old rule (pure density) always cut the oldest turns — which sit at the
+  // FRONT of the evolving zone — destroying cache for every block after
+  // them each relief turn (measured: prefix 1,663t → 435t alternate turns).
+  // Dropping from the tail re-bills only the tail. The relief victim is
+  // now the item minimizing value-per-(tokens + prefix damage): density
+  // with the cache suffix it would strand priced in.
   let totalTokens = chosen.reduce((s, c) => s + c.option.tokens, 0);
   while (totalTokens > ps.budgetLambda) {
-    const idx = worstDensityDroppable(chosen);
+    const idx = worstDensityDroppable(chosen, incumbent, ps);
     if (idx < 0) break; // only always-held remain
     const c = chosen[idx]!;
     // Prefer downgrade-to-tombstone over eviction: a ~10t zeroValue option
@@ -249,14 +275,29 @@ function density(c: { item: ContextItem; option: RenderOption }): number {
  * utility-per-token (density), not the lowest absolute utility. Equal
  * utility, 5 vs 500 tokens: the 500-token item frees 100x the capacity
  * for the same utility loss. ALWAYS_HELD kinds are exempt.
+ *
+ * Emergence pass (2026-08-22): the density denominator now includes the
+ * cache suffix the drop strands — evicting a front block re-bills every
+ * byte after it, so the honest cost of a drop is tokens + stranded suffix.
+ * Cache-continuity-aware relief drops from the TAIL emergently.
  */
-function worstDensityDroppable(chosen: { item: ContextItem; option: RenderOption; utility: number }[]): number {
-  let worstIdx = -1, worstD = Infinity;
+function worstDensityDroppable(chosen: { item: ContextItem; option: RenderOption; utility: number }[], incumbent: Incumbent, ps: ParamSet): number {
+  let worstIdx = -1, bestRelief = -Infinity;
   for (let i = 0; i < chosen.length; i++) {
     const c = chosen[i]!;
     if (ALWAYS_HELD.has(c.item.kind)) continue;
-    const density = c.utility / Math.max(1, c.option.tokens);
-    if (density < worstD) { worstD = density; worstIdx = i; }
+    // Cache damage of the drop: tokens after the item's incumbent position
+    // re-bill at the spread. A front drop strands the whole render's cache;
+    // a tail drop strands nothing. Priced in utility units.
+    const pos = incumbent.rendered.get(c.item.id)?.position ?? 0;
+    const blocksAfter = Math.max(0, incumbent.blockCount - pos);
+    const strandTokens = incumbent.totalTokens * (blocksAfter / Math.max(1, incumbent.blockCount));
+    const damageUtil = (strandTokens / PremiumScale) * (ps.cache.pricePer1kUncached - ps.cache.pricePer1kCached);
+    // Relief score: window freed per unit of total loss (value + cache
+    // damage). The argmax drops from the TAIL emergently — a front drop's
+    // damage dwarfs the bytes it frees.
+    const relief = c.option.tokens / Math.max(0.05, c.utility + damageUtil);
+    if (relief > bestRelief) { bestRelief = relief; worstIdx = i; }
   }
   return worstIdx;
 }
