@@ -13,7 +13,7 @@ import { solve } from "./solver.ts";
 import { CacheModel } from "./cache-model.ts";
 import { Ledger } from "./ledger.ts";
 import type { Provider } from "./providers.ts";
-import { GoalItem, FileLensItem, NoticeItem, TurnItem } from "./items.ts";
+import { GoalItem, FileLensItem, DirectoryLensItem, NoticeItem, TurnItem, Lens } from "./items.ts";
 import { executeIntent, bindHost, type SteeringIntent } from "./intents.ts";
 import { dreamPass } from "./dream.ts";
 
@@ -54,6 +54,7 @@ export class AgentLoop {
     this.cacheModel = new CacheModel(ps.cache);
     bindHost({
       fileLens: (t) => this.fileLens(t),
+      dirLens: (t) => this.dirLens(t),
       goal: (id) => this.goalRegistry.get(id),
       setGoal: (g) => this.registerGoal(g),
     });
@@ -199,7 +200,7 @@ export class AgentLoop {
   // ── session persistence surface (sessions.ts is the only consumer) ─────
 
   /** Read access for session serialization — lenses with live content. */
-  lensRegistryView(): ReadonlyMap<string, FileLensItem> { return this.fileRegistry; }
+  lensRegistryView(): ReadonlyMap<string, Lens> { return this.lensRegistry; }
   /** Read access for session serialization — goals. */
   goalRegistryView(): ReadonlyMap<string, GoalItem> { return this.goalRegistry; }
 
@@ -227,37 +228,64 @@ export class AgentLoop {
     t.createdTurn = this.store.turn;
     this.store.add(t.toContextItem());
   }
-  attachLens(id: string, target: string, ranges: Array<[number, number]>, baseBlockTurn: number, state: LensState): void {
-    const content = this.fileContent(target);
-    if (content === "") return;  // file gone — skip honestly, lens not restored
-    const f = new FileLensItem(id, target, content);
+  attachLens(id: string, target: string, ranges: Array<[number, number]>, baseBlockTurn: number, state: LensState, tag?: string): void {
+    let f: Lens;
+    if (tag === "dir") {
+      const listing = this.dirListing(target);
+      if (listing === "") return;  // directory gone — skip honestly
+      f = new DirectoryLensItem(id, target, listing);
+    } else {
+      const content = this.fileContent(target);
+      if (content === "") return;  // file gone — skip honestly
+      f = new FileLensItem(id, target, content);
+    }
     f.ranges = ranges;
     f.baseBlockTurn = baseBlockTurn;
     f.state = state;
     f.lastTouchTurn = this.store.turn;
     f.createdTurn = this.store.turn;
-    this.fileRegistry.set(id, f);
+    this.lensRegistry.set(id, f);
     this.store.add(f.toContextItem());
   }
   setTurn(turn: number): void {
     this.store.turn = turn;
   }
 
+  dirLens(target: string): DirectoryLensItem {
+    const id = `lens:${target}`;
+    let d = this.lensRegistry.get(id);
+    if (d === undefined) {
+      const listing = this.dirListing(target);
+      if (listing === "") throw new Error(`no such directory: ${target}`);
+      d = new DirectoryLensItem(id, target, listing);
+      d.lastTouchTurn = this.store.turn;
+      d.createdTurn = this.store.turn;
+      this.lensRegistry.set(id, d);
+      this.store.add(d.toContextItem());
+    }
+    if (!(d instanceof DirectoryLensItem)) throw new Error(`${id} is not a directory lens`);
+    return d;
+  }
+  /** Directory listing provider — injectable; default reads nothing. */
+  dirListing: (target: string) => string = () => "";
+
   fileLens(target: string): FileLensItem {
     const id = `lens:${target}`;
-    let f = this.fileRegistry.get(id);
+    let f = this.lensRegistry.get(id);
     if (f === undefined) {
       const content = this.fileContent(target);
       if (content === "") throw new Error(`no such file: ${target}`);
       f = new FileLensItem(id, target, content);
       f.lastTouchTurn = this.store.turn;
       f.createdTurn = this.store.turn;
-      this.fileRegistry.set(id, f);
+      this.lensRegistry.set(id, f);
       this.store.add(f.toContextItem());
     }
+    if (!(f instanceof FileLensItem)) throw new Error(`${id} is not a file lens`);
     return f;
   }
-  private fileRegistry = new Map<string, FileLensItem>();
+  /** Unified lens registry — every substrate, keyed by lens id (OOP hierarchy). */
+  private lensRegistry = new Map<string, Lens>();
   /** Content provider — injectable; default reads nothing. */
   fileContent: (target: string) => string = () => "";
 }

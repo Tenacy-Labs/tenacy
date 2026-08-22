@@ -32,7 +32,7 @@ export interface SessionHeader {
 interface StandingRow { t: "standing"; id: string; kind: "identity" | "directive"; text: string; immutable: boolean; watch: string | undefined }
 interface GoalRow { t: "goal"; id: string; text: string; parentId?: string | undefined; horizon?: string | undefined; status: "active" | "completed" }
 interface TurnRow { t: "turn"; id: string; role: "user" | "model" | "tool-result"; verbatim: string; summary?: string | undefined; rep: string }
-interface LensRow { t: "lens"; id: string; target: string; ranges: Array<[number, number]>; baseBlockTurn: number; state: string }
+interface LensRow { t: "lens"; id: string; target: string; tag: string; ranges: Array<[number, number]>; baseBlockTurn: number; state: string }
 interface NoticeRow { t: "notice"; id: string; text: string }
 type Row = StandingRow | GoalRow | TurnRow | LensRow | NoticeRow;
 
@@ -80,7 +80,7 @@ export function saveSession(loop: AgentLoop, path: string, providerName: string)
       case "lens": {
         const f = loop.lensRegistryView().get(it.id);
         if (f === undefined) break;  // orphaned lens row — skip honestly
-        rows.push({ t: "lens", id: f.id, target: f.target, ranges: f.ranges, baseBlockTurn: f.baseBlockTurn, state: f.state });
+        rows.push({ t: "lens", id: f.id, target: f.target, tag: f.substrateTagView(), ranges: f.ranges, baseBlockTurn: f.baseBlockTurn, state: f.state });
         break;
       }
       case "notice": {
@@ -137,7 +137,7 @@ export function restoreSession(loop: AgentLoop, path: string): { header: Session
           break;
         }
         case "lens": {
-          loop.attachLens(r.id, r.target, r.ranges, r.baseBlockTurn, r.state as LensState);
+          loop.attachLens(r.id, r.target, r.ranges, r.baseBlockTurn, r.state as LensState, r.tag);
           break;
         }
         case "notice": {

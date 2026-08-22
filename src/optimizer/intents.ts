@@ -5,7 +5,7 @@
  */
 import type { ContextStore } from "./store.ts";
 import type { Ledger } from "./ledger.ts";
-import { GoalItem, FileLensItem } from "./items.ts";
+import { GoalItem, FileLensItem, DirectoryLensItem } from "./items.ts";
 
 export type SteeringIntent =
   | { op: "say"; text: string }
@@ -19,13 +19,16 @@ export type SteeringIntent =
   | { op: "ctx.promote"; id: string }
   | { op: "ctx.demote"; id: string }
   | { op: "ctx.watch"; id: string; mode: "live" | "polled" | "frozen" }
-  | { op: "ctx.search"; pattern: string };
+  | { op: "ctx.search"; pattern: string }
+  | { op: "dirs.expand"; target: string; from: number; to: number }
+  | { op: "dirs.release"; target: string; from: number; to: number };
 
 export type IntentResult = { op: string; ok: boolean; result: string };
 
 // Module-level registries wired by the loop (single-writer coordinator side).
 export interface IntentHost {
   fileLens(target: string): FileLensItem;
+  dirLens(target: string): DirectoryLensItem;
   goal(id: string): GoalItem | undefined;
   setGoal(g: GoalItem): void;
 }
@@ -52,6 +55,22 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
       store.touch(lens.id);
       ledger?.recordSignal({ type: "files-release", itemId: lens.id, from: s.from, to: s.to, turn });
       return { op: s.op, ok: true, result: `released ${s.target}:${s.from}-${s.to} (${lens.ranges.length} remain)` };
+    }
+    case "dirs.expand": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const lens = host.dirLens(s.target);
+      lens.expand(s.from, s.to);
+      store.touch(lens.id);
+      ledger?.recordSignal({ type: "dirs-expand", itemId: lens.id, from: s.from, to: s.to, turn });
+      return { op: s.op, ok: true, result: `loaded ${s.target} entries ${s.from}-${s.to} → ${lens.ranges.length} coalesced range(s)` };
+    }
+    case "dirs.release": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const lens = host.dirLens(s.target);
+      lens.release(s.from, s.to);
+      store.touch(lens.id);
+      ledger?.recordSignal({ type: "dirs-release", itemId: lens.id, from: s.from, to: s.to, turn });
+      return { op: s.op, ok: true, result: `released ${s.target} entries ${s.from}-${s.to} (${lens.ranges.length} remain)` };
     }
     case "goals.set": {
       if (host === null) return { op: s.op, ok: false, result: "no host bound" };

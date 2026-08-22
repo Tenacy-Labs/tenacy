@@ -74,6 +74,18 @@ agent.store.add(new StandingItem("directive", "directive",
   "Work in typed cells against the namespace. Use files./ctx./goals. tools to operate your context. Be precise.").toContextItem());
 
 // Real file reads for lenses (expand fails honestly on unreadable targets)
+agent.dirListing = (target: string): string => {
+  try {
+    const ents = readdirSync(target, { withFileTypes: true });
+    return ents
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((e) => (e.isDirectory() ? e.name + "/" : e.name))
+      .join("\n");
+  } catch {
+    return "";
+  }
+};
+
 agent.fileContent = (target: string): string => {
   try {
     return readFileSync(target, "utf8");

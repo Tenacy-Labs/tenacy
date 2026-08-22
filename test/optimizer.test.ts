@@ -13,6 +13,7 @@ import { MockProvider, ScriptedProvider } from "../src/optimizer/providers.ts";
 import { AgentLoop, makeTurnItem } from "../src/optimizer/loop.ts";
 import { StandingItem, GoalItem, FileLensItem, NoticeItem } from "../src/optimizer/items.ts";
 import { Ledger } from "../src/optimizer/ledger.ts";
+import { executeIntent } from "../src/optimizer/intents.ts";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -338,6 +339,7 @@ describe("session persistence — save/restore round-trip", () => {
     if (!er.ok) throw new Error("expand intent failed: " + er.result);
     const lens = src.lensRegistryView().get("lens:" + fixture);
     if (lens === undefined) throw new Error("lens not created in source run");
+    if (!(lens instanceof FileLensItem)) throw new Error("file lens is wrong substrate");
     saveSession(src, join(dir, "s3.json"), "mock");
 
     const dst = new AgentLoop(new MockProvider(), ps);
@@ -345,6 +347,7 @@ describe("session persistence — save/restore round-trip", () => {
     restoreSession(dst, join(dir, "s3.json"));
     const rl = dst.lensRegistryView().get("lens:" + fixture);
     if (rl === undefined) throw new Error("lens not restored");
+    if (!(rl instanceof FileLensItem)) throw new Error("restored lens is wrong substrate");
     const firstRange = rl.ranges[0];
     if (rl.ranges.length === 0 || firstRange === undefined || firstRange[0] !== 10) throw new Error(`lens ranges wrong: ${JSON.stringify(rl.ranges)}`);
     if (rl.content === "") throw new Error("lens content not re-read from host");
@@ -393,5 +396,91 @@ describe("transient-failure recovery — retry with backoff", () => {
     try { await loop.run("will fail"); } catch (e) { surfaced = String(e); }
     if (!surfaced.includes("401")) throw new Error(`auth error not surfaced: ${surfaced}`);
     if (calls !== 1) throw new Error(`non-transient should not retry, got ${calls} calls`);
+  });
+});
+
+// ── lens hierarchy (OOP base class, 0002d) ─────────────────────────────
+
+describe("lens hierarchy — abstract base + substrate subclasses", () => {
+  test("FileLensItem is instanceof Lens and byte-identical to pre-hierarchy output", async () => {
+    const { Lens, FileLensItem } = await import("../src/optimizer/lens.ts");
+    const f = new FileLensItem("lens:t.txt", "t.txt", "a\nb\nc\nd\ne\nf");
+    if (!(f instanceof Lens)) throw new Error("FileLensItem must extend Lens");
+    f.expand(2, 3);
+    f.expand(4, 5);
+    const expect1 = "⟨file t.txt 1 range(s)⟩\n2| b\n3| c\n4| d\n5| e";
+    if (f.serialize() !== expect1) throw new Error(`serialize drifted: ${JSON.stringify(f.serialize())}`);
+    f.baseBlockTurn = 0;
+    const opts = f.options();
+    if (opts[0]?.id !== "base+delta" || opts[0]?.purelyAdditive !== true) throw new Error("option surface wrong after base");
+  });
+
+  test("expand/release algebra is substrate-invariant across File and Directory lenses", async () => {
+    const { Lens, FileLensItem, DirectoryLensItem } = await import("../src/optimizer/lens.ts");
+    const f = new FileLensItem("lens:f", "f", ["x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8"].join("\n"));
+    const d = new DirectoryLensItem("lens:d", "d", ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"].join("\n"));
+    for (const L of [f, d]) {
+      if (!(L instanceof Lens)) throw new Error("subclass must extend Lens");
+      L.expand(2, 4); L.expand(5, 6);          // coalesce to [2,6]
+      const coalesced: [number, number] | undefined = L.ranges[0];
+      const n1: number = L.ranges.length;
+      if (n1 !== 1 || coalesced?.[0] !== 2 || coalesced?.[1] !== 6) throw new Error(`coalesce failed: ${JSON.stringify(L.ranges)}`);
+      L.release(4, 4);                          // split [2,3],[5,6]
+      const n2: number = L.ranges.length;
+      if (n2 !== 2) throw new Error(`split failed: ${JSON.stringify(L.ranges)}`);
+      L.expand(4, 4);                           // re-merge
+      const n3: number = L.ranges.length;
+      if (n3 !== 1) throw new Error(`re-merge failed: ${JSON.stringify(L.ranges)}`);
+      L.release(1, 10);                          // full clear
+      if (L.ranges.length !== 0) throw new Error("full release failed");
+      if (L.options().length !== 0) throw new Error("empty lens must present no options");
+    }
+    // substrate tags differ, structure identical
+    f.expand(1, 2); d.expand(1, 2);
+    if (!f.serialize().startsWith("⟨file ")) throw new Error("file tag missing");
+    if (!d.serialize().startsWith("⟨dir ")) throw new Error("dir tag missing");
+  });
+
+  test("DirectoryLensItem slices entry lines with 1-indexed prefixes", async () => {
+    const { DirectoryLensItem } = await import("../src/optimizer/lens.ts");
+    const d = new DirectoryLensItem("lens:d", "/proj", "src/\ntests/\npackage.json\nbun.lock");
+    d.expand(2, 3);
+    const want = "⟨dir /proj 1 range(s)⟩\n2| tests/\n3| package.json";
+    if (d.serialize() !== want) throw new Error(`dir slice wrong: ${JSON.stringify(d.serialize())}`);
+    if (d.extentLines() !== 4) throw new Error(`extent wrong: ${d.extentLines()}`);
+  });
+
+  test("dirs.expand intent flows through the host into a DirectoryLensItem", async () => {
+    const { AgentLoop } = await import("../src/optimizer/loop.ts");
+    const { executeIntent } = await import("../src/optimizer/intents.ts");
+    const ps = paramSetV1("test-model");
+    const loop = new AgentLoop(new MockProvider(), ps);
+    loop.dirListing = () => ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"].join("\n");
+    loop.store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    const r = executeIntent({ op: "dirs.expand", target: "/proj", from: 1, to: 3 }, loop.store, null);
+    if (!r.ok) throw new Error("dirs.expand failed: " + r.result);
+    const d = loop.lensRegistryView().get("lens:/proj");
+    if (d === undefined) throw new Error("dir lens not registered");
+    const ci = loop.store.get("lens:/proj");
+    if (ci === undefined) throw new Error("dir lens item not in store");
+    if (!ci.serialize().includes("2| beta")) throw new Error("listing content missing: " + ci.serialize());
+  });
+
+  test("sessions round-trip preserves dir lens ranges (LensRow is substrate-generic)", async () => {
+    const { saveSession, restoreSession } = await import("../src/optimizer/sessions.ts");
+    const dir = mkdtempSync(join(tmpdir(), "ak-dlens-"));
+    const ps = paramSetV1("test-model");
+    const src = new AgentLoop(new MockProvider(), ps);
+    src.dirListing = () => ["a", "b", "c", "d", "e"].join("\n");
+    src.store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    executeIntent({ op: "dirs.expand", target: "/x", from: 1, to: 2 }, src.store, null);
+    saveSession(src, join(dir, "s.json"), "mock");
+    const dst = new AgentLoop(new MockProvider(), ps);
+    dst.dirListing = () => ["a", "b", "c", "d", "e"].join("\n");
+    const { restored } = restoreSession(dst, join(dir, "s.json"));
+    if (restored < 2) throw new Error(`expected >=2 rows, got ${restored}`);
+    const rl = dst.lensRegistryView().get("lens:/x");
+    if (rl === undefined) throw new Error("dir lens not restored");
+    if (rl.ranges.length !== 1 || rl.ranges[0]?.[0] !== 1) throw new Error("dir lens ranges wrong after restore");
   });
 });

@@ -66,6 +66,8 @@ export const INTENT_PROTOCOL_DOC = [
   "```intents",
   '{"op": "files.expand", "target": "<file>", "from": 1, "to": 60}   // pull a line range into context',
   '{"op": "files.release", "target": "<file>", "from": 1, "to": 60} // drop a range',
+  '{"op": "dirs.expand", "target": "<dir>", "from": 1, "to": 40}   // pull entry lines of a directory listing into context',
+  '{"op": "dirs.release", "target": "<dir>", "from": 1, "to": 40}  // drop a range of directory entries',
   '{"op": "goals.set", "id": "<id>", "text": "<goal>"}              // declare a goal',
   '{"op": "goals.update", "id": "<id>", "status": "completed"}      // close a goal',
   '{"op": "ctx.search", "pattern": "<regex>"}                       // search context',
