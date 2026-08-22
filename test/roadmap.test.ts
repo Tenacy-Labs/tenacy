@@ -20,6 +20,9 @@ import { join } from "node:path";
 // ─── helpers ────────────────────────────────────────────────────────────
 
 const TMP = "/tmp/ak-roadmap-tests";
+/** Worker paths must be absolute or './'-prefixed (node:worker_threads
+ *  contract — bare "src/..." passes on some platforms, fails on CI). */
+const WORKER = join(import.meta.dir, "../src/agent-worker.ts");
 
 function freshStore(): ContextStore {
   const s = new ContextStore();
@@ -213,7 +216,7 @@ describe("Swarm hibernation (hibernate → revive with snapshot recovery)", () =
     rmSync(stateDir, { recursive: true, force: true });
     const swarm = new Swarm({ stateDir });
     const root = swarm.spawn(null, { spawnMode: "deep" });
-    const rec = swarm.spawn(root.id, { workerPath: "src/agent-worker.ts" });
+    const rec = swarm.spawn(root.id, { workerPath: WORKER });
     // Wait for ready.
     await new Promise((r) => setTimeout(r, 150));
     // One turn to leave a snapshot on disk.
@@ -226,7 +229,7 @@ describe("Swarm hibernation (hibernate → revive with snapshot recovery)", () =
     // Hibernated agents don't count as live.
     expect(swarm.spawn(null, { spawnMode: "deep" }).id).toBeTruthy();
     // Revive: fresh worker recovers the snapshot (never replays journal).
-    swarm.revive(rec.id, "src/agent-worker.ts");
+    swarm.revive(rec.id, WORKER);
     await new Promise((r) => setTimeout(r, 150));
     expect(swarm.agents.get(rec.id)!.state).toBe("ready");
     // The revived worker remembers 127 — proof of snapshot recovery.
@@ -246,7 +249,7 @@ describe("Swarm hibernation (hibernate → revive with snapshot recovery)", () =
     rmSync(stateDir, { recursive: true, force: true });
     const swarm = new Swarm({ stateDir });
     const root = swarm.spawn(null, { spawnMode: "deep" });
-    const rec = swarm.spawn(root.id, { workerPath: "src/agent-worker.ts" });
+    const rec = swarm.spawn(root.id, { workerPath: WORKER });
     await new Promise((r) => setTimeout(r, 150));
     const t2 = await swarm.turn(rec.id, "stationCount * 2");
     expect(t2.ok).toBe(false);
