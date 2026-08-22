@@ -46,6 +46,9 @@ export abstract class Lens {
 
   /** Materialize lines [a..b] of the substrate, 1-indexed, `a|i` prefixed. */
   protected abstract sliceRange(a: number, b: number): string;
+
+  /** Fragment access to substrate slicing (split mode). */
+  sliceRangePublic(a: number, b: number): string { return this.sliceRange(a, b); }
   /** Header token identifying the substrate family. */
   protected abstract substrateTag(): string;
   /** Substrate extent in lines; undefined = unknown/unbounded. */
@@ -103,6 +106,15 @@ export abstract class Lens {
    * deltas vs consolidation vs purge. The solver picks per turn.
    * Template method — substrate-invariant by design.
    */
+  /**
+   * Render mode (finer splits, 0004/0005 refinement): when "split", the
+   * lens presents a tiny header option and each range becomes its own
+   * additive fragment item the solver holds/drops independently. The
+   * aggregated forms remain available — the parent's consolidated/base+delta
+   * options stay on the surface, coupled: choosing one drops fragments.
+   */
+  renderMode: "aggregated" | "split" = "aggregated";
+
   options(): RenderOption[] {
     if (this.ranges.length === 0) return [];   // nothing loaded — presents no options
     const full = this.fullText();
@@ -118,15 +130,44 @@ export abstract class Lens {
       // base exists: deltas are the additive path; re-consolidation is a rewrite
       opts.push(opt("base+delta", ["stable"], "BASE+DELTA", this.deltaText(), true));
       opts.push(opt("consolidated", ["stable"], "CONSOLIDATED", full, false));
-      opts.push(opt("compact", ["foundational"], "FULL", compact, false));
+      if (this.renderMode === "split") {
+        // split IS the compact form of a split lens — one header, not two twins
+        opts.push(opt("split", ["foundational"], "SPLIT", this.splitHeaderText(), false));
+      } else {
+        opts.push(opt("compact", ["foundational"], "FULL", compact, false));
+      }
     }
     if (this.tokens > 1500) {
-      opts.push(opt("purge", ["volatile"], "PURGED", `⟨${this.substrateTag()} ${this.target}: purged; re-expand on demand⟩`, false));
+      const purge = opt("purge", ["volatile"], "PURGED", `⟨${this.substrateTag()} ${this.target}: purged; re-expand on demand⟩`, false);
+      purge.zeroValue = true;   // a tombstone renders no content — no value
+      opts.push(purge);
     }
     return opts;
   }
 
   get tokens(): number { return estTokens(this.fullText()); }
+
+  /**
+   * Split fragments — one item per selected range (id lens:X#1..N).
+   * Each carries range-full (additive) / range-drop options; value
+   * prorated by byte share via valueBump on the fragment (the parent's
+   * solver value is subtracted in the coupling pass so the family never
+   * double-counts against the aggregated options).
+   */
+  fragments(): LensFragmentItem[] {
+    if (this.renderMode !== "split" || this.ranges.length === 0) return [];
+    return this.ranges.map((r, i) => new LensFragmentItem(`${this.id}#${i + 1}`, this, r, i));
+  }
+
+  /** Header text for split mode — the parent renders ONLY this. */
+  splitHeaderText(): string {
+    return `⟨${this.substrateTag()} ${this.target}: split into ${this.ranges.length} fragment(s)⟩`;
+  }
+
+  /** True when the chosen parent option carries the bytes (aggregated forms). */
+  carriesBytes(choice: string): boolean {
+    return choice === "full" || choice === "consolidated" || choice === "base+delta" || choice === "split-body";
+  }
   toContextItem(): ContextItem {
     return {
       id: this.id, kind: "lens", velocity: this.velocity, immutable: this.immutable,
@@ -201,5 +242,53 @@ export class DirectoryLensItem extends Lens {
   protected sliceRange(a: number, b: number): string {
     const lines = this.listing.split("\n");
     return lines.slice(a - 1, b).map((l, i) => `${a + i}| ${l}`).join("\n");
+  }
+}
+
+
+/**
+ * LensFragmentItem — one selected range as an independent item (finer
+ * splits). Additive range-full keeps the bytes as a separate block; the
+ * parent's aggregated options remain coupled alternatives. Value is
+ * prorated from the parent profile by byte share.
+ */
+export class LensFragmentItem {
+  constructor(
+    public readonly id: string,            // "lens:src/x.ts#3"
+    private readonly parent: Lens,
+    public readonly range: [number, number],
+    public readonly index: number,
+    public createdTurn = 0,
+  ) {}
+
+  private bodyText(): string {
+    return this.parent.sliceRangePublic(this.range[0], this.range[1]);
+  }
+
+  options(): RenderOption[] {
+    const body = this.bodyText();
+    const drop = opt("range-drop", ["volatile"], "SPLIT", "", false);
+    drop.zeroValue = true;   // renders nothing — no free value
+    return [
+      opt("range-full", ["evolving"], "SPLIT", `⟨range ${this.range[0]}-${this.range[1]}⟩\n${body}`, true),
+      drop,
+    ];
+  }
+
+  get tokens(): number { return estTokens(this.bodyText()); }
+
+  /** Byte share of the parent's total — value proration input. */
+  byteShare(): number {
+    const total = this.parent.tokens;
+    return total > 0 ? this.tokens / total : 0;
+  }
+
+  toContextItem(): ContextItem {
+    return {
+      id: this.id, kind: "lens", velocity: "evolving", immutable: false,
+      tokens: this.tokens, serialize: () => this.bodyText(), options: () => this.options(),
+      upstreams: [this.parent.id], lastTouchTurn: this.parent.lastTouchTurn,
+      createdTurn: this.parent.createdTurn, watch: this.parent.watch === undefined ? "polled" : this.parent.watch,
+    };
   }
 }

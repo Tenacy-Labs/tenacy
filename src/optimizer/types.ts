@@ -18,7 +18,7 @@ export type Zone = "identity" | "foundational" | "stable" | "evolving" | "volati
 export const ZONE_ORDER: readonly Zone[] = ["identity", "foundational", "stable", "evolving", "volatile"] as const;
 
 /** Lens representation states — ADR-0002b §5. */
-export type LensState = "FULL" | "BASE+DELTA" | "CONSOLIDATED" | "PURGED";
+export type LensState = "FULL" | "BASE+DELTA" | "CONSOLIDATED" | "SPLIT" | "PURGED";
 
 /** Conversation representations — ADR-0002f §2. */
 export type ConvoRep = "VERBATIM" | "SUMMARY" | "MERGED";
@@ -36,6 +36,8 @@ export interface RenderOption {
   tokens: number;
   /** The deterministic bytes this option renders (ADR-0004: an option IS a representation). */
   text: string;
+  /** Renders no content — scores zero value (purge/compact-head/range-drop): you cannot derive utility from bytes you do not render. */
+  zeroValue?: boolean | undefined;
 }
 
 /** The stored record — never rendered directly (ADR-0002 §2). */
@@ -139,6 +141,8 @@ export interface ItemLedger {
   accepted: boolean;
   marginVsHysteresis: number;       // negative for rejected near-misses
   optionChosen?: string | undefined;
+  /** Coupled-cost reason (0005): fragment forced by parent's aggregated choice. */
+  coupledReason?: "parent-carries-bytes" | "budget-tombstone" | undefined;
 }
 
 export interface CacheLedger {

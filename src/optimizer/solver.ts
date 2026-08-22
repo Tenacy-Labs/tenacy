@@ -66,8 +66,11 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       const cacheCost = transactionCost(item, o, prev === null ? undefined : prev, incumbent, ps);
       const fidelity = fidelityPenalty(o, ps);
       const rotEstimate = ps.lambda * ps.rotCurve.sizeCoef * (incumbent.totalTokens + o.tokens) * 0.01;
-      const utility = value - cacheCost - fidelity - rotEstimate;
-      return { o, cacheCost, fidelity, rotEstimate, utility };
+      // No-content options (zeroValue) render nothing — their value is zero,
+      // not the item's vᵢ: utility cannot flow from bytes not rendered.
+      const optValue = o.zeroValue === true ? 0 : value;
+      const utility = optValue - cacheCost - fidelity - rotEstimate;
+      return { o, cacheCost, fidelity, rotEstimate, utility, optValue };
     });
     scored.sort((a, b) => b.utility - a.utility || a.o.id.localeCompare(b.o.id));
     let best = scored[0]!;
@@ -103,6 +106,34 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     chosen.push({ item, option: best.o, utility: best.utility });
   }
 
+  // ── 1b. Coupling pass: split fragments <-> aggregated parent (0005 coupled costs)
+  // If the parent chose an aggregated option (full/consolidated/base+delta),
+  // its fragments are forced to range-drop (bytes live in the parent block;
+  // never double-charged). If the parent chose split, its own bytes shrink
+  // to the header only — fragments carry the content.
+  const parentsChosen = new Map(chosen.map((c) => [c.item.id, c.option.id]));
+  for (const c of [...chosen]) {
+    const parent = (c.item as unknown as { upstreams?: readonly string[] }).upstreams?.[0];
+    if (parent === undefined) continue;
+    const parentChoice = parentsChosen.get(parent);
+    if (parentChoice !== undefined && parentChoice !== "split" && parentChoice !== "compact" && parentChoice !== "purge") {
+      // parent carries bytes: fragment renders empty (range-drop)
+      if (c.option.id !== "range-drop") {
+        const dropOpt = c.item.options().find((o) => o.id === "range-drop");
+        if (dropOpt !== undefined) {
+          itemLedgers.push({
+            turn, id: c.item.id,
+            forecast: { mu0: ps.profiles[c.item.kind]?.mu0 ?? 1, alpha: ps.profiles[c.item.kind]?.alpha ?? 1, deltaT: turn - c.item.lastTouchTurn, hazard: ps.hazardPriors[c.item.kind] ?? 0.05, basis: "prior", expectedValue: 0 },
+            utility: { benefit: 0, cacheCost: 0, rotShare: 0, total: 0 },
+            decision: "move", accepted: true, marginVsHysteresis:0, optionChosen: "range-drop",
+            coupledReason: "parent-carries-bytes",
+          });
+          c.option = dropOpt;
+        }
+      }
+    }
+  }
+
   // ── 2. Zone layout: canonical order; within zone by value density then hazard ──
   chosen.sort((a, b) => {
     const za = ZONE_ORDER.indexOf(zoneOf(a)), zb = ZONE_ORDER.indexOf(zoneOf(b));
@@ -117,6 +148,23 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   while (totalTokens > ps.budgetLambda) {
     const idx = worstDensityDroppable(chosen);
     if (idx < 0) break; // only always-held remain
+    const c = chosen[idx]!;
+    // Prefer downgrade-to-tombstone over eviction: a ~10t zeroValue option
+    // keeps the item's handle in the window (re-expand path) instead of
+    // vanishing entirely. Only evict when no tombstone remains.
+    const tomb = c.option.zeroValue === true ? undefined : c.item.options().find((o) => o.zeroValue === true && o.tokens < c.option.tokens);
+    if (tomb !== undefined) {
+      totalTokens += tomb.tokens - c.option.tokens;
+      itemLedgers.push({
+        turn, id: c.item.id,
+        forecast: { mu0: ps.profiles[c.item.kind]?.mu0 ?? 1, alpha: ps.profiles[c.item.kind]?.alpha ?? 1, deltaT: turn - c.item.lastTouchTurn, hazard: ps.hazardPriors[c.item.kind] ?? 0.05, basis: "prior", expectedValue: 0 },
+        utility: { benefit: 0, cacheCost: 0, rotShare: 0, total: 0 },
+        decision: "purge", accepted: true, marginVsHysteresis: ps.budgetLambda - totalTokens, optionChosen: tomb.id,
+        coupledReason: "budget-tombstone",
+      });
+      c.option = tomb;
+      continue;
+    }
     const [cut] = chosen.splice(idx, 1);
     totalTokens -= cut!.option.tokens;
     itemLedgers.push({

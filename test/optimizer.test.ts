@@ -97,14 +97,15 @@ describe("solver", () => {
     // A lens purge MUST record the digest of the purge header it renders,
     // not the digest of the full-range serialization it did NOT render.
     const store = new ContextStore();
-    const big = "x".repeat(20000); // ~5000 tokens -> purge wins over FULL
+    const big = "x".repeat(20000); // ~5000 tokens -> relief must tombstone it
     const lensItem = new FileLensItem("lens:notes.txt", "notes.txt", big);
     lensItem.ranges.push([0, big.length]); // expanded: options exist (empty lens offers none)
     store.add(lensItem.toContextItem());
-    const result = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0 }, paramSetV1("test-model"), 1);
+    const ps = { ...paramSetV1("test-model"), budgetLambda: 1000 };
+    const result = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0 }, ps, 1);
     const lens = result.placements.find((p) => p.id === "lens:notes.txt");
     expect(lens).toBeDefined();
-    expect(lens!.optionId).toBe("purge");
+    expect(lens!.optionId).toBe("purge");  // tombstoned by relief, handle kept
     // digest must equal blockDigest of the PURGE text, and must NOT equal serialize()'s digest
     const purgeOpt = store.snapshot().get("lens:notes.txt")!.options().find((o) => o.id === "purge")!;
     expect(lens!.digest).toBe(blockDigest(purgeOpt.text));
@@ -693,3 +694,112 @@ function dirname0(p: string): string { return p.slice(0, p.lastIndexOf("/")); }
 function readFileSyncLines(p: string): string[] {
   try { return (require("node:fs").readFileSync(p, "utf8") as string).split("\n").filter((x) => x !== ""); } catch { return []; }
 }
+
+// ── finer splits: per-range fragment items (0004/0005 refinement) ──────
+
+describe("finer splits — fragment items + solver coupling", () => {
+  test("split mode materializes one additive fragment per range; ids stable", async () => {
+    const { FileLensItem } = await import("../src/optimizer/lens.ts");
+    const content = Array.from({ length: 60 }, (_, i) => `line ${i + 1} ${"x".repeat(30)}`).join("\n");
+    const lens = new FileLensItem("lens:split.ts", "split.ts", content);
+    lens.expand(1, 20);
+    lens.expand(40, 60);
+    lens.baseBlockTurn = 2;              // base exists
+    lens.renderMode = "split";
+    const frags = lens.fragments();
+    if (frags.length !== 2) throw new Error(`expected 2 fragments, got ${frags.length}`);
+    if (frags[0]!.id !== "lens:split.ts#1" || frags[1]!.id !== "lens:split.ts#2") throw new Error("fragment ids unstable: " + JSON.stringify(frags.map((f) => f.id)));
+    const opts = frags[0]!.options();
+    if (!opts.some((o) => o.id === "range-full" && o.purelyAdditive)) throw new Error("range-full must exist and be additive");
+    if (!opts.some((o) => o.id === "range-drop")) throw new Error("range-drop missing");
+    const parentOpts = lens.options();
+    if (!parentOpts.some((o) => o.id === "split")) throw new Error("parent split header option missing");
+    if (!parentOpts.some((o) => o.id === "consolidated")) throw new Error("aggregated alternative must remain available");
+    const fragBody = frags[0]!.options().find((o) => o.id === "range-full")!;
+    if (!fragBody.text.includes("line 1") || !fragBody.text.includes("line 20")) throw new Error("fragment 1 carries wrong range");
+    if (fragBody.text.includes("line 40")) throw new Error("fragment 1 leaked fragment 2 range");
+  });
+
+  test("solver drops the WORST-DENSITY fragment under budget pressure, keeping the better one", async () => {
+    const { solve } = await import("../src/optimizer/solver.ts");
+    const { ContextStore } = await import("../src/optimizer/store.ts");
+    const lens = new FileLensItem("lens:budget.ts", "budget.ts",
+      Array.from({ length: 60 }, (_, i) => `line ${i + 1} ${i === 55 ? "CRITICAL-FACT " + "v".repeat(20) : "x".repeat(30)}`).join("\n"));
+    lens.expand(1, 20);
+    lens.expand(40, 60);
+    lens.baseBlockTurn = 2;
+    lens.renderMode = "split";
+    const store = new ContextStore();
+    store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    store.add(lens.toContextItem());
+    const frags = lens.fragments();
+    for (const f of frags) store.add(f.toContextItem());
+    // The solver cannot know line 56 matters without a signal — the honest
+    // mechanism is a value bump (ctx.promote class). Bump #2, tighten Lambda
+    // so only one fragment fits: the bumped one survives relief.
+    const items = store.snapshot();
+    const f2 = items.get("lens:budget.ts#2")!;
+    f2.valueBump = { amount: 8, untilTurn: 30 };
+    const ps = { ...paramSetV1("m"), budgetLambda: 430 } as never;
+    const res = solve(items, { rendered: new Map(), totalTokens: 0 }, ps, 5);
+    const placed = res.placements.filter((p) => p.id.startsWith("lens:budget.ts#"));
+    const heldFull = placed.filter((p) => p.optionId === "range-full");
+    if (heldFull.length === 0) throw new Error("no fragment held under pressure — solver had no fine-grained path");
+    if (!heldFull.some((p) => p.id === "lens:budget.ts#2")) throw new Error("the CRITICAL-FACT range was dropped: " + JSON.stringify(placed.map((p) => p.id + ":" + p.optionId)));
+  });
+
+  test("coupling: parent choosing consolidated forces fragments to range-drop (no double charge)", async () => {
+    const { solve } = await import("../src/optimizer/solver.ts");
+    const { ContextStore } = await import("../src/optimizer/store.ts");
+    const lens = new FileLensItem("lens:coupled.ts", "coupled.ts",
+      Array.from({ length: 40 }, (_, i) => `line ${i + 1}`).join("\n"));
+    lens.expand(1, 40);
+    lens.baseBlockTurn = 3;
+    lens.renderMode = "split";
+    const store = new ContextStore();
+    store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    store.add(lens.toContextItem());
+    for (const f of lens.fragments()) store.add(f.toContextItem());
+    const res = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0 }, paramSetV1("m"), 5);
+    const parent = res.placements.find((p) => p.id === "lens:coupled.ts");
+    if (parent === undefined) throw new Error("parent not placed");
+    const frags = res.placements.filter((p) => p.id.startsWith("lens:coupled.ts#"));
+    const carriesBytes = parent.optionId === "consolidated" || parent.optionId === "full" || parent.optionId === "base+delta";
+    if (carriesBytes) {
+      const doubleCharged = frags.filter((f) => f.optionId === "range-full");
+      if (doubleCharged.length > 0) throw new Error("DOUBLE CHARGE: " + JSON.stringify(doubleCharged.map((f) => f.id)));
+      const coupledLedger = res.itemLedgers.find((l) => l.coupledReason === "parent-carries-bytes");
+      if (coupledLedger === undefined) throw new Error("coupled ledger record missing");
+    } else {
+      // compact/split parent: fragments legitimately carry the bytes
+      if (!frags.some((f) => f.optionId === "range-full")) throw new Error("header-only parent but no fragment carries bytes: " + JSON.stringify(frags.map((f) => f.optionId)));
+    }
+  });
+
+  test("loop end-to-end: split lens renders as header + separate fragment blocks", async () => {
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("m"));
+    loop.fileContent = () => Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join("\n");
+    loop.store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    const lens0 = loop.fileLens("test.txt");
+    lens0.expand(1, 30);
+    lens0.baseBlockTurn = 1;
+    lens0.renderMode = "split";
+    await loop.run("second turn");
+    const rr = (loop as unknown as { lastRender?: { blocks: Array<{ itemId: string; text: string }> } }).lastRender;
+    if (rr === undefined) throw new Error("no render result — expose lastRender on AgentLoop or check hooks.onRender");
+    const fragBlocks = rr.blocks.filter((b) => b.itemId.startsWith("lens:test.txt#"));
+    if (fragBlocks.length === 0) throw new Error("no fragment blocks in render");
+    const header = rr.blocks.find((b) => b.itemId === "lens:test.txt");
+    if (header === undefined) throw new Error("parent header block missing");
+    // either the split header (fragments carry bytes) or base+delta on the parent —
+    // but if fragments carry bytes, the parent must be the header form
+    const parentCarries = header.text.includes("+Δ") || header.text.includes("1-30\nline 1");
+    if (!parentCarries && !header.text.includes("split into")) throw new Error("parent neither split-header nor aggregated: " + header.text.slice(0, 80));
+    if (!parentCarries) {
+      for (const b of fragBlocks) {
+        if (!b.text.startsWith("⟨range")) throw new Error("fragment block malformed: " + b.text.slice(0, 40));
+        if (b.text.includes("line 1\n") === false && b.text.includes("line 15") === false) throw new Error("fragment missing its range content");
+      }
+    }
+  });
+});

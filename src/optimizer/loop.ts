@@ -100,9 +100,14 @@ export class AgentLoop {
     this.turnRegistry.set(userItem.id, userItem as unknown as TurnItem);
     this.store.add(userItem);
 
+    // Finer splits: materialize split-mode fragments (one item per range)
+    // before solving — they join the snapshot as independent items.
+    this.materializeFragments();
+
     const snap = this.store.snapshot();
     const solved = solve(snap, this.incumbent, this.ps, this.turn);
     const rr = render(solved.placements, snap, this.ps);
+    this.lastRender = rr;
     this.hooks.onRender?.(rr, this.ps);
 
     const expected = this.cacheModel.expectedHit(rr.blocks);
@@ -392,6 +397,28 @@ export class AgentLoop {
   }
   /** Unified lens registry — every substrate, keyed by lens id (OOP hierarchy). */
   private lensRegistry = new Map<string, Lens>();
+
+  /**
+   * Materialize split fragments: for every lens in split mode, sync its
+   * fragment items into the store (add new, update ranges, remove stale).
+   * Parent option surface keeps the aggregated alternatives — coupled.
+   */
+  materializeFragments(): void {
+    for (const lens of this.lensRegistry.values()) {
+      const frags = lens.fragments();
+      const want = new Set(frags.map((f) => f.id));
+      // remove stale fragments (ranges shrunk/changed)
+      for (const id of [...this.store.snapshot().keys()]) {
+        if (id.startsWith(`${lens.id}#`) && !want.has(id)) this.store.remove(id);
+      }
+      for (const f of frags) {
+        this.store.add(f.toContextItem());
+      }
+    }
+  }
+  /** Last render result — exposed for surfaces and tests. */
+  lastRender: ReturnType<typeof render> | null = null;
+
   /** Live-views watcher engine — set by the surface to enable push lenses. */
   watcher: TurnBoundaryWatcher | null = null;
   /** Tail change-notices from the last drain (sequence legibility §6). */
