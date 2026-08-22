@@ -175,6 +175,10 @@ export abstract class Lens {
       upstreams: this.upstreams, lastRender: this.lastRender, lastTouchTurn: this.lastTouchTurn,
       createdTurn: this.createdTurn, hazardOverride: this.hazardOverride, valueBump: this.valueBump,
       watch: this.watch,
+      // ADR-0006 §3 (review C-C1): lens bytes are re-readable from the host
+      // substrate (file/dir content) — a SUMMARY/compact render is
+      // recoverable by re-reading, not lost.
+      recoverability: "rereadable",
     };
   }
 }

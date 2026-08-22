@@ -161,6 +161,9 @@ export class TurnItem {
       upstreams: this.upstreams, lastRender: this.lastRender, lastTouchTurn: this.lastTouchTurn,
       createdTurn: this.createdTurn, hazardOverride: this.hazardOverride, valueBump: this.valueBump,
       watch: this.watch,
+      // ADR-0006 §3 (review C-C1): the turn's verbatim never leaves the
+      // store — SUMMARY renders (dream output) stay re-expandable.
+      recoverability: "verbatim-preserving",
     };
   }
 }
@@ -204,6 +207,9 @@ export class MergeGroupItem {
       tokens: this.tokens, serialize: () => this.serialize(), options: () => this.options(),
       upstreams: this.memberIds, lastTouchTurn: this.createdTurn, createdTurn: this.createdTurn,
       watch: "frozen", valueMass: this.valueMass,
+      // ADR-0006 §3 (review C-C1): merge groups keep every member's verbatim
+      // in the store — the MERGED render is re-expandable to full value.
+      recoverability: "verbatim-preserving",
     };
   }
 }

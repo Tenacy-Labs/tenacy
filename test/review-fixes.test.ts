@@ -156,6 +156,32 @@ describe("review B6 — importing maxsuite does not re-run the suite", () => {
   });
 });
 
+describe("review C-C1 — §3 two-class recoverability now has honest producers", () => {
+  test("merge group MERGED option prices at qRendered (verbatim-preserving)", async () => {
+    const { AgentLoop } = await import("../src/optimizer/loop.ts");
+    const { MockProvider } = await import("../src/optimizer/providers.ts");
+    const { executeIntent } = await import("../src/optimizer/intents.ts");
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("mock"), null);
+    loop.addRestoredTurn("turn-1-user", "user", "alpha fact about the system", undefined, "VERBATIM");
+    loop.addRestoredTurn("turn-2-model", "model", "beta reply with detail", undefined, "VERBATIM");
+    const m = executeIntent({ op: "convo.merge", from: 1, to: 2 }, loop.store, null);
+    expect(m.ok).toBe(true);
+    const group = loop.store.get("merge:turn-1-user..turn-2-model");
+    expect(group).toBeDefined();
+    // Pre-fix: no producer set recoverability → §3 recoverable=false → MERGED
+    // priced at qLossy (inert two-class pricing). Post-fix: verbatim-preserving.
+    expect(group!.recoverability).toBe("verbatim-preserving");
+  });
+  test("file lens stamps rereadable", async () => {
+    const { FileLensItem } = await import("../src/optimizer/lens.ts");
+    const lens = new FileLensItem("lens:notes.txt", "notes.txt", "line one\nline two\nline three\n", "evolving");
+    loop_lens: {
+      expect(lens.toContextItem().recoverability).toBe("rereadable");
+      break loop_lens;
+    }
+  });
+});
+
 describe("review A-M2 — μ₀ double-count in valueMass future-value stream", () => {
   test("merge-group FV uses mass alone (no second μ₀)", () => {
     // Discriminator: a valueMass>0 item whose option surface is a rewrite
