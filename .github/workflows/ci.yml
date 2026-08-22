@@ -10,6 +10,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # knapsack-swap I1: @connectotron/knapsack is a private org repo
+      # consumed as a pinned sibling checkout (file:../knapsack).
+      # bun's github:/git+https dep forms normalize to the credential-less
+      # tarball API (404 on private repos), so CI materializes the pinned
+      # tag itself. Bump the tag here and in package.json together.
+      - uses: actions/checkout@v4
+        with:
+          repository: Connectotron/knapsack
+          ref: v0.1.1
+          path: knapsack
+          token: ${{ secrets.GITHUB_TOKEN }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
