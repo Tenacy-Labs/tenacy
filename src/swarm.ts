@@ -22,7 +22,7 @@
  * ~6-7MB, dispatch 54µs median — vs jcode's ~10MB/session, ~117MB/10 sessions.
  */
 import { Worker } from "node:worker_threads";
-import { mkdirSync, appendFileSync } from "node:fs";
+import { mkdirSync, appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CellCompiler } from "./cell-compiler.ts";
 
@@ -34,6 +34,7 @@ export type AgentState =
   | "completed"  // scope done, awaiting new assignment
   | "failed"     // unrecoverable error, needs coordinator decision
   | "stopped"    // intentionally shut down
+  | "hibernated" // worker exited; snapshot on disk; revive() re-attaches
   | "crashed";   // unexpected exit
 
 export interface PlanTask {
@@ -113,9 +114,57 @@ export class Swarm {
   private liveCount(): number {
     let n = 0;
     for (const r of this.agents.values()) {
-      if (r.state !== "stopped" && r.state !== "crashed" && r.state !== "failed") n++;
+      if (r.state !== "stopped" && r.state !== "crashed" && r.state !== "failed" && r.state !== "hibernated") n++;
     }
     return n;
+  }
+
+  /**
+   * Hibernation (roadmap: "idle sessions serialize to disk"). The kernel has
+   * snapshotted every turn, so the snapshot IS the serialized session — no
+   * extra serialization step. Graceful __stop → worker exits 0 → state
+   * "hibernated"; the worker's next boot recovers from the snapshot (never
+   * replays the journal). The coordinator keeps the agent record (ancestry,
+   * gates, type history) so revived agents resume in-place.
+   */
+  async hibernate(id: string): Promise<void> {
+    const rec = this.agents.get(id);
+    if (!rec) throw new Error(`hibernate: unknown agent ${id}`);
+    if (!rec.worker) throw new Error(`hibernate: agent ${id} has no live worker to hibernate`);
+    const w = rec.worker;
+    const exited = new Promise<void>((resolve) => {
+      w.once("exit", () => resolve());
+      w.once("error", () => resolve());
+    });
+    w.postMessage({ __stop: true });
+    await exited;
+    rec.worker = null;
+    this.#setLife(id, "hibernated", "snapshot on disk; revive to resume");
+  }
+
+  /** Revive a hibernated (or stopped/crashed) agent with a fresh worker. */
+  revive(id: string, workerPath: string): void {
+    const rec = this.agents.get(id);
+    if (!rec) throw new Error(`revive: unknown agent ${id}`);
+    if (rec.worker) throw new Error(`revive: agent ${id} already has a live worker`);
+    if (rec.state === "hibernated" || rec.state === "stopped" || rec.state === "crashed" || rec.state === "failed") {
+      // Rebuild the coordinator gate's static type history from the journal
+      // (audit source only — no cell executes; Kernel.recover's discipline).
+      // Makes revival work even across a coordinator restart: the gate and
+      // the worker both re-derive from the same on-disk record.
+      const stateDir = this.opts.stateDir ?? "/tmp/agent-kernel-states";
+      const journalPath = join(stateDir, id, "journal.jsonl");
+      if (existsSync(journalPath)) {
+        const entries = readFileSync(journalPath, "utf8").trim().split("\n")
+          .filter(Boolean)
+          .map((l) => JSON.parse(l) as { src: string; accepted?: boolean });
+        const history = entries.filter((e) => e.accepted !== false).map((e) => e.src);
+        this.#gates.set(id, new CellCompiler(history));
+      }
+      this.attachWorker(id, workerPath);   // worker boot recovers the snapshot, if any
+      return;
+    }
+    throw new Error(`revive: agent ${id} is ${rec.state}, not revivable`);
   }
 
   /**

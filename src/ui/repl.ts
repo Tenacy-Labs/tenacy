@@ -43,7 +43,10 @@ import type { Provider, ModelResponse } from "../optimizer/providers.ts";
 import type { Block } from "../optimizer/types.ts";
 import type { SteeringIntent } from "../optimizer/intents.ts";
 import { readFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
-import { saveSession, restoreSession, sessionsDir } from "../optimizer/sessions.ts";
+import { saveSession, restoreSession, sessionsDir, indexSessionIntoMemory } from "../optimizer/sessions.ts";
+import { MemoryStore } from "../optimizer/memory.ts";
+import { RLMSupervisor } from "../optimizer/rlm.ts";
+import { bindOps } from "../optimizer/ops.ts";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -70,6 +73,16 @@ const dir = mkdtempSync(join(tmpdir(), "agent-kernel-"));
 const ledgerPath = join(dir, "ledger.jsonl");
 const ledger = new Ledger(ledgerPath);
 const agent = new AgentLoop(model, paramSetFor(inner.modelId, loadHarnessConfig()), ledger);
+// Roadmap (ops.* + memory): host-side capabilities, bound at boot. The model
+// reaches memory/rlm ONLY through ops intents; credentials and handles stay
+// here. rlm children get the live provider factory when available.
+const memory = new MemoryStore({ path: ".agent-kernel/memory.db" });
+const rlmSup = new RLMSupervisor({
+  provider: inner,
+  ps: paramSetFor(inner.modelId, loadHarnessConfig()),
+  parent: agent,
+});
+bindOps({ memory, rlm: rlmSup });
 // Live views (0002d §5): engine attached at boot; fs adapters attach
 // per-lens when a lens flips to live (via /watch or model ctx.watch).
 const liveEngine = new TurnBoundaryWatcher();
@@ -207,7 +220,7 @@ async function command(line: string): Promise<void> {
   const cmd = parts[0];
   switch (cmd) {
     case "/help":
-      console.log("local: /status /context [zone] /why <id> /inspect [filter] /search <re> /goal <text> /file <path> <a-b> /release <path> <a-b> /promote <id> /demote <id> /watch <id> <mode> /provider [name] [model] /save [name] /resume <name> /sessions /ledger /quit");
+      console.log("local: /status /context [zone] /why <id> /inspect [filter] /search <re> /goal <text> /file <path> <a-b> /release <path> <a-b> /promote <id> /demote <id> /watch <id> <mode> /provider [name] [model] /save [name] /resume <name> /sessions /mem [query|add <text>] /ledger /quit");
       break;
     case "/status": {
       if (lastOutcome === null) { console.log("no turns yet"); break; }
@@ -254,7 +267,27 @@ async function command(line: string): Promise<void> {
       mkdirSync(dir, { recursive: true });
       const path = `${dir}/${name}.json`;
       const sf = saveSession(agent, path, bootedLive ? (process.argv[2] ?? availableProviders()[0] ?? "mock") : "mock");
-      console.log(`saved ${sf.rows.length} rows -> ${path} (turn ${sf.header.turn}, ${sf.header.modelId})`);
+      // Roadmap (semantic memory): every save auto-indexes into the
+      // cross-session memory store — future sessions recall this one.
+      const indexed = indexSessionIntoMemory(sf, memory, name);
+      console.log(`saved ${sf.rows.length} rows -> ${path} (turn ${sf.header.turn}, ${sf.header.modelId}); ${indexed} turns indexed into memory`);
+      break;
+    }
+    case "/mem": {
+      // /mem <query>       — search cross-session memory (FTS + embedding)
+      // /mem add <text>    — remember a note manually
+      if (parts.length === 1) { console.log(`memory: ${memory.count()} rows (${memory.path}); usage: /mem <query> | /mem add <text>`); break; }
+      if (parts[1] === "add") {
+        const text = line.slice("/mem add ".length).trim();
+        if (text === "") { console.log("usage: /mem add <text>"); break; }
+        const row = memory.remember(text, { kind: "note" });
+        console.log(`remembered mem:${row.id} [${row.kind}]`);
+        break;
+      }
+      const q = line.slice("/mem ".length).trim();
+      const hits = memory.search(q, 5);
+      if (hits.length === 0) { console.log("(no memories match)"); break; }
+      for (const h of hits) console.log(`mem:${h.row.id} [${h.row.kind}] (${h.source} ${h.score.toFixed(2)}) ${h.row.session !== null ? `<${h.row.session}> ` : ""}${h.row.text.slice(0, 160)}`);
       break;
     }
     case "/resume": {

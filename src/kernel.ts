@@ -175,8 +175,11 @@ export class Kernel {
    * Recovery: snapshot ONLY. No code path replays journal cells (invariants 1–2).
    * Worst case under total persistence failure: an empty namespace (we forget;
    * we never redo). The journal remains on disk as a readable audit record.
+   *
+   * `typecheck=false` recovers a compiler-free kernel (worker VMs): type
+   * history is rebuilt from the journal but no LanguageService loads.
    */
-  static recover(journalPath: string, snapPath: string): { k: Kernel; seeded: number; tombstoned: number; replayed: 0; ms: number } {
+  static recover(journalPath: string, snapPath: string, typecheck = true): { k: Kernel; seeded: number; tombstoned: number; replayed: 0; ms: number } {
     const t0 = performance.now();
     let entries: Array<{ src: string; accepted?: boolean }> = [];
     if (existsSync(journalPath)) {
@@ -184,7 +187,7 @@ export class Kernel {
     }
     // Rebuild static type history from source text only. No cell is executed.
     const typeHistory = entries.filter((e) => e.accepted !== false).map((e) => e.src);
-    const k = new Kernel(journalPath, snapPath, typeHistory);
+    const k = new Kernel(journalPath, snapPath, typeHistory, typecheck);
     if (existsSync(journalPath)) {
       k.cells = entries.map((e) => e.src);
     }

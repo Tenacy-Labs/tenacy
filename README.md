@@ -55,8 +55,12 @@ docs/benchmarks.md   Measured numbers and reproduction steps
 
 ## Status
 
-Prototype. Kernel and persistence layer are built and tested; the agent loop, ops
-surface (`ops.rlm_spawn`, `ops.goal_set`), and rlm() child agents are roadmap items —
-see `docs/design.md`.
+Mature prototype. Kernel, persistence, and agent loop are built, tested, and
+live (Vercel AI SDK provider registry, PR #5). The remaining roadmap surface —
+ops.* host caps (`rlm.*`/`memory.*` intents), rlm() child agents with usage
+attribution, swarm hibernation, and bun:sqlite semantic session memory
+(FTS5 + embedding blend, `/mem`, auto-index on save) — shipped; 104 tests
+green. Deliberately unbuilt: the Rust/deno_core graduation path (kept open as
+the insurance policy). See `docs/design.md`.
 
 Private repository of the Connectotron organization.

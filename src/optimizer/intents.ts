@@ -6,6 +6,8 @@
 import type { ContextStore } from "./store.ts";
 import type { ContextItem } from "./types.ts";
 import type { Ledger } from "./ledger.ts";
+import type { MemoryKind } from "./memory.ts";
+import { opsCaps } from "./ops.ts";
 import { GoalItem, FileLensItem, DirectoryLensItem, MergeGroupItem } from "./items.ts";
 import { CodeLensItem } from "./code-lens.ts";
 import { NSLensItem } from "./ns-lens.ts";
@@ -33,7 +35,14 @@ export type SteeringIntent =
   | { op: "convo.merge"; from: number; to: number }
   | { op: "convo.reexpand"; id: string }
   | { op: "ctx.reexpand"; id: string }
-  | { op: "goals.decompose"; id: string; sub: { id: string; text: string }[] };
+  | { op: "goals.decompose"; id: string; sub: { id: string; text: string }[] }
+  | { op: "rlm.spawn"; goal: string }
+  | { op: "rlm.turn"; id: string; message: string }
+  | { op: "rlm.stop"; id: string; reason?: string }
+  | { op: "rlm.status"; id?: string }
+  | { op: "rlm.final"; id: string }
+  | { op: "memory.remember"; text: string; kind?: MemoryKind; meta?: Record<string, unknown> }
+  | { op: "memory.search"; query: string; limit?: number; kind?: MemoryKind };
 
 export type IntentResult = { op: string; ok: boolean; result: string };
 
@@ -194,6 +203,87 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
       ledger?.recordSignal({ type: "goals-set", itemId: s.id, turn });
       return { op: s.op, ok: true, result: `goal ${s.id}: ${s.text}` };
     }
+    case "rlm.spawn": {
+      const caps = opsCaps();
+      if (caps?.rlm === null || caps === null) return { op: s.op, ok: false, result: "no rlm supervisor bound" };
+      try {
+        const h = caps.rlm.spawn(s.goal);
+        return { op: s.op, ok: true, result: `spawned ${h.id}: "${s.goal}"` };
+      } catch (e) {
+        return { op: s.op, ok: false, result: String(e) };
+      }
+    }
+    case "rlm.turn": {
+      const caps = opsCaps();
+      if (caps === null || caps.rlm === null) return { op: s.op, ok: false, result: "no rlm supervisor bound" };
+      const h = caps.rlm.handleOf(s.id);
+      if (h === undefined) return { op: s.op, ok: false, result: `unknown child ${s.id}` };
+      if (h.status() !== "spawned" && h.status() !== "running") {
+        return { op: s.op, ok: false, result: `${s.id} is ${h.status()}` };
+      }
+      // Fire-and-forget by design: the child runs asynchronously; its report
+      // routes into the parent store as a priced NoticeItem at completion.
+      void h.run(s.message).catch((e: unknown) => {
+        ledger?.recordSignal({ type: "rlm-turn-error", itemId: s.id, error: String(e), turn });
+      });
+      ledger?.recordSignal({ type: "rlm-turn", itemId: s.id, turn });
+      return { op: s.op, ok: true, result: `turn dispatched to ${s.id} (report arrives as notice)` };
+    }
+    case "rlm.stop": {
+      const caps = opsCaps();
+      if (caps === null || caps.rlm === null) return { op: s.op, ok: false, result: "no rlm supervisor bound" };
+      const h = caps.rlm.handleOf(s.id);
+      if (h === undefined) return { op: s.op, ok: false, result: `unknown child ${s.id}` };
+      h.stop(s.reason);
+      ledger?.recordSignal({ type: "rlm-stop", itemId: s.id, turn });
+      return { op: s.op, ok: true, result: `${s.id} stopped` };
+    }
+    case "rlm.status": {
+      const caps = opsCaps();
+      if (caps === null || caps.rlm === null) return { op: s.op, ok: false, result: "no rlm supervisor bound" };
+      if (s.id !== undefined) {
+        const h = caps.rlm.handleOf(s.id);
+        if (h === undefined) return { op: s.op, ok: false, result: `unknown child ${s.id}` };
+        return { op: s.op, ok: true, result: `${h.id} [${h.status()}] "${h.goal}" — ${fmtUsage(h.usage())}` };
+      }
+      const rows = caps.rlm.list().map((c) => `${c.id} [${c.status}] ${fmtUsage(c.usage)}`);
+      const total = caps.rlm.totalUsage();
+      return {
+        op: s.op, ok: true,
+        result: rows.length === 0 ? "no children" : `${rows.join(" | ")} — total ${fmtUsage(total)}`,
+      };
+    }
+    case "rlm.final": {
+      const caps = opsCaps();
+      if (caps === null || caps.rlm === null) return { op: s.op, ok: false, result: "no rlm supervisor bound" };
+      const h = caps.rlm.handleOf(s.id);
+      if (h === undefined) return { op: s.op, ok: false, result: `unknown child ${s.id}` };
+      const report = caps.rlm.reportOf(s.id);
+      return {
+        op: s.op, ok: true,
+        result: report !== undefined ? report : `${s.id} ${h.status()}; report pending (arrives as notice)`,
+      };
+    }
+    case "memory.remember": {
+      const caps = opsCaps();
+      if (caps === null || caps.memory === null) return { op: s.op, ok: false, result: "no memory store bound" };
+      const row = caps.memory.remember(s.text, {
+        ...(s.kind !== undefined ? { kind: s.kind } : {}),
+        ...(s.meta !== undefined ? { meta: s.meta } : {}),
+      });
+      ledger?.recordSignal({ type: "memory-remember", itemId: `mem:${row.id}`, kind: row.kind, turn });
+      return { op: s.op, ok: true, result: `remembered [${row.kind}] mem:${row.id}: ${s.text}` };
+    }
+    case "memory.search": {
+      const caps = opsCaps();
+      if (caps === null || caps.memory === null) return { op: s.op, ok: false, result: "no memory store bound" };
+      const hits = caps.memory.search(s.query, s.limit ?? 5, s.kind);
+      if (hits.length === 0) return { op: s.op, ok: true, result: "no matches" };
+      return {
+        op: s.op, ok: true,
+        result: hits.map((h) => `mem:${h.row.id} [${h.row.kind}] (${h.source} ${h.score.toFixed(2)}) ${h.row.text}`).join("\n"),
+      };
+    }
     case "goals.update": {
       if (host === null) return { op: s.op, ok: false, result: "no host bound" };
       const g = host.goal(s.id);
@@ -252,6 +342,12 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
 
 function valueStr(it: { kind: string }, turn: number): string {
   return `kind=${it.kind} turn=${turn}`;
+}
+
+/** Compact usage line for rlm status reports (attribution surface). */
+function fmtUsage(u: { calls: number; inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }): string {
+  return `${u.calls} call(s), ${u.inputTokens} in / ${u.outputTokens} out` +
+    (u.cacheReadTokens > 0 || u.cacheWriteTokens > 0 ? `, cache ${u.cacheReadTokens}r/${u.cacheWriteTokens}w` : "");
 }
 
 function itemStr(it: ReturnType<ContextStore["get"]> & {}): string {

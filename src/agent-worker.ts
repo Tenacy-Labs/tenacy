@@ -17,7 +17,7 @@
  *     { kind: "dm" | "subtree" | "channel", ... }
  */
 import { parentPort } from "node:worker_threads";
-import { mkdirSync } from "node:fs";
+import { mkdirSync, existsSync } from "node:fs";
 import { dirname } from "node:path";
 import { Kernel } from "./kernel.ts";
 
@@ -30,9 +30,21 @@ const stateDir = process.env.STATE_DIR ?? "/tmp/agent-kernel-states";
 const journal = `${stateDir}/${agentId}/journal.jsonl`;
 const snap = `${stateDir}/${agentId}/snapshot.json`;
 mkdirSync(dirname(journal), { recursive: true });   // worker owns its bootstrap
-// Compiler-free by design: the coordinator checked and transpiled this cell's
-// TypeScript before dispatch. Workers must never load the ~40MB compiler.
-const k = new Kernel(journal, snap, [], false);
+// Hibernation contract: if a prior incarnation snapshotted state here, the
+// snapshot (never the journal — no replay) revives the namespace. Fresh
+// agents boot empty as before. Either way the worker stays compiler-free:
+// the coordinator checked and transpiled every cell it will receive.
+let k: Kernel;
+let recovered = 0;
+let tombstoned = 0;
+if (existsSync(snap)) {
+  const r = Kernel.recover(journal, snap, false);
+  k = r.k;
+  recovered = r.seeded;
+  tombstoned = r.tombstoned;
+} else {
+  k = new Kernel(journal, snap, [], false);
+}
 
 /** Envelope helper: send to coordinator (which routes). */
 function send(env: any): void { port.postMessage(env); }
@@ -64,6 +76,8 @@ port.on("message", (m: any) => {
   if (!m || typeof m !== "object") return;
   if (m.__interrupt) { inbox.push(m.__interrupt); return; }        // queue as soft interrupt
   if (m.__stop) {
+    // Graceful stop = hibernation entry: state is already snapshotted every
+    // turn; exiting here leaves a revivable snapshot on disk.
     send({ kind: "lifecycle", state: "stopped", agentId, detail: "graceful" });
     process.exit(0);
   }

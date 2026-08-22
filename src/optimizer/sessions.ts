@@ -41,8 +41,35 @@ export interface SessionFile {
   rows: Row[];
 }
 
+import type { MemoryStore } from "./memory.ts";
+
 export function sessionsDir(): string {
   return ".agent-kernel/sessions";
+}
+
+/**
+ * Roadmap item (semantic session memory): auto-index a saved session into
+ * the cross-session memory store. Turn rows become kind:"session" memories
+ * (summary preferred, verbatim fallback — ADR-0002f representations), so
+ * later sessions can recall prior sessions by content via ops.memory_search
+ * or /mem. Returns the number of rows indexed.
+ */
+export function indexSessionIntoMemory(
+  sf: SessionFile,
+  mem: MemoryStore,
+  sessionName: string,
+): number {
+  let n = 0;
+  for (const r of sf.rows) {
+    if (r.t !== "turn") continue;
+    const text = r.summary ?? r.verbatim;
+    if (text === undefined || text.trim() === "") continue;
+    const meta: Record<string, unknown> = { role: r.role, rep: r.rep, savedTurn: sf.header.turn };
+    if (r.mergedInto !== undefined) meta.mergedInto = r.mergedInto;
+    mem.remember(text, { kind: "session", session: sessionName, meta });
+    n++;
+  }
+  return n;
 }
 
 /** Serialize the live loop state. Lenses are captured structurally. */
