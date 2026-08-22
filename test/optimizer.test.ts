@@ -679,6 +679,9 @@ describe("live views — coalescing, tail notices, churn demotion (0002d §5/§6
     const loop = new AgentLoop(new MockProvider(), ps_default(), ledger);
     loop.watcher = new TurnBoundaryWatcher();
     loop.watcher.push({ lensId: "lens:none", path: "q.ts", kind: "change" });
+
+
+
     loop.store.add(new StandingItem("identity", "identity", "t").toContextItem());
     await loop.run("trigger a turn");
     await ledger.drain();
@@ -694,6 +697,29 @@ function dirname0(p: string): string { return p.slice(0, p.lastIndexOf("/")); }
 function readFileSyncLines(p: string): string[] {
   try { return (require("node:fs").readFileSync(p, "utf8") as string).split("\n").filter((x) => x !== ""); } catch { return []; }
 }
+
+  test("live deltas ride the RENDER TAIL as CHANGES section (push, not poll)", async () => {
+    const { TurnBoundaryWatcher } = await import("../src/optimizer/live-views.ts");
+    const w = new TurnBoundaryWatcher();
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("m"));
+    loop.watcher = w;
+    loop.fileContent = () => "alpha\nbeta\ngamma\n";
+    loop.store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    const lens = loop.fileLens("watched.txt");
+    lens.expand(1, 3);
+    // simulate the fs adapter pushing a raw event BEFORE the next turn
+    w.push({ lensId: lens.id, path: "watched.txt", kind: "change" });
+    await loop.run("turn with pending live events");
+    const rr = loop.lastRender;
+    if (rr === null || rr === undefined) throw new Error("no render");
+    const rt = rr;
+    if (!rt.text.includes("## CHANGES (live since your last turn)")) {
+      throw new Error("tail CHANGES section missing — live deltas are not reaching the model: " + rr.text.slice(-200));
+    }
+    if (!rt.text.includes("watched.txt")) throw new Error("notice does not name the changed path");
+    // and the lens header carries the delta marker (sequence legibility)
+    if (!rt.text.includes("@t")) throw new Error("turn-cited marker missing");
+  });
 
 // ── finer splits: per-range fragment items (0004/0005 refinement) ──────
 

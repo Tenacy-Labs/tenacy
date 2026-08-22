@@ -104,9 +104,28 @@ export class AgentLoop {
     // before solving — they join the snapshot as independent items.
     this.materializeFragments();
 
+    // Live views (0002d §5): drain watcher events at the turn-boundary safe
+    // point — BEFORE solve/render so tail notices ride THIS turn's render.
+    const tailNotices: string[] = [];
+    if (this.watcher !== null) {
+      for (const d of this.watcher.drain(this.turn)) {
+        const lens = this.lensRegistry.get(d.lensId);
+        if (lens !== undefined) applyDeltaToLens(lens, d, this.turn);
+        tailNotices.push(TurnBoundaryWatcher.tailNotice(d));
+        this.ledger?.recordSignal({ type: "live-delta", itemId: d.lensId, markers: d.markers, coalesced: d.coalescedEvents, turn: this.turn });
+        if (this.watcher.shouldDemote(d.lensId)) {
+          const lens2 = this.lensRegistry.get(d.lensId);
+          if (lens2 !== undefined && lens2.watch === "live") {
+            lens2.watch = "polled";  // optimizer flip — never feeds value decay (§7)
+            this.ledger?.recordSignal({ type: "churn-demotion", itemId: d.lensId, churn: this.watcher.churnOf(d.lensId), turn: this.turn });
+          }
+        }
+      }
+    }
+
     const snap = this.store.snapshot();
     const solved = solve(snap, this.incumbent, this.ps, this.turn);
-    const rr = render(solved.placements, snap, this.ps);
+    const rr = render(solved.placements, snap, this.ps, tailNotices);
     this.lastRender = rr;
     this.hooks.onRender?.(rr, this.ps);
 
@@ -138,24 +157,6 @@ export class AgentLoop {
 
     // Dream pass: aged episodic items gain SUMMARY options (0002f §4) —
     // off the hot path; the solver will price them next render.
-    // Live views (0002d §5): drain watcher events at the safe point —
-    // one committed delta per lens per turn; tail notices ride the render.
-    if (this.watcher !== null) {
-      const deltas = this.watcher.drain(this.turn);
-      for (const d of deltas) {
-        const lens = this.lensRegistry.get(d.lensId);
-        if (lens !== undefined) applyDeltaToLens(lens, d, this.turn);
-        this.ledger?.recordSignal({ type: "live-delta", itemId: d.lensId, markers: d.markers, coalesced: d.coalescedEvents, turn: this.turn });
-        if (this.watcher.shouldDemote(d.lensId)) {
-          const lens = this.lensRegistry.get(d.lensId);
-          if (lens !== undefined && lens.watch === "live") {
-            lens.watch = "polled";  // optimizer flip — never feeds value decay (§7)
-            this.ledger?.recordSignal({ type: "churn-demotion", itemId: d.lensId, churn: this.watcher.churnOf(d.lensId), turn: this.turn });
-          }
-        }
-      }
-    }
-
     const dreamt = dreamPass(this.store.all(), this.turn, 3);
     if (dreamt.length > 0) this.ledger?.recordSignal({ type: "dream-pass", count: dreamt.length, turn: this.turn });
 

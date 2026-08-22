@@ -28,6 +28,10 @@
  * any intents the model proposed (shown as [op] ok/FAIL lines).
  */
 import { AgentLoop } from "../optimizer/loop.ts";
+import { TurnBoundaryWatcher, FsWatchAdapter } from "../optimizer/live-views.ts";
+import { resolve, dirname } from "node:path";
+import process from "node:process";
+const cwd = () => process.cwd();
 import { MockProvider } from "../optimizer/providers.ts";
 import { buildProvider, availableProviders, loadHarnessConfig, paramSetFor } from "../optimizer/registry.ts";
 import { Ledger } from "../optimizer/ledger.ts";
@@ -66,6 +70,11 @@ const dir = mkdtempSync(join(tmpdir(), "agent-kernel-"));
 const ledgerPath = join(dir, "ledger.jsonl");
 const ledger = new Ledger(ledgerPath);
 const agent = new AgentLoop(model, paramSetFor(inner.modelId, loadHarnessConfig()), ledger);
+// Live views (0002d §5): engine attached at boot; fs adapters attach
+// per-lens when a lens flips to live (via /watch or model ctx.watch).
+const liveEngine = new TurnBoundaryWatcher();
+agent.watcher = liveEngine;
+const liveAdapters = new Map<string, FsWatchAdapter>();
 
 agent.store.add(new StandingItem("identity", "identity",
   "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator. " + INTENT_PROTOCOL_DOC,
@@ -285,6 +294,22 @@ async function command(line: string): Promise<void> {
       if (intent === null) { console.log(`unknown command: ${cmd} (try /help)`); break; }
       const r = executeIntent(intent, agent.store, ledger);
       console.log(r.result);
+      // /watch live attaches a REAL fs watcher for file lenses (0002d §5)
+      if (intent.op === "ctx.watch" && intent.mode === "live" && !intent.id.startsWith("turn-")) {
+        const lens = agent.lensRegistryView().get(intent.id);
+        const path = lens !== undefined && "target" in lens ? String((lens as unknown as { target: string }).target) : intent.id.replace(/^lens:/, "");
+        const abs = path.startsWith("/") ? path : resolve(cwd(), path);
+        const existing = liveAdapters.get(intent.id);
+        if (existing !== undefined) { existing.stop(); liveAdapters.delete(intent.id); }
+        const adapter = new FsWatchAdapter(liveEngine, intent.id, dirname(abs));
+        adapter.start();
+        liveAdapters.set(intent.id, adapter);
+        console.log(`live: fs.watch on ${dirname(abs)} -> lens ${intent.id}`);
+      }
+      if (intent.op === "ctx.watch" && intent.mode !== "live") {
+        const existing = liveAdapters.get(intent.id);
+        if (existing !== undefined) { existing.stop(); liveAdapters.delete(intent.id); }
+      }
       break;
     }
   }
