@@ -164,9 +164,13 @@ export class AgentLoop {
     // option permanently consumes the pending deltas — the lens folds them
     // into its base and retires the finer-grained states. Commit AFTER the
     // render so the chosen option's bytes were priced from live state.
+    // Base arming (2026-08-22 adversarial battery): commit on EVERY placed
+    // lens, not only when deltas pend — otherwise a mid-session attach can
+    // never establish its base (pendingDeltas starts empty; the gate made
+    // arming unreachable and noteLiveDelta a permanent no-op).
     for (const p of solved.placements) {
       const lens = this.lensRegistry.get(p.id);
-      if (lens !== undefined && lens.pendingDeltas.length > 0) {
+      if (lens !== undefined && (lens.pendingDeltas.length > 0 || lens.baseBlockTurn < 0)) {
         lens.commitConsolidation(p.optionId, this.turn);
       }
     }
