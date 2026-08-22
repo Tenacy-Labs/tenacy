@@ -51,6 +51,11 @@ test/                bun:test suite + fresh-recovery.ts (child-process disciplin
 bench/               runtime and session benchmarks
 docs/design.md       Architecture, decision log, invariants
 docs/benchmarks.md   Measured numbers and reproduction steps
+docs/adr/            Accepted decision records (0000–0006; 0005 MCKP solver,
+                     0006 evidence-priced properties, T* horizons, suffix accounting)
+src/optimizer/       Context optimizer: MCKP solver, evidence/horizon/suffix
+                     pricing, ledger + gauges corpus reports
+bench/corpus/        s3 pressure corpus + gauges baseline runner
 ```
 
 ## Status
@@ -59,8 +64,13 @@ Mature prototype. Kernel, persistence, and agent loop are built, tested, and
 live (Vercel AI SDK provider registry, PR #5). The remaining roadmap surface —
 ops.* host caps (`rlm.*`/`memory.*` intents), rlm() child agents with usage
 attribution, swarm hibernation, and bun:sqlite semantic session memory
-(FTS5 + embedding blend, `/mem`, auto-index on save) — shipped; 104 tests
-green. Deliberately unbuilt: the Rust/deno_core graduation path (kept open as
-the insurance policy). See `docs/design.md`.
+(FTS5 + embedding blend, `/mem`, auto-index on save) — shipped. The context
+optimizer implements ADR-0005 (per-turn MCKP) and ADR-0006 (evidence-priced
+properties, turnover-capped horizons T* = (Λ−W)/a_t, exact suffix mass with
+shared-bill and TTL free-window accounting), staged and each phase
+falsifiable against the §7 gauges (gauges-baseline: believed-hit 75.4%,
+re-expansions/eviction 12.9%); 134 tests green. Deliberately unbuilt: the
+Rust/deno_core graduation path (kept open as the insurance policy). See
+`docs/design.md` and `docs/adr/`.
 
 Private repository of the Connectotron organization.
