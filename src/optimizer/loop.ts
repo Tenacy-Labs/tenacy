@@ -45,7 +45,7 @@ export class AgentLoop {
     rendered: Map<string, { position: number; zone: Zone; digest: string; representation: string; optionId: string }>;
     totalTokens: number;
     blockCount: number;
-    standingMassDrift?: number;
+    standingMassDrift?: number | undefined;
   } = { rendered: new Map(), totalTokens: 0, blockCount: 0 };
   /** ADR-0006 §5: EWMA state for the standing-mass drift a_t. */
   private driftEwmaState: number | undefined;

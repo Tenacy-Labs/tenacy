@@ -24,7 +24,7 @@ export interface Incumbent {
   blockCount: number;
   /** ADR-0006 §5: EWMA of net durable standing-mass drift (tokens/turn).
    *  Maintained by the loop; absent → T* = ∞ → fixed-cap fallback. */
-  standingMassDrift?: number;
+  standingMassDrift?: number | undefined;
 }
 
 export interface SolverResult {
