@@ -40,6 +40,25 @@ const PremiumScale = 1000;
 /** Kinds always held — the risk-free anchor (0002b §1). */
 const ALWAYS_HELD = new Set(["identity", "goal"]);
 
+/**
+ * Future-utility stream (multi-period pass, 2026-08-22): the discounted
+ * re-reference value of holding an object in state s over the next H turns.
+ *   FV = Σ_{k=1..H} γ^k · (q(s)·μ0·α/(1+Δt+k) − ρ·tokens)
+ * α from the item's own profile doubles as the recurrence shape: heavy-tail
+ * kinds (small α — notice/error) have long re-reference streams; fast-decay
+ * kinds (α≈1) have short ones. q(s) is the realization fraction per state.
+ */
+function futureValue(mu0: number, alpha: number, deltaT: number, tokens: number, q: number, ps: ParamSet): number {
+  // Each future turn realizes the THEN-current value of the content in its
+  // held state (q scales for lossiness/handle-ness), minus that turn's seat
+  // rent. The k=0 seat is charged separately (the `seat` term) — never here.
+  let fv = 0;
+  for (let k = 1; k <= ps.fv.horizon; k++) {
+    fv += Math.pow(ps.fv.gamma, k) * (q * mu0 * Math.pow(1 + deltaT + k, -alpha) - ps.reservationPrice * tokens);
+  }
+  return fv;
+}
+
 export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps: ParamSet, turn: number): SolverResult {
   const itemLedgers: ItemLedger[] = [];
   const chosen: { item: ContextItem; option: RenderOption; utility: number }[] = [];
@@ -52,9 +71,17 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     const deltaT = Math.max(0, turn - item.lastTouchTurn);
 
     // v_i = μ₀·(1+Δt)^−α, with profile exemptions/floors/bumps (0002b §2, 0002f §3, 0004 §2)
+    // valueMass (multi-period 2026-08-22): a merge group carries its members'
+    // summed value with a FRESH clock — the transform re-presents aged
+    // content, so the group decays from creation, not from the oldest member.
+    const mass = item.valueMass !== undefined && item.valueMass > 0 ? item.valueMass : 1;
     let value = profile.decayExempt === true
       ? profile.mu0
       : profile.mu0 * Math.pow(1 + deltaT, -profile.alpha);
+    if (item.valueMass !== undefined && item.valueMass > 0) {
+      const groupDeltaT = Math.max(0, turn - item.createdTurn);
+      value = item.valueMass * Math.pow(1 + groupDeltaT, -profile.alpha);
+    }
     if (profile.floorTurns !== undefined && profile.floorValue !== undefined && deltaT <= profile.floorTurns) {
       value = Math.max(value, profile.floorValue);
     }
@@ -70,7 +97,19 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     if (options.length === 0) continue; // item presents no options this turn (e.g. purged lens)
 
     // Score every option (0002e §2: rejected options are logged data)
+    // Multi-period benefit (2026-08-22): benefit is the discounted
+    // re-reference STREAM FV, not the k=0 scalar — the solver now sees
+    // transform amortization, handle optionality, and delayed re-reference
+    // value. q(state) picks the realization fraction per option class.
     const scored = options.map((o) => {
+      const q = o.zeroValue === true
+        ? ps.fv.qHandle
+        : o.representation === "SUMMARY" || o.representation === "MERGED"
+          ? ps.fv.qLossy
+          : ps.fv.qRendered;
+      const fvDeltaT = item.valueMass !== undefined && item.valueMass > 0
+        ? Math.max(0, turn - item.createdTurn) : deltaT;
+      const fv = futureValue(mass * profile.mu0, profile.alpha, fvDeltaT, o.tokens, q, ps);
       const cacheCost = transactionCost(item, o, prev === null ? undefined : prev, incumbent, ps);
       const fidelity = fidelityPenalty(o, ps);
       const rotEstimate = ps.lambda * ps.rotCurve.sizeCoef * (incumbent.totalTokens + o.tokens) * 0.01;
@@ -83,6 +122,10 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       const hazardPremium = hz * (suffixTokensH / PremiumScale) * (ps.cache.pricePer1kUncached - ps.cache.pricePer1kCached);
       // No-content options (zeroValue) render nothing — their value is zero,
       // not the item's vᵢ: utility cannot flow from bytes not rendered.
+      // Multi-period: utility = present value + future stream − costs.
+      // optValue remains the k=0 scalar for ledger comparability; the FV
+      // stream adds the over-horizon term. zeroValue renders nothing: no
+      // present value; its future stream is handle optionality (qHandle).
       const optValue = o.zeroValue === true ? 0 : value;
       // Reservation price (emergence pass 2026-08-22): the shadow price of a
       // rendered byte in a bounded window. Without it utility >= 0 whenever
@@ -92,8 +135,8 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       // must EARN its seat: v_i > rho * tokens + costs, else the window is
       // better spent on fresher content. This is the knapsack dual price.
       const seat = o.zeroValue === true ? 0 : ps.reservationPrice * o.tokens;
-      const utility = optValue - cacheCost - fidelity - rotEstimate - hazardPremium - seat;
-      return { o, cacheCost, fidelity, rotEstimate, hazardPremium, seat, utility, optValue };
+      const utility = optValue + fv - cacheCost - fidelity - rotEstimate - hazardPremium - seat;
+      return { o, cacheCost, fidelity, rotEstimate, hazardPremium, seat, fv, utility, optValue };
     });
     scored.sort((a, b) => b.utility - a.utility || a.o.id.localeCompare(b.o.id));
     let best = scored[0]!;
@@ -144,6 +187,23 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     const parent = (c.item as unknown as { upstreams?: readonly string[] }).upstreams?.[0];
     if (parent === undefined) continue;
     const parentChoice = parentsChosen.get(parent);
+    if (parentChoice === "purge" || parentChoice === undefined) {
+      // group dropped/purged: members fall back to verbatim — content never
+      // vanishes with the group's tombstone (multi-period pass 2026-08-22)
+      if (c.option.id === "in-merge") {
+        const verb = c.item.options().find((o) => o.id === "verbatim");
+        if (verb !== undefined) {
+          itemLedgers.push({
+            turn, id: c.item.id,
+            forecast: { mu0: ps.profiles[c.item.kind]?.mu0 ?? 1, alpha: ps.profiles[c.item.kind]?.alpha ?? 1, deltaT: turn - c.item.lastTouchTurn, hazard: ps.hazardPriors[c.item.kind] ?? 0.05, basis: "prior", expectedValue: 0 },
+            utility: { benefit: 0, cacheCost: 0, rotShare: 0, total: 0 },
+            decision: "move", accepted: true, marginVsHysteresis: 0, optionChosen: "verbatim",
+            coupledReason: "group-purged-verbatim-fallback",
+          });
+          c.option = verb;
+        }
+      }
+    }
     if (parentChoice !== undefined && parentChoice !== "split" && parentChoice !== "compact" && parentChoice !== "purge") {
       // parent carries bytes: fragment renders empty (range-drop)
       if (c.option.id !== "range-drop") {
@@ -349,12 +409,12 @@ function fidelityPenalty(o: RenderOption, ps: ParamSet): number {
 function ledgerFor(
   turn: number, item: ContextItem, profile: { mu0: number; alpha: number },
   deltaT: number, hazard: number, basis: "prior" | "observed", value: number,
-  s: { o: RenderOption; cacheCost: number; fidelity: number; rotEstimate: number; utility: number },
+  s: { o: RenderOption; cacheCost: number; fidelity: number; rotEstimate: number; utility: number; fv?: number },
   decision: ItemLedger["decision"], accepted: boolean, margin: number, optionId: string,
 ): ItemLedger {
   return {
     turn, id: item.id,
-    forecast: { mu0: profile.mu0, alpha: profile.alpha, deltaT, hazard, basis, expectedValue: value },
+    forecast: { mu0: profile.mu0, alpha: profile.alpha, deltaT, hazard, basis, expectedValue: value, futureValue: s.fv ?? 0 },
     utility: { benefit: value, cacheCost: s.cacheCost, rotShare: s.rotEstimate, total: s.utility },
     decision, accepted, marginVsHysteresis: margin, optionChosen: optionId,
   };

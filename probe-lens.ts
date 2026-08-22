@@ -1,0 +1,23 @@
+
+import { AgentLoop } from "./src/optimizer/loop.ts";
+import { MockProvider } from "./src/optimizer/providers.ts";
+import { TurnBoundaryWatcher } from "./src/optimizer/live-views.ts";
+import { executeIntent, type SteeringIntent } from "./src/optimizer/intents.ts";
+import { paramSetV1 } from "./src/optimizer/params.ts";
+import { StandingItem } from "./src/optimizer/items.ts";
+import { INTENT_PROTOCOL_DOC } from "./src/optimizer/live.ts";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+const ROOT = import.meta.dir;
+const engine = new TurnBoundaryWatcher();
+const ps = paramSetV1("m"); ps.budgetLambda = 2048;
+const rrs: any[] = [];
+const loop = new AgentLoop(new MockProvider(), ps, null, { onRender: (rr: any) => { rrs.push(rr); }, onTurn: () => {} });
+loop.watcher = engine;
+loop.fileContent = (t) => { try { return readFileSync(resolve(ROOT, t), "utf8"); } catch { return ""; } };
+loop.store.add(new StandingItem("identity", "identity", "You are running the agent-kernel pressure corpus. " + INTENT_PROTOCOL_DOC).toContextItem());
+executeIntent({ op: "files.expand", target: "bench/corpus/fixtures/api.log", from: 1, to: 40 } as SteeringIntent, loop.store, null);
+await loop.run("expand");
+const rr = rrs.at(-1);
+console.log("blocks:", rr.blocks.map((b: any) => `${b.itemId}:${b.tokens}t`).join(" | "));
+console.log("total:", rr.blocks.reduce((s: number, b: any) => s + b.tokens, 0));

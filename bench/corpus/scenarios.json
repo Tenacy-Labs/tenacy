@@ -1,273 +1,388 @@
 {
- "$comment": "Pressure-ladder scenario corpus (ADR-0003 calibration data). Six scenarios, graded L1-L5: single-lens orientation -> two-substrate coordination -> chunked log read (accumulator pressure) -> live-watch push -> deep conversation -> full stack. Every recall string must appear in the model's reply (or scripted say-notice) for the scenario to pass. Runner: bun bench/corpus/run.ts [--live <scenario>] [--list].",
- "s1-orient": {
-  "desc": "L1 single-lens orientation: one file, one range, one planted fact. Baseline sanity the ladder sits on.",
-  "turns": [
-   {
-    "msg": "Read bench/corpus/fixtures/intake-service.ts lines 1-25 and tell me what ORCHID_BATCH is set to."
-   },
-   {
-    "msg": "What was the batch id again? Answer with just the id."
-   },
-   {
-    "msg": "Ship a critical priority order from remote-3 \u2014 will validateOrder pass? One sentence."
-   }
-  ],
-  "recall": [
-   "ORCHID-7",
-   "remote-3"
-  ],
-  "script": [
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/intake-service.ts\", \"from\": 1, \"to\": 25}",
-   "say ORCHID_BATCH is set to ORCHID-7 (line 11) \u2014 the pilot batch id.",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/intake-service.ts\", \"from\": 1, \"to\": 25}"
-  ]
- },
- "s2-two-file": {
-  "desc": "L2 two-substrate coordination: code + config. Facts planted across code and YAML must combine (cap logic in code, constraint in YAML).",
-  "turns": [
-   {
-    "msg": "Expand bench/corpus/fixtures/intake-service.ts lines 20-45 (routing logic) and bench/corpus/fixtures/fleet.yml lines 25-42 (constraints + parts cage). I need the routing rules and the parts locations."
-   },
-   {
-    "msg": "A 14,000-unit expedited order arrives at depot-north. Which routing mode, and does the Miller cap force a split? Give me the cap number."
-   },
-   {
-    "msg": "Release the fleet.yml ranges \u2014 I have what I need. Now: which drawer holds the spare pump-B seal kit?"
-   },
-   {
-    "msg": "Recall check: exact routing decision for the 14k order, and what region is depot-south?"
-   }
-  ],
-  "recall": [
-   "split-shipment",
-   "12,500",
-   "drawer 4"
-  ],
-  "script": [
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/intake-service.ts\", \"from\": 20, \"to\": 45}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/fleet.yml\", \"from\": 30, \"to\": 42}",
-   "say routing: MILLER cap 12,500 forces split-shipment over-cap; drawer 4 holds pump-B seal kit.",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/fleet.yml\", \"from\": 30, \"to\": 42}",
-   "say released fleet.yml; cap 12,500 remembered, drawer 4 seals remembered."
-  ]
- },
- "s3-chunked-read": {
-  "desc": "L3 chunked file reading: the classic accumulator pattern. Eight serial chunk expands, distill-per-chunk, release-all, recall-from-distillate. Never hold all chunks at once.",
-  "turns": [
-   {
-    "msg": "Scan bench/corpus/fixtures/api.log (800 lines) for WARN/ALERT anomalies. The context budget is only 2,048 tokens \u2014 use small chunks (~40 lines) with files.expand, distill findings into your replies immediately, then release before pulling the next chunk."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Continue the scan."
-   },
-   {
-    "msg": "Which orderId was rejected for qty=0? What coolant alert fired? Final report."
-   },
-   {
-    "msg": "Final recall, terse: the alert \u2014 which pump, which site, what defect?"
-   }
-  ],
-  "script": [
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 1, \"to\": 40}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 1, \"to\": 40}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 41, \"to\": 80}",
-   "say WARN at A-1042 (qty=0 rejected) near line 47 \u2014 distilled.",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 41, \"to\": 80}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 81, \"to\": 120}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 81, \"to\": 120}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 121, \"to\": 160}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 121, \"to\": 160}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 161, \"to\": 200}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 161, \"to\": 200}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 201, \"to\": 240}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 201, \"to\": 240}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 241, \"to\": 280}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 241, \"to\": 280}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 281, \"to\": 320}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 281, \"to\": 320}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 321, \"to\": 360}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 321, \"to\": 360}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 361, \"to\": 400}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 361, \"to\": 400}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 401, \"to\": 440}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 401, \"to\": 440}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 441, \"to\": 480}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 441, \"to\": 480}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 481, \"to\": 520}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 481, \"to\": 520}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 521, \"to\": 560}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 521, \"to\": 560}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 561, \"to\": 600}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 561, \"to\": 600}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 601, \"to\": 640}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 601, \"to\": 640}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 641, \"to\": 680}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 641, \"to\": 680}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 681, \"to\": 720}",
-   "say ALERT near 716: pump-B micro-fracture at depot-north \u2014 distilled.",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 681, \"to\": 720}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 721, \"to\": 760}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 721, \"to\": 760}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 761, \"to\": 800}",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 761, \"to\": 800}",
-   "say scan complete."
-  ],
-  "recall": [
-   "A-1042",
-   "pump-B",
-   "micro-fracture",
-   "depot-north"
-  ]
- },
- "s3b-live-watch": {
-  "desc": "L3b live-watch pressure: log under live watch; external mutation mid-scenario pushes a CHANGES tail the model must incorporate without polling.",
-  "turns": [
-   {
-    "msg": "Expand bench/corpus/fixtures/api.log lines 1-40 to see the log format, then tell me the overall shape."
-   },
-   {
-    "mutation": "append-alert"
-   },
-   {
-    "msg": "A new alert just landed. Without re-reading the whole file, what changed? (A live watcher is running on this file.)"
-   },
-   {
-    "msg": "Confirm the new alert's site and asset."
-   },
-   {
-    "msg": "Now release everything you held from api.log. Confirm what you released."
-   }
-  ],
-  "recall": [
-   "depot-north",
-   "pump-B"
-  ]
- },
- "s4-review-session": {
-  "desc": "L4 deep conversation: 12-message review thread loaded as conversation substrate. Merged-conversation lens and dream-pass summarization must hold pinned facts without verbatim retention.",
-  "turns": [
-   {
-    "msg": "Read bench/corpus/fixtures/review-thread.json, then: what did the reviewer say about the 12,500 cap, and where should it live?"
-   },
-   {
-    "msg": "Which issues were filed (IDs), and what did the author say about ORCHID_BATCH?"
-   },
-   {
-    "msg": "The YAML drift hazard: what was the reviewer's concern, and what did the author decide?"
-   },
-   {
-    "msg": "Recall check, terse: batch id? cap? drawer with pump-B seals? critical-from-remote-3 rule?"
-   }
-  ],
-  "recall": [
-   "ORCHID-7",
-   "12,500",
-   "drawer 4",
-   "remote-3",
-   "INTAKE-231"
-  ],
-  "script": [
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/review-thread.json\", \"from\": 1, \"to\": 50}",
-   "say review digest: cap 12,500 is the Miller consolidation limit; ORCHID-7 is the pilot batch id; drawer 4 has pump-B seals; INTAKE-231 drift test + INTAKE-232 coolant docs filed; critical-from-remote-3 mirrored in code.",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/review-thread.json\", \"from\": 1, \"to\": 50}"
-  ]
- },
- "s5-full-stack": {
-  "desc": "L5 full-stack pressure: code + config + log + review thread + goals, simultaneously, under \u039b=2,048. Solver must evict, tombstone, and re-expand on demand.",
-  "turns": [
-   {
-    "msg": "Set a goal: 'resolve fleet audit'. Then expand bench/corpus/fixtures/intake-service.ts lines 1-45 and bench/corpus/fixtures/fleet.yml lines 25-42. Report the audit surface."
-   },
-   {
-    "msg": "Now scan bench/corpus/fixtures/api.log in chunks for the coolant alert (distill + release as you go)."
-   },
-   {
-    "msg": "Review thread check: read bench/corpus/fixtures/review-thread.json \u2014 what issues were filed and why?"
-   },
-   {
-    "msg": "What goal did you set at the start of this session? Quote it."
-   },
-   {
-    "msg": "Final recall, terse: batch id? cap? drawer? pump? site? filed issues?"
-   }
-  ],
-  "recall": [
-   "ORCHID-7",
-   "12,500",
-   "drawer 4",
-   "pump-B",
-   "depot-north",
-   "INTAKE-231",
-   "resolve fleet audit"
-  ],
-  "script": [
-   "{\"op\": \"goals.set\", \"id\": \"g-audit\", \"text\": \"resolve fleet audit\"}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/intake-service.ts\", \"from\": 1, \"to\": 45}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/fleet.yml\", \"from\": 25, \"to\": 42}",
-   "say audit surface: ORCHID-7 batch id (line 11), MILLER cap 12,500 (line 28), drawer 4 pump-B seals (fleet.yml line 37).",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 700, \"to\": 730}",
-   "say coolant ALERT at 716: pump-B micro-fracture at depot-north.",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 700, \"to\": 730}",
-   "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/review-thread.json\", \"from\": 28, \"to\": 50}",
-   "say review: INTAKE-231 (drift test) + INTAKE-232 (coolant docs) filed.",
-   "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/review-thread.json\", \"from\": 28, \"to\": 50}",
-   "{\"op\": \"goals.update\", \"id\": \"g-audit\", \"status\": \"completed\"}",
-   "say final: ORCHID-7 | 12,500 | drawer 4 | pump-B | depot-north | INTAKE-231 + INTAKE-232 | goal: resolve fleet audit \u2014 done."
-  ]
- }
+  "$comment": "Pressure-ladder scenario corpus (ADR-0003 calibration data). Six scenarios, graded L1-L5: single-lens orientation -> two-substrate coordination -> chunked log read (accumulator pressure) -> live-watch push -> deep conversation -> full stack. Every recall string must appear in the model's reply (or scripted say-notice) for the scenario to pass. Runner: bun bench/corpus/run.ts [--live <scenario>] [--list].",
+  "s1-orient": {
+    "desc": "L1 single-lens orientation: one file, one range, one planted fact. Baseline sanity the ladder sits on.",
+    "turns": [
+      {
+        "msg": "Read bench/corpus/fixtures/intake-service.ts lines 1-25 and tell me what ORCHID_BATCH is set to."
+      },
+      {
+        "msg": "What was the batch id again? Answer with just the id."
+      },
+      {
+        "msg": "Ship a critical priority order from remote-3 \u2014 will validateOrder pass? One sentence."
+      }
+    ],
+    "recall": [
+      "ORCHID-7",
+      "remote-3"
+    ],
+    "script": [
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/intake-service.ts\", \"from\": 1, \"to\": 25}",
+      "say ORCHID_BATCH is set to ORCHID-7 (line 11) \u2014 the pilot batch id.",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/intake-service.ts\", \"from\": 1, \"to\": 25}"
+    ]
+  },
+  "s2-two-file": {
+    "desc": "L2 two-substrate coordination: code + config. Facts planted across code and YAML must combine (cap logic in code, constraint in YAML).",
+    "turns": [
+      {
+        "msg": "Expand bench/corpus/fixtures/intake-service.ts lines 20-45 (routing logic) and bench/corpus/fixtures/fleet.yml lines 25-42 (constraints + parts cage). I need the routing rules and the parts locations."
+      },
+      {
+        "msg": "A 14,000-unit expedited order arrives at depot-north. Which routing mode, and does the Miller cap force a split? Give me the cap number."
+      },
+      {
+        "msg": "Release the fleet.yml ranges \u2014 I have what I need. Now: which drawer holds the spare pump-B seal kit?"
+      },
+      {
+        "msg": "Recall check: exact routing decision for the 14k order, and what region is depot-south?"
+      }
+    ],
+    "recall": [
+      "split-shipment",
+      "12,500",
+      "drawer 4"
+    ],
+    "script": [
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/intake-service.ts\", \"from\": 20, \"to\": 45}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/fleet.yml\", \"from\": 30, \"to\": 42}",
+      "say routing: MILLER cap 12,500 forces split-shipment over-cap; drawer 4 holds pump-B seal kit.",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/fleet.yml\", \"from\": 30, \"to\": 42}",
+      "say released fleet.yml; cap 12,500 remembered, drawer 4 seals remembered."
+    ]
+  },
+  "s3-chunked-read": {
+    "desc": "L3 chunked file reading: the classic accumulator pattern. Eight serial chunk expands, distill-per-chunk, release-all, recall-from-distillate. Never hold all chunks at once.",
+    "turns": [
+      {
+        "msg": "Scan bench/corpus/fixtures/api.log (800 lines) for WARN/ALERT anomalies. The context budget is only 2,048 tokens \u2014 use small chunks (~40 lines) with files.expand, distill findings into your replies immediately, then release before pulling the next chunk."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Continue the scan."
+      },
+      {
+        "msg": "Which orderId was rejected for qty=0? What coolant alert fired? Final report."
+      },
+      {
+        "msg": "Final recall, terse: the alert \u2014 which pump, which site, what defect?"
+      }
+    ],
+    "script": [
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 1, \"to\": 40}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 1, \"to\": 40}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 41, \"to\": 80}",
+      "say WARN at A-1042 (qty=0 rejected) near line 47 \u2014 distilled.",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 41, \"to\": 80}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 81, \"to\": 120}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 81, \"to\": 120}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 121, \"to\": 160}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 121, \"to\": 160}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 161, \"to\": 200}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 161, \"to\": 200}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 201, \"to\": 240}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 201, \"to\": 240}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 241, \"to\": 280}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 241, \"to\": 280}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 281, \"to\": 320}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 281, \"to\": 320}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 321, \"to\": 360}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 321, \"to\": 360}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 361, \"to\": 400}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 361, \"to\": 400}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 401, \"to\": 440}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 401, \"to\": 440}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 441, \"to\": 480}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 441, \"to\": 480}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 481, \"to\": 520}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 481, \"to\": 520}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 521, \"to\": 560}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 521, \"to\": 560}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 561, \"to\": 600}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 561, \"to\": 600}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 601, \"to\": 640}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 601, \"to\": 640}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 641, \"to\": 680}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 641, \"to\": 680}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 681, \"to\": 720}",
+      "say ALERT near 716: pump-B micro-fracture at depot-north \u2014 distilled.",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 681, \"to\": 720}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 721, \"to\": 760}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 721, \"to\": 760}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 761, \"to\": 800}",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 761, \"to\": 800}",
+      "say scan complete."
+    ],
+    "recall": [
+      "A-1042",
+      "pump-B",
+      "micro-fracture",
+      "depot-north"
+    ]
+  },
+  "s3b-live-watch": {
+    "desc": "L3b live-watch pressure: log under live watch; external mutation mid-scenario pushes a CHANGES tail the model must incorporate without polling.",
+    "turns": [
+      {
+        "msg": "Expand bench/corpus/fixtures/api.log lines 1-40 to see the log format, then tell me the overall shape."
+      },
+      {
+        "mutation": "append-alert"
+      },
+      {
+        "msg": "A new alert just landed. Without re-reading the whole file, what changed? (A live watcher is running on this file.)"
+      },
+      {
+        "msg": "Confirm the new alert's site and asset."
+      },
+      {
+        "msg": "Now release everything you held from api.log. Confirm what you released."
+      }
+    ],
+    "recall": [
+      "depot-north",
+      "pump-B"
+    ]
+  },
+  "s4-review-session": {
+    "desc": "L4 deep conversation: 12-message review thread loaded as conversation substrate. Merged-conversation lens and dream-pass summarization must hold pinned facts without verbatim retention.",
+    "turns": [
+      {
+        "msg": "Read bench/corpus/fixtures/review-thread.json, then: what did the reviewer say about the 12,500 cap, and where should it live?"
+      },
+      {
+        "msg": "Which issues were filed (IDs), and what did the author say about ORCHID_BATCH?"
+      },
+      {
+        "msg": "The YAML drift hazard: what was the reviewer's concern, and what did the author decide?"
+      },
+      {
+        "msg": "Recall check, terse: batch id? cap? drawer with pump-B seals? critical-from-remote-3 rule?"
+      }
+    ],
+    "recall": [
+      "ORCHID-7",
+      "12,500",
+      "drawer 4",
+      "remote-3",
+      "INTAKE-231"
+    ],
+    "script": [
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/review-thread.json\", \"from\": 1, \"to\": 50}",
+      "say review digest: cap 12,500 is the Miller consolidation limit; ORCHID-7 is the pilot batch id; drawer 4 has pump-B seals; INTAKE-231 drift test + INTAKE-232 coolant docs filed; critical-from-remote-3 mirrored in code.",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/review-thread.json\", \"from\": 1, \"to\": 50}"
+    ]
+  },
+  "s5-full-stack": {
+    "desc": "L5 full-stack pressure: code + config + log + review thread + goals, simultaneously, under \u039b=2,048. Solver must evict, tombstone, and re-expand on demand.",
+    "turns": [
+      {
+        "msg": "Set a goal: 'resolve fleet audit'. Then expand bench/corpus/fixtures/intake-service.ts lines 1-45 and bench/corpus/fixtures/fleet.yml lines 25-42. Report the audit surface."
+      },
+      {
+        "msg": "Now scan bench/corpus/fixtures/api.log in chunks for the coolant alert (distill + release as you go)."
+      },
+      {
+        "msg": "Review thread check: read bench/corpus/fixtures/review-thread.json \u2014 what issues were filed and why?"
+      },
+      {
+        "msg": "What goal did you set at the start of this session? Quote it."
+      },
+      {
+        "msg": "Final recall, terse: batch id? cap? drawer? pump? site? filed issues?"
+      }
+    ],
+    "recall": [
+      "ORCHID-7",
+      "12,500",
+      "drawer 4",
+      "pump-B",
+      "depot-north",
+      "INTAKE-231",
+      "resolve fleet audit"
+    ],
+    "script": [
+      "{\"op\": \"goals.set\", \"id\": \"g-audit\", \"text\": \"resolve fleet audit\"}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/intake-service.ts\", \"from\": 1, \"to\": 45}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/fleet.yml\", \"from\": 25, \"to\": 42}",
+      "say audit surface: ORCHID-7 batch id (line 11), MILLER cap 12,500 (line 28), drawer 4 pump-B seals (fleet.yml line 37).",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 700, \"to\": 730}",
+      "say coolant ALERT at 716: pump-B micro-fracture at depot-north.",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 700, \"to\": 730}",
+      "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/review-thread.json\", \"from\": 28, \"to\": 50}",
+      "say review: INTAKE-231 (drift test) + INTAKE-232 (coolant docs) filed.",
+      "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/review-thread.json\", \"from\": 28, \"to\": 50}",
+      "{\"op\": \"goals.update\", \"id\": \"g-audit\", \"status\": \"completed\"}",
+      "say final: ORCHID-7 | 12,500 | drawer 4 | pump-B | depot-north | INTAKE-231 + INTAKE-232 | goal: resolve fleet audit \u2014 done."
+    ]
+  },
+  "s6-delayed-rereference": {
+    "desc": "Fact planted at turn 3, re-referenced at turn 13 without re-reading the file: the fact-bearing object must still render at the end (future utility realized).",
+    "steps": [
+      {
+        "msg": "Expand bench/corpus/fixtures/fleet.yml lines 1-40 and summarize the fleet config."
+      },
+      {
+        "intent": {
+          "op": "files.expand",
+          "target": "bench/corpus/fixtures/fleet.yml",
+          "from": 1,
+          "to": 40
+        }
+      },
+      {
+        "msg": "thanks. now glance at intake-service.ts lines 1-25."
+      },
+      {
+        "intent": {
+          "op": "files.expand",
+          "target": "bench/corpus/fixtures/intake-service.ts",
+          "from": 1,
+          "to": 25
+        }
+      },
+      {
+        "msg": "Important: note the pump-B micro-fracture constraint on depot-north \u2014 never route pumped-loop coolant through pump B until replaced, and drawer 4 holds the spare seals."
+      },
+      {
+        "intent": {
+          "op": "files.release",
+          "target": "bench/corpus/fixtures/fleet.yml",
+          "from": 1,
+          "to": 40
+        }
+      },
+      {
+        "msg": "plain turn."
+      },
+      {
+        "msg": "plain turn."
+      },
+      {
+        "msg": "plain turn."
+      },
+      {
+        "msg": "plain turn."
+      },
+      {
+        "msg": "quick check \u2014 which pump has the micro-fracture?"
+      },
+      {
+        "msg": "plain turn."
+      },
+      {
+        "msg": "plain turn."
+      },
+      {
+        "msg": "FINAL RECALL: state the pump-B constraint and where the spare seals are."
+      }
+    ],
+    "recall": [
+      "pump-B",
+      "seals"
+    ]
+  },
+  "s7-transform-amortization": {
+    "desc": "Aged conversational run merges (pay-once transform): merged representation must render smaller than the member verbatim sum and keep the facts recallable at the end.",
+    "steps": [
+      {
+        "msg": "depot-north is us-east, pumped-loop coolant, 12 dock doors."
+      },
+      {
+        "msg": "depot-south is us-southeast, air-cooled, 6 dock doors."
+      },
+      {
+        "msg": "remote-3 is apac, pumped-loop, 3 dock doors."
+      },
+      {
+        "msg": "routing tiers: standard ground max 12000, expedited air-freight max 8000, critical charter max 500."
+      },
+      {
+        "msg": "constraint: critical never ships from remote-3."
+      },
+      {
+        "msg": "pump-B on depot-north has a known micro-fracture; do not route pumped-loop coolant through it. drawer 4 in the parts cage holds the spare pump-B seals."
+      },
+      {
+        "msg": "ack, noted. continue."
+      },
+      {
+        "msg": "ack, noted. continue."
+      },
+      {
+        "intent": {
+          "op": "convo.merge",
+          "from": 2,
+          "to": 5
+        }
+      },
+      {
+        "msg": "after the merge: which pump is fractured and where are the spare seals?"
+      },
+      {
+        "msg": "plain turn."
+      },
+      {
+        "msg": "FINAL RECALL: state the pump-B constraint verbatim."
+      }
+    ],
+    "recall": [
+      "pump-B",
+      "seals"
+    ]
+  }
 }

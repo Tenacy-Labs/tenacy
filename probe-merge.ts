@@ -1,0 +1,27 @@
+
+import { AgentLoop } from "./src/optimizer/loop.ts";
+import { MockProvider } from "./src/optimizer/providers.ts";
+import { TurnBoundaryWatcher } from "./src/optimizer/live-views.ts";
+import { executeIntent, type SteeringIntent } from "./src/optimizer/intents.ts";
+import { paramSetV1 } from "./src/optimizer/params.ts";
+import { StandingItem } from "./src/optimizer/items.ts";
+import { INTENT_PROTOCOL_DOC } from "./src/optimizer/live.ts";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+const ROOT = import.meta.dir;
+const engine = new TurnBoundaryWatcher();
+const ps = paramSetV1("m"); ps.budgetLambda = 2048;
+const rrs: any[] = [];
+const loop = new AgentLoop(new MockProvider(), ps, null, { onRender: (rr: any) => { rrs.push(rr); }, onTurn: () => {} });
+loop.watcher = engine;
+loop.fileContent = (t) => { try { return readFileSync(resolve(ROOT, t), "utf8"); } catch { return ""; } };
+loop.store.add(new StandingItem("identity", "identity", "You are running the pressure corpus. " + INTENT_PROTOCOL_DOC).toContextItem());
+for (let i = 1; i <= 7; i++) await loop.run("filler turn " + i);
+executeIntent({ op: "convo.merge", from: 2, to: 5 } as SteeringIntent, loop.store, null);
+await loop.run("post-merge");
+const sn = loop.store.snapshot();
+const g = sn.get("merge:turn-2-user..turn-5-model");
+console.log("group options:", g?.options().map((o: any) => `${o.id}(${o.tokens}t,zv=${o.zeroValue === true})`).join(", "));
+const rr = rrs.at(-1)!;
+const pl = rr.placements.find((p: any) => p.id.startsWith("merge:"));
+console.log("placement:", pl ? `${pl.optionId} ${pl.tokens}t zone=${pl.zone}` : "NOT PLACED");

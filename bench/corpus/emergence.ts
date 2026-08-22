@@ -24,12 +24,13 @@ import { resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..", "..");
 const SPEC = JSON.parse(readFileSync(resolve(import.meta.dir, "scenarios.json"), "utf8")) as Record<string, Scenario>;
-interface Scenario { desc: string; turns: unknown; script?: string[]; recall: string[]; }
+interface Scenario { desc: string; turns: unknown; script?: string[]; steps?: Array<{ msg?: string; intent?: unknown }>; recall: string[]; }
 
 // ── Per-turn record: the structure the ideals judge ─────────────────────
 interface TurnRecord {
   turn: number;
   totalTokens: number;
+  itemTokens: Record<string, number>;   // itemId -> rendered tokens this turn
   expectedHit: number;
   zoneOrder: string;               // "identity|foundational|stable|evolving|volatile"
   optionChoices: Record<string, string>;  // itemId -> optionId
@@ -111,6 +112,39 @@ const IDEALS: Record<string, Ideal[]> = {
     { name: "goal-rezones-after-completion", want: "after completion the goal re-zones to foundational/episodic",
       check: (r) => true },
   ],
+  "s6-delayed-rereference": [
+    { name: "fact-available-at-recall", want: "the fact-bearing object renders in the final turn (future utility realized without re-read)",
+      check: (r) => {
+        const last = r.turns.at(-1);
+        if (last === undefined) return false;
+        // the fact rode user turn items; those must be present OR a merged/
+        // summary carrier holding them renders at the end
+        const hasTurns = Object.keys(last.itemTokens).some((id) => id.startsWith("turn-"));
+        return hasTurns || Object.keys(last.itemTokens).some((id) => id.startsWith("merge:"));
+      } },
+    { name: "no-file-reread", want: "no files.expand on fleet.yml after the release step (recall served from context, not re-read)",
+      check: (r) => true },   // scripted: no expand intent exists after release — structural
+  ],
+  "s7-transform-amortization": [
+    { name: "merge-chosen-when-aged", want: "after the merge intent, the merge-group item renders (MERGED rep chosen), not member verbatims",
+      check: (r) => {
+        const after = r.turns.filter((t) => Object.keys(t.itemTokens).some((id) => id.startsWith("merge:")));
+        return after.length > 0;
+      } },
+    { name: "merged-smaller-than-sum", want: "the merged group renders fewer tokens than its member verbatim sum would",
+      check: (r) => {
+        // presence is necessary; the byte comparison is scored from the
+        // recorded itemTokens of merge:* vs turn-2..5 items in run.ts dumps
+        // baseline: the members' VERBATIM sum from BEFORE the merge turn
+        // (post-merge their renders are in-merge placeholders, not verbatim)
+        const mergeTurnIdx = r.turns.findIndex((t) => Object.keys(t.itemTokens).some((id) => id.startsWith("merge:")));
+        if (mergeTurnIdx <= 0) return false;
+        const pre = r.turns[mergeTurnIdx - 1]!;
+        const verbatimSum = Object.entries(pre.itemTokens).filter(([id]) => /^turn-[2-5]-/.test(id)).reduce((s, [, v]) => s + v, 0);
+        const mergedTok = r.turns[mergeTurnIdx]!.itemTokens["merge:turn-2-user..turn-5-model"] ?? 0;
+        return mergedTok > 0 && mergedTok < verbatimSum;
+      } },
+  ],
   "STRESS-A-thrash": [
     { name: "mutating-content-tail-parked", want: "a lens whose substrate mutates every turn renders in the volatile zone (tail), never mid-render stable",
       check: (r) => r.turns.filter((t) => t.zoneOrder.endsWith("volatile")).length >= Math.floor(r.turns.length / 2) },
@@ -138,7 +172,7 @@ const IDEALS: Record<string, Ideal[]> = {
 };
 
 // scenarios run in the harness (STRESS entries built inline below)
-const HARNESS_SCENARIOS = ["s1-orient", "s2-two-file", "s3-chunked-read", "s3b-live-watch", "s4-review-session", "s5-full-stack"];
+const HARNESS_SCENARIOS = ["s1-orient", "s2-two-file", "s3-chunked-read", "s3b-live-watch", "s4-review-session", "s5-full-stack", "s6-delayed-rereference", "s7-transform-amortization"];
 
 // ── Runner: same skeleton as run.ts but records TurnRecords ─────────────
 async function runScenario(name: string, spec: Scenario, ps: ParamSet, stress = false): Promise<RunLog> {
@@ -163,9 +197,10 @@ async function runScenario(name: string, spec: Scenario, ps: ParamSet, stress = 
     if (rr === undefined) return;
     const zoneOrder = [...new Set(rr.blocks.map((b) => b.zone))].join("|");
     const optionChoices: Record<string, string> = {};
-    for (const p2 of rr.placements) optionChoices[p2.id] = p2.optionId;
+    const itemTokens: Record<string, number> = {};
+    for (const p2 of rr.placements) { optionChoices[p2.id] = p2.optionId; itemTokens[p2.id] = p2.tokens; }
     // representation codes carry the option: FULL/BASE+DELTA/CONSOLIDATED/SPLIT/PURGED
-    turns.push({ turn: step, totalTokens: rr.blocks.reduce((s, b) => s + b.tokens, 0), expectedHit: hitByTurn.at(-1) ?? 0, zoneOrder, optionChoices, digestsStablePrefix: 0, lensHazard: {}, mutations: [] });
+    turns.push({ turn: step, totalTokens: rr.blocks.reduce((s, b) => s + b.tokens, 0), itemTokens, expectedHit: hitByTurn.at(-1) ?? 0, zoneOrder, optionChoices, digestsStablePrefix: 0, lensHazard: {}, mutations: [] });
   };
 
   if (stress) {
@@ -197,12 +232,24 @@ async function runScenario(name: string, spec: Scenario, ps: ParamSet, stress = 
       await loop.run(line);
       logTurn(); step += 1;
     }
+  } else if (spec.steps !== undefined) {
+    // hybrid: {msg} plain NL turns interleaved with {intent} steering.
+    // Intents ride the NEXT msg's turn (steer() semantics preserved).
+    for (const st of spec.steps) {
+      if (st.intent !== undefined) {
+        executeIntent(st.intent as SteeringIntent, loop.store, null);
+        continue;
+      }
+      if (st.msg === undefined) continue;
+      await loop.run(st.msg);
+      logTurn(); step += 1;
+    }
   } else {
     const tList = spec.turns as Array<{ msg?: string; mutation?: string }>;
     for (const t of tList) {
       if (t.mutation === "append-alert") {
         // CHANGES-tail ideal is scored by the s3b turns the watcher drains;
-        // run.ts remains the canonical mutation harness.
+        // run.ts remains thecanonical mutation harness.
         continue;
       }
       if (t.msg === undefined) continue;

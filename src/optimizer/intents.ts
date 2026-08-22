@@ -145,6 +145,18 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
       if (members.length < 2) return { op: s.op, ok: false, result: "fewer than two turns in range" };
       const groupId = `merge:turn-${s.from}-user..turn-${s.to}-model`;
       const group = new MergeGroupItem(groupId, members, texts.join(" "), turn);
+      // Value mass = summed member values at merge time (multi-period pass):
+      // each member realizes its k=0 decayed value; the group inherits the
+      // mass with a fresh clock. Per-turn realization stays per-member scale.
+      let mass = 0;
+      for (const mid of members) {
+        const t0 = host.convoTurn(mid);
+        if (t0 === undefined) continue;
+        const num = Number(/^turn-(\d+)-/.exec(mid)?.[1] ?? 0);
+        const age = Math.max(0, turn - num);
+        mass += 3.0 * Math.pow(1 + age, -1.0);   // episodic profile at merge
+      }
+      group.valueMass = mass;
       host.addStoreItem(group);
       ledger?.recordSignal({ type: "convo-merge", itemId: groupId, members, turn });
       return { op: s.op, ok: true, result: `merged ${members.length} turns into ${groupId}` };

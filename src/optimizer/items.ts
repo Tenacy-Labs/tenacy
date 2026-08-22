@@ -129,10 +129,16 @@ export class TurnItem {
   /** Conversation-lens options: VERBATIM (additive), SUMMARY (rewrite, penalized by A6 ramp). */
   options(): RenderOption[] {
     if (this.mergedInto !== undefined) {
-      // member of a merge group: renders nothing of its own — the group
-      // item carries the MERGED representation (one transform, amortized)
+      // member of a merge group: the group carries the bytes. in-merge is a
+      // zeroValue 0-byte ride (no content, no value, no free FV); verbatim
+      // stays available — the coupling pass swaps to it when the group does
+      // NOT carry (purged/dropped), so member content never vanishes with
+      // the group's tombstone.
+      const inMerge = opt("in-merge", ["evolving"], "MERGED", "", false);
+      inMerge.zeroValue = true;
       return [
-        opt("in-merge", ["evolving"], "MERGED", `[${this.role}] [merged into ${this.mergedInto}]`, false),
+        inMerge,
+        opt("verbatim", ["evolving"], "VERBATIM", `[${this.role}] ${this.#verbatim}`, true),
       ];
     }
     const opts: RenderOption[] = [
@@ -161,6 +167,14 @@ export class TurnItem {
  * dream pass (v1: contiguous runs of aged turns).
  */
 export class MergeGroupItem {
+  /**
+   * Value mass: the SUM of member values at merge time (multi-period pass
+   * 2026-08-22). A group carrying eight members' content has eight members'
+   * value — a single episodic profile on the group undercounts the mass and
+   * structurally biases against transforms ever amortizing. The group's own
+   * decay clock is fresh (the transform re-presents aged content).
+   */
+  valueMass = 0;
   constructor(
     public readonly id: string,          // "merge:3-6"
     public readonly memberIds: readonly string[],
@@ -171,9 +185,12 @@ export class MergeGroupItem {
   #header(): string { return `⟨merged ${this.memberIds[0]}..${this.memberIds[this.memberIds.length - 1]}⟩`; }
   serialize(): string { return this.#header() + "\n" + this.text; }
   options(): RenderOption[] {
+    const purge = opt("purge", ["volatile"], "PURGED",
+      `⟨merged ${this.memberIds[0]}..${this.memberIds[this.memberIds.length - 1]}: purged; convo.reexpand restores verbatim⟩`, false);
+    purge.zeroValue = true;   // handle only — re-expand pays the writeback
     return [
       opt("merged", ["foundational"], "MERGED", this.serialize(), false),
-      opt("nothing", ["volatile"], "AS_IS", "", false),
+      purge,
     ];
   }
   toContextItem(): ContextItem {
@@ -181,7 +198,7 @@ export class MergeGroupItem {
       id: this.id, kind: "episodic", velocity: "stable", immutable: false,
       tokens: this.tokens, serialize: () => this.serialize(), options: () => this.options(),
       upstreams: this.memberIds, lastTouchTurn: this.createdTurn, createdTurn: this.createdTurn,
-      watch: "frozen",
+      watch: "frozen", valueMass: this.valueMass,
     };
   }
 }

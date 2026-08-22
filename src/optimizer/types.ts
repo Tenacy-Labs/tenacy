@@ -60,6 +60,11 @@ export interface ContextItem {
   hazardOverride?: number | undefined;
   /** Value bump signals (ctx.promote / explicit invocation) — decay-exempt adders, per 0002g. */
   valueBump?: { amount: number; untilTurn: number } | undefined;
+  /** Merge-group value mass (multi-period pass 2026-08-22): sum of member
+   *  values at merge time — overrides the kind profile for group scoring,
+   *  so a group carrying eight members' content is priced with eight
+   *  members' value mass and a fresh decay clock. */
+  valueMass?: number | undefined;
   /** Toggle state — ADR-0002d §7 (live | polled | frozen); default polled. */
   watch?: "live" | "polled" | "frozen" | undefined;
   /** Marks store-level authored signals (model ctx / goals flips) — never optimizer-authored. */
@@ -135,14 +140,14 @@ export interface TurnLedger {
 export interface ItemLedger {
   turn: number;
   id: string;
-  forecast: { mu0: number; alpha: number; deltaT: number; hazard: number; basis: "prior" | "observed"; expectedValue: number };
+  forecast: { mu0: number; alpha: number; deltaT: number; hazard: number; basis: "prior" | "observed"; expectedValue: number; futureValue?: number };
   utility: { benefit: number; cacheCost: number; rotShare: number; total: number };
   decision: "keep" | "drop" | "move" | "consolidate" | "promote" | "purge" | "summarize-intent";
   accepted: boolean;
   marginVsHysteresis: number;       // negative for rejected near-misses
   optionChosen?: string | undefined;
   /** Coupled-cost reason (0005): fragment forced by parent's aggregated choice. */
-  coupledReason?: "parent-carries-bytes" | "budget-tombstone" | undefined;
+  coupledReason?: "parent-carries-bytes" | "budget-tombstone" | "group-purged-verbatim-fallback" | undefined;
 }
 
 export interface CacheLedger {

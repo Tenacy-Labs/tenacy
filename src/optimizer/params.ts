@@ -58,6 +58,28 @@ export interface ParamSet {
    * window within ~2 turns of its value crossing rho × its tokens.
    */
   reservationPrice: number;
+  /**
+   * Future-utility capture (Daniel, 2026-08-22: "we may need to think more
+   * about how we capture the future utility of our context objects over
+   * future turns"). Benefit is a discounted re-reference stream, not a k=0
+   * scalar: FV = Σ_{k=1..H} γ^k · (q(state)·μ0·α/(1+Δt+k) − ρ·tokens).
+   * The re-reference hazard uses the kind's OWN α (the decay profile IS the
+   * recurrence shape — no separate knobs); q is the state quality factor:
+   * what fraction of μ0 is realized at re-reference from that state.
+   */
+  fv: {
+    /** Lookahead horizon H (turns). */
+    horizon: number;
+    /** Per-turn discount γ. */
+    gamma: number;
+    /** q: realization fraction, rendered verbatim/full. */
+    qRendered: number;
+    /** q: realization fraction, lossy (SUMMARY/MERGED/CONSOLIDATED). */
+    qLossy: number;
+    /** q: realization fraction, handle (compact header / purge tombstone):
+     *  optionality only — re-expand pays a writeback. */
+    qHandle: number;
+  };
 }
 
 export const PROFILES_V1: Record<ItemKind, ValueProfile> = {
@@ -106,5 +128,19 @@ export function paramSetV1(modelId: string): ParamSet {
     // chunk must carry > 1.35. Decay + reservation evicts stale content
     // WITHOUT relief flapping (re-entry needs to re-clear the bar).
     reservationPrice: 0.002,
+    // Future-utility capture (2026-08-22 multi-period pass). Defaults are
+    // the sweep's tuned argmin-achieving set — see ADR-0006 for the grid.
+    fv: {
+      horizon: 20,
+      gamma: 0.85,
+      // qRendered = 1.0: a rendered verbatim object realizes its FULL value
+      // at re-reference (the model reads the bytes); q discounts only
+      // state lossiness. At 0.5 a 652t lens could not cover its own rent
+      // (0.5×5×2^-0.6 ≈ 1.29 < ρ×652 ≈ 1.30) and fresh lenses were rejected
+      // at entry — caught by STRESS-A regression.
+      qRendered: 1.0,
+      qLossy: 0.45,
+      qHandle: 0.35,
+    },
   };
 }

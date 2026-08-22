@@ -32,7 +32,7 @@ interface Scenario {
   turns: unknown;
   script?: string[];
   recall: string[];
-}
+ steps?: Array<{ msg?: string; intent?: unknown }>; }
 
 const args = process.argv.slice(2);
 const LIVE = args.includes("--live");
@@ -150,6 +150,26 @@ async function runScenario(name: string, spec: Scenario): Promise<boolean> {
       // after every intent batch, advance a turn so renders/solver stay honest
       await loop.run(line);   // mock model observes the intent result
       dumpTurn(name, scriptStep, line.slice(0, 100)); scriptStep += 1;  // AFTER re-render
+      turnIdx += 1;
+    }
+  } else if (spec.steps !== undefined) {
+    // HYBRID (s6/s7): {msg} NL turns interleaved with {intent} steering.
+    // Facts ride user messages -> real episodic items in the store.
+    for (const st of spec.steps) {
+      if (st.intent !== undefined) {
+        const intent = st.intent as SteeringIntent;
+        const r = executeIntent(intent, loop.store, null);
+        record("intent", `${intent.op} → ${r.result}`);
+        if (!r.ok) { console.log(`  ✗ intent failed: ${intent.op} → ${r.result}`); ok = false; }
+        continue;   // intent rides the NEXT msg's turn
+      }
+      const msg = (st as { msg?: string }).msg;
+      if (msg === undefined) continue;
+      const res = await loop.run(msg);
+      record("user", msg);
+      record("model", res.modelText);
+      renders.push((res as unknown as { renderText?: string }).renderText ?? "");
+      dumpTurn(name, scriptStep, msg.slice(0, 100)); scriptStep += 1;
       turnIdx += 1;
     }
   } else {
