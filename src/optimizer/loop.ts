@@ -159,6 +159,18 @@ export class AgentLoop {
     const solved = solve(snap, this.incumbent, this.ps, this.turn);
     const rr = render(solved.placements, snap, this.ps, tailNotices);
     this.lastRender = rr;
+
+    // Consolidation ratchet (Daniel ruling 2026-08-22): a chosen lattice
+    // option permanently consumes the pending deltas — the lens folds them
+    // into its base and retires the finer-grained states. Commit AFTER the
+    // render so the chosen option's bytes were priced from live state.
+    for (const p of solved.placements) {
+      const lens = this.lensRegistry.get(p.id);
+      if (lens !== undefined && lens.pendingDeltas.length > 0) {
+        lens.commitConsolidation(p.optionId, this.turn);
+      }
+    }
+
     this.hooks.onRender?.(rr, this.ps);
 
     const expected = this.cacheModel.expectedHit(rr.blocks);

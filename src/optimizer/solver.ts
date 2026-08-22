@@ -254,6 +254,35 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   // never double-charged). If the parent chose split, its own bytes shrink
   // to the header only — fragments carry the content.
   const parentsChosen = new Map(chosen.map((c) => [c.item.id, c.option.id]));
+  // Family rescue (2026-08-22, exposed by honest compact pricing): the
+  // parent's SOLO argmax can pick a byte-carrying aggregated option while a
+  // live fragment carries more family utility than the whole parent block —
+  // and then budget relief evicts the parent, stranding high-value content
+  // the argmax never compared (parent 443t evicted; bumped fragment 230t
+  // sat range-dropped). The coupling pass owns the family arrangement: when
+  // the parent carries bytes and its live fragments exist, rescore the
+  // family as header+fragments-carry and flip when strictly better on
+  // summed utility. Relief then trims the true worst per family.
+  for (const parentEntry of [...chosen]) {
+    const parentChoice = parentEntry.option.id;
+    if (parentChoice === "split" || parentChoice === "compact" || parentChoice === "purge") continue;
+    const parentId = parentEntry.item.id;
+    const allOpts = parentEntry.item.options();
+    const headerOpt = allOpts.find((o) => o.id === "split") ?? allOpts.find((o) => o.id === "compact");
+    const carriedOpt = allOpts.find((o) => o.id === parentChoice);
+    if (headerOpt === undefined || carriedOpt === undefined) continue;
+    const frags = chosen.filter((e) => (e.item as unknown as { upstreams?: readonly string[] }).upstreams?.[0] === parentId && e.option.id === "range-full");
+    if (frags.length === 0) continue;
+    // Family utility as-is: parent carries bytes, fragments range-drop (the
+    // state §1b will enforce below). Under the flip: parent renders the
+    // zero-value header, fragments render their own bytes.
+    const asIsScore = parentEntry.utility;                       // fragments contribute 0 (range-drop)
+    const flipScore = frags.reduce((s, f) => s + f.utility, 0);  // header contributes ~0 (zeroValue)
+    if (flipScore > asIsScore) {
+      parentEntry.option = headerOpt;
+      parentsChosen.set(parentId, headerOpt.id);
+    }
+  }
   for (const c of [...chosen]) {
     const parent = (c.item as unknown as { upstreams?: readonly string[] }).upstreams?.[0];
     if (parent === undefined) continue;

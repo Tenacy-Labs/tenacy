@@ -81,6 +81,73 @@ export abstract class Lens {
     });
   }
 
+  // ── live-delta ledger & consolidation lattice (0002d + Daniel ruling
+  //    2026-08-22) ─────────────────────────────────────────────────────────
+  //
+  // Deltas accumulate as a JOURNAL of substrate snapshots. The option
+  // surface presents the consolidation lattice over {base, d1..dn}:
+  //   base+d1+d2      chain: base bytes + each delta snapshot in commit
+  //                   order (sequence-legible); ADDITIVE (appends after
+  //                   the base render).
+  //   base+(d1,d2)    fusion: base + ONE re-derived block = the OPTIMAL
+  //                   rendering of the combined contents (latest-wins over
+  //                   the union of affected lines; byte-equal to the fresh
+  //                   substrate slice). REWRITE.
+  //   (base,d1,d2)    atomic: everything in one fresh block. REWRITE.
+  // The solver picks per turn (it alone knows the render context). RATCHET:
+  // once a combined option wins, the consolidation is permanent — the
+  // consumed deltas are folded into the base and finer-grained states are
+  // discarded (the lattice never re-opens downward).
+  /** Pending (unconsolidated) live deltas, in commit order. */
+  pendingDeltas: Array<{ turn: number; lines: number[]; snapshot: string }> = [];
+
+  /** Record a live substrate change (TurnBoundaryWatcher drain, or LLM
+   *  expand() of new ranges while a base exists). `lines` = 1-based
+   *  affected line numbers; snapshot = post-change slice of those lines. */
+  noteLiveDelta(turn: number, lines: number[], snapshot?: string): void {
+    if (this.baseBlockTurn < 0) return;              // no base: FULL is the only first write
+    this.pendingDeltas.push({ turn, lines, snapshot: snapshot ?? this.sliceRangePublic(Math.min(...lines), Math.max(...lines)) });
+  }
+
+  /** The affected-lines union across all pending deltas (for fusion). */
+  private deltaUnion(): Set<number> {
+    const u = new Set<number>();
+    for (const d of this.pendingDeltas) for (const l of d.lines) u.add(l);
+    return u;
+  }
+
+  /** Snapshot journal from base through pending deltas — the chain body. */
+  private deltaChainText(): string {
+    const parts = this.pendingDeltas.map((d) =>
+      `+Δ@${d.turn} lines ${Math.min(...d.lines)}-${Math.max(...d.lines)}:\n${d.snapshot}`);
+    return parts.join("\n");
+  }
+
+  /** Fusion body: latest-wins re-derivation over the affected-lines union.
+   *  By construction at the turn boundary this is byte-equal to the fresh
+   *  substrate slice over the union — NOT a concatenation of diffs. */
+  private deltaFusionText(): string {
+    const u = this.deltaUnion();
+    const lo = Math.min(...u), hi = Math.max(...u);
+    return this.sliceRangePublic(lo, hi);
+  }
+
+  /** Ratchet: fold consumed deltas into the base. Permanent. */
+  commitConsolidation(choiceId: string, turn: number): void {
+    if (this.pendingDeltas.length === 0) return;
+    if (choiceId === "full" || choiceId === "consolidated") {
+      // base re-written wholesale: nothing pending remains
+    } else if (choiceId === "base+d1+d2") {
+      // chain kept: base block advances to include the chain
+      this.baseBlockTurn = turn;
+    } else if (choiceId === "base+(d1,d2)" || choiceId === "(base,d1,d2)") {
+      this.baseBlockTurn = turn;
+    } else {
+      return;                                        // purge/compact/split: deltas stay pending
+    }
+    this.pendingDeltas = [];                          // finer states discarded (ratchet)
+  }
+
   // ── generic render text (template pieces over the hooks) ───────────────
 
   protected selectedText(): string {
@@ -93,7 +160,17 @@ export abstract class Lens {
     return `⟨${this.substrateTag()} ${this.target} ${this.ranges.length} range(s)⟩\n${this.selectedText()}`;
   }
   deltaText(): string {
-    return `⟨${this.substrateTag()} ${this.target} +Δ⟩\n${this.selectedText()}`;
+    if (this.pendingDeltas.length === 0) return `⟨${this.substrateTag()} ${this.target} +Δ⟩\n${this.selectedText()}`;
+    return `⟨${this.substrateTag()} ${this.target} +Δ⟩\n${this.deltaChainText()}`;
+  }
+  /** Fusion: base + re-derived combined block (latest-wins). */
+  fusionText(): string {
+    if (this.pendingDeltas.length === 0) return this.fullText();
+    return `${this.basePrefixText()}\n${this.deltaFusionText()}`;
+  }
+  /** Bytes the base block holds (post last consolidation). */
+  private basePrefixText(): string {
+    return `⟨${this.substrateTag()} ${this.target} base@${this.baseBlockTurn}⟩\n${this.selectedText()}`;
   }
   compactText(): string {
     return `⟨${this.substrateTag()} ${this.target}: ${this.ranges.length} range(s), ${this.ranges.map(([a, b]) => `${a}-${b}`).join(",")}⟩`;
@@ -127,14 +204,37 @@ export abstract class Lens {
       // glm-5.2 refusing to answer from an empty lens).
       opts.push(opt("full", ["stable"], "FULL", full, true));
     } else {
-      // base exists: deltas are the additive path; re-consolidation is a rewrite
-      opts.push(opt("base+delta", ["stable"], "BASE+DELTA", this.deltaText(), true));
-      opts.push(opt("consolidated", ["stable"], "CONSOLIDATED", full, false));
-      if (this.renderMode === "split") {
-        // split IS the compact form of a split lens — one header, not two twins
-        opts.push(opt("split", ["foundational"], "SPLIT", this.splitHeaderText(), false));
+      // base exists: the consolidation lattice over {base, pending deltas}.
+      if (this.pendingDeltas.length === 0) {
+        // no live deltas: the pre-lattice surface (byte-stable legacy path)
+        opts.push(opt("base+delta", ["stable"], "BASE+DELTA", this.deltaText(), true));
+        opts.push(opt("consolidated", ["stable"], "CONSOLIDATED", full, false));
       } else {
-        opts.push(opt("compact", ["foundational"], "FULL", compact, false));
+        const n = this.pendingDeltas.length;
+        const dnums = this.pendingDeltas.map((_, i) => `d${i + 1}`).join("+");
+        const dlist = this.pendingDeltas.map((_, i) => `d${i + 1}`).join(",");
+        // chain: base + each delta snapshot (sequence-legible) — ADDITIVE
+        opts.push(opt(`base+${dnums}`, ["stable"], "BASE+DELTA", this.deltaText(), true));
+        // fusion: base + ONE re-derived combined block (latest-wins) — REWRITE
+        opts.push(opt(`base+(${dlist})`, ["stable"], "CONSOLIDATED", this.fusionText(), false));
+        // atomic: everything in one fresh block — REWRITE
+        opts.push(opt(`(${["base", ...this.pendingDeltas.map((_, i) => `d${i + 1}`)].join(",")})`, ["stable"], "FULL", full, false));
+      }
+      if (this.renderMode === "split") {
+        // split IS the compact form of a lattice-bearing lens — the parent's
+        // aggregated lattice options stay available, coupled: choosing one drops fragments.
+        const split = opt("split", ["foundational"], "SPLIT", this.splitHeaderText(), false);
+        split.zeroValue = true;   // header-only: handle value, not content value
+        opts.push(split);
+      } else {
+        // types.ts zeroValue contract: "renders no content — scores zero
+        // value (purge/compact-head/range-drop)". A compact head carries the
+        // re-reference HANDLE (qHandle), never the content's qRendered —
+        // pricing it at full value let a content-free header beat every
+        // byte-carrying option under tight Λ.
+        const comp = opt("compact", ["foundational"], "FULL", compact, false);
+        comp.zeroValue = true;
+        opts.push(comp);
       }
     }
     if (this.tokens > 1500) {
