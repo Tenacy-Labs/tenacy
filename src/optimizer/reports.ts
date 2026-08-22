@@ -202,6 +202,40 @@ export function reportDecision(corpus: Corpus): DecisionReport {
 
 // ── ADR-0006 §7 gauges — the falsification instrument (phase 0) ──────────
 
+/**
+ * Gauge 6 (phase 3.5) — optional harness-supplied truth for the belief gap.
+ * `truthByTurn` carries an INDEPENDENT ground truth (e.g. an LCP
+ * recomputation over actual render bytes) supplied by the harness ALONGSIDE
+ * the corpus — report-side only; the ledger is never retro-fabricated
+ * (ADR-0002e honesty boundary).
+ */
+export interface BeliefGapInput {
+  basis: "lcp-truth";
+  truthByTurn: ReadonlyMap<number, number>;
+}
+
+export interface BeliefGapReport {
+  /** Truth basis used for comparison. */
+  basis: "provider-realized" | "lcp-truth";
+  /** Number of comparable turns (belief + truth both present). */
+  compared: number;
+  /** Mean absolute |truth − believed| in tokens. */
+  maeTokens: number;
+  /** Mean signed (truth − believed); positive = under-belief. */
+  signedMeanTokens: number;
+  /** OLS slope of the signed gap against turn number (tokens/turn). */
+  slopeTokensPerTurn: number;
+  /** Discriminating signature (see classifyBeliefGap). */
+  signature: BeliefGapSignature;
+}
+
+export type BeliefGapSignature =
+  | "insufficient"          // < 3 comparable turns
+  | "growing-underbelief"   // positive slope, positive mean (TTL-creep shape)
+  | "growing-overbelief"
+  | "constant-offset"       // |slope| small, mean ≢ 0
+  | "noise";                // |slope| and |mean| both small
+
 export interface GaugesReport {
   report: "gauges";
   card: CorpusCard;
@@ -221,9 +255,12 @@ export interface GaugesReport {
   restructures: number;
   writeToHarvest: number | null;
   harvestBasis: "expected" | "realized" | "none";
+  /** Gauge 6 (phase 3.5) — belief gap vs independent truth; null when no
+   *  provider-realized hits and no harness truth map were supplied. */
+  beliefGap: BeliefGapReport | null;
 }
 
-export function reportGauges(corpus: Corpus, ps: ParamSet): GaugesReport {
+export function reportGauges(corpus: Corpus, ps: ParamSet, beliefGapInput?: BeliefGapInput): GaugesReport {
   const turnsByNumber = new Map<number, TurnLedger>();
   for (const t of corpus.turns) turnsByNumber.set(t.turn, t);
 
@@ -314,6 +351,11 @@ export function reportGauges(corpus: Corpus, ps: ParamSet): GaugesReport {
   if (restructures > 0 && basis === "none") basis = "expected";
   const writeToHarvest = restructures > 0 && harvestTurns > 0 ? harvestNum / restructures : null;
 
+  // Gauge 6 — belief gap (phase 3.5): provider-realized wins; harness LCP
+  // truth is the fallback when providers stay silent (mock corpora). Null
+  // when neither exists — never fabricated (ADR-0002e).
+  const beliefGap = computeBeliefGap(corpus, beliefGapInput);
+
   return {
     report: "gauges",
     card: corpusCard(corpus),
@@ -323,7 +365,75 @@ export function reportGauges(corpus: Corpus, ps: ParamSet): GaugesReport {
     believedHitRatio,
     deadTokenShare,
     restructures, writeToHarvest, harvestBasis: basis,
+    beliefGap,
   };
+}
+
+/** Gauge 6 internals — exported for direct harness use. */
+export function computeBeliefGap(
+  corpus: Corpus,
+  input?: BeliefGapInput,
+): BeliefGapReport | null {
+  // Priority: EXPLICIT harness truth (deliberate independent recomputation —
+  // in mock corpora the provider "realized" is a simulated echo of belief,
+  // not evidence) > provider-realized (authoritative for live providers,
+  // where usage comes from the API) > null.
+  const realizedPairs: Array<{ turn: number; gap: number }> = [];
+  for (const c of corpus.caches) {
+    if (c.realized !== null && c.divergence !== "unreported") {
+      realizedPairs.push({ turn: c.turn, gap: c.realized.hitTokens - c.expected.hitTokens });
+    }
+  }
+  let basis: "provider-realized" | "lcp-truth";
+  let pairs: Array<{ turn: number; gap: number }>;
+  if (input !== undefined) {
+    basis = "lcp-truth";
+    pairs = [];
+    for (const c of corpus.caches) {
+      const truth = input.truthByTurn.get(c.turn);
+      if (truth === undefined) continue;
+      pairs.push({ turn: c.turn, gap: truth - c.expected.hitTokens });
+    }
+  } else if (realizedPairs.length >= 1) {
+    basis = "provider-realized";
+    pairs = realizedPairs;
+  } else {
+    return null;
+  }
+  const n = pairs.length;
+  const mae = pairs.reduce((s, p) => s + Math.abs(p.gap), 0) / n;
+  const signedMean = pairs.reduce((s, p) => s + p.gap, 0) / n;
+  // OLS slope of gap against turn
+  const meanTurn = pairs.reduce((s, p) => s + p.turn, 0) / n;
+  let num = 0;
+  let den = 0;
+  for (const p of pairs) {
+    num += (p.turn - meanTurn) * (p.gap - signedMean);
+    den += (p.turn - meanTurn) ** 2;
+  }
+  const slope = den > 0 ? num / den : 0;
+  return {
+    basis,
+    compared: n,
+    maeTokens: mae,
+    signedMeanTokens: signedMean,
+    slopeTokensPerTurn: slope,
+    signature: classifyBeliefGap(n, signedMean, slope),
+  };
+}
+
+/** Signatures (phase 3.5 stub → ADR-0003 refit input):
+ *  growing-underbelief = TTL-creep shape (belief retires entries the
+ *  provider still holds). constant-offset = systematic framing/rounding.
+ *  noise = nothing worth refitting. */
+export function classifyBeliefGap(n: number, signedMean: number, slope: number): BeliefGapSignature {
+  if (n < 3) return "insufficient";
+  const slopeSmall = Math.abs(slope) < 0.5;       // tokens/turn
+  const meanSmall = Math.abs(signedMean) < 5;     // tokens
+  if (slopeSmall && meanSmall) return "noise";
+  if (!slopeSmall && slope > 0) return "growing-underbelief";
+  if (!slopeSmall && slope < 0) return "growing-overbelief";
+  return "constant-offset";
 }
 
 function cachesReported(corpus: Corpus): boolean {

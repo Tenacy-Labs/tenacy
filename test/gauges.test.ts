@@ -14,6 +14,7 @@ import { loadCorpus, type Corpus } from "../src/optimizer/corpus.ts";
 import { reportGauges } from "../src/optimizer/reports.ts";
 import { paramSetV1 } from "../src/optimizer/params.ts";
 import type { TurnLedger, ItemLedger, CacheLedger } from "../src/optimizer/types.ts";
+import type { BeliefGapInput } from "../src/optimizer/reports.ts";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -130,5 +131,68 @@ describe("ADR-0006 §7 gauges", () => {
     expect(g.flips).toBe(0);
     expect(g.believedHitRatio).toBe(null);   // no cache records → null, never fabricated
     expect(g.deadTokenShare).toBe(null);     // no item forecasts → null
+  });
+});
+
+describe("gauge 6 — belief gap (ADR-0006 §7 addendum; phase 3.5)", () => {
+  /** N-turn corpus, one cache ledger record per turn; realized defaults to all-null. */
+  function gapCorpus(expected: number[], realizedIn?: Array<number | null>): Corpus {
+    const realized = expected.map((_, i) => realizedIn?.[i] ?? null);
+    const turns: TurnLedger[] = expected.map((_, i) => ({
+      turn: i + 1,
+      layout: [{ id: "lens:a", position: 1, tokens: 200, state: "FULL" }],
+      cacheBelief: { blockDigestChain: ["d1"], checkpoints: [0], ttlTurns: 6, providerGranularity: 1024 },
+      budgetLambda: 2048, parameterSetVersion: "test-v1", modelId: "mock",
+      zoneHistograms: { identity: {}, foundational: {}, stable: {}, evolving: {}, volatile: {} },
+    }));
+    const caches: CacheLedger[] = expected.map((e, i) => ({
+      turn: i + 1,
+      expected: { hitTokens: e, price: 0 },
+      realized: realized[i] === null ? null : { hitTokens: realized[i] as number, price: 0 },
+      divergence: realized[i] === null ? "unreported" : "none",
+      rawProviderReport: null,
+    }));
+    return { turns, items: [], caches, signals: [], provenance: "synthetic", sources: [], parameterSetVersions: ["test-v1"], modelIds: ["mock"] };
+  }
+
+  test("null when neither provider-realized nor LCP truth supplied (honesty)", () => {
+    const g = reportGauges(gapCorpus([100, 100]), paramSetV1("mock"));
+    expect(g.beliefGap).toBe(null);
+  });
+
+  test("MAE + signed mean from provider-realized hits", () => {
+    const g = reportGauges(gapCorpus([100, 100], [110, 90]), paramSetV1("mock"));
+    expect(g.beliefGap!.basis).toBe("provider-realized");
+    expect(g.beliefGap!.maeTokens).toBe(10);
+    expect(g.beliefGap!.signedMeanTokens).toBe(0);   // +10 then −10
+  });
+
+  test("LCP truth basis labels the map, is not fabricated into the ledger", () => {
+    const g = reportGauges(gapCorpus([100, 100]), paramSetV1("mock"),
+      { basis: "lcp-truth", truthByTurn: new Map([[1, 120], [2, 125]]) });
+    expect(g.beliefGap!.maeTokens).toBe(22.5);
+    expect(g.beliefGap!.signedMeanTokens).toBe(22.5);
+    expect(g.beliefGap!.basis).toBe("lcp-truth");
+    // the ledger records stay unreported — truth map is report-side only
+    expect(gapCorpus([100]).caches[0]!.realized).toBe(null);
+  });
+
+  test("classification: growing under-belief (TTL-creep signature)", () => {
+    // gap grows 5 → 10 → 15 → 20 with turn: slope > 0 and positive mean
+    const g = reportGauges(gapCorpus([100, 100, 100, 100]), paramSetV1("mock"),
+      { basis: "lcp-truth", truthByTurn: new Map([[1, 105], [2, 110], [3, 115], [4, 120]]) });
+    expect(g.beliefGap!.signature).toBe("growing-underbelief");
+  });
+
+  test("classification: constant offset", () => {
+    const g = reportGauges(gapCorpus([100, 100, 100]), paramSetV1("mock"),
+      { basis: "lcp-truth", truthByTurn: new Map([[1, 115], [2, 115], [3, 115]]) });
+    expect(g.beliefGap!.signature).toBe("constant-offset");
+  });
+
+  test("classification: insufficient (fewer than 3 comparable turns)", () => {
+    const g = reportGauges(gapCorpus([100, 100]), paramSetV1("mock"),
+      { basis: "lcp-truth", truthByTurn: new Map([[1, 120]]) });
+    expect(g.beliefGap!.signature).toBe("insufficient");
   });
 });

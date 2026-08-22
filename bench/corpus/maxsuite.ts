@@ -72,6 +72,10 @@ interface RunRec {
   turns: TurnRec[];
   finalPromptTokens: number;
   facts: Record<string, boolean>;      // fact -> present in FINAL prompt
+  /** ADR-0006 eval surfaces: cache efficiency + realized render cost. */
+  finalHitRatio: number;               // final-turn believed-hit / total
+  meanHitRatio: number;                // mean over turns
+  costUsd: number;                     // Σ hit×priceCached + miss×priceUncached (per 1k), solver price units
   peak: number;
   mean: number;
   overBudgetTurns: number;             // prompts exceeding WINDOW
@@ -210,6 +214,10 @@ async function runKernel(name: string, spec: Scenario, kind: "normal" | "stressA
 
   const finalText = rrs.at(-1)?.text ?? "";
   const totals = turns.map((t) => t.totalTokens);
+  const ratios = turns.map((t) => t.hitRatio);
+  const cost = turns.reduce((s, t) =>
+    s + (t.expectedHit / 1000) * ps.cache.pricePer1kCached
+      + ((t.totalTokens - t.expectedHit) / 1000) * ps.cache.pricePer1kUncached, 0);
   return {
     scenario: name, harness: "kernel", desc: spec.desc, recall,
     turns,
@@ -218,6 +226,9 @@ async function runKernel(name: string, spec: Scenario, kind: "normal" | "stressA
     peak: totals.length > 0 ? Math.max(...totals) : 0,
     mean: totals.length > 0 ? Math.round(totals.reduce((s, x) => s + x, 0) / totals.length) : 0,
     overBudgetTurns: totals.filter((x) => x > window).length,
+    finalHitRatio: ratios.at(-1) ?? 0,
+    meanHitRatio: ratios.length > 0 ? Math.round((ratios.reduce((s, x) => s + x, 0) / ratios.length) * 100) / 100 : 0,
+    costUsd: Math.round(cost * 1000) / 1000,
   };
 }
 
@@ -225,6 +236,9 @@ export { runKernel, runAccumulator, type Scenario, type RunRec, type TurnRec, lc
 
 // ── ACCUMULATOR twin (identical world events) ────────────────────────────
 function runAccumulator(name: string, spec: Scenario, kind: "normal" | "stressA" | "stressB", window: number = WINDOW): RunRec {
+  // Price basis: the same mock param prices as the kernel harness, so
+  // costUsd is comparable across harnesses (kernel belief vs accumulator LCP).
+  const ps = paramSetV1("mock");
   const SYSTEM = "You are a helpful assistant.";
   type Msg = { role: "user" | "assistant"; content: string };
   const transcript: Msg[] = [];
@@ -346,6 +360,10 @@ function runAccumulator(name: string, spec: Scenario, kind: "normal" | "stressA"
     };
   });
   const totals = turns.map((t) => t.totalTokens);
+  const ratios = turns.map((t) => t.hitRatio);
+  const cost = turns.reduce((s, t) =>
+    s + (t.expectedHit / 1000) * ps.cache.pricePer1kCached
+      + ((t.totalTokens - t.expectedHit) / 1000) * ps.cache.pricePer1kUncached, 0);
   return {
     scenario: name, harness: "accumulator", desc: spec.desc, recall,
     turns,
@@ -354,6 +372,9 @@ function runAccumulator(name: string, spec: Scenario, kind: "normal" | "stressA"
     peak: totals.length > 0 ? Math.max(...totals) : 0,
     mean: totals.length > 0 ? Math.round(totals.reduce((s, x) => s + x, 0) / totals.length) : 0,
     overBudgetTurns: totals.filter((x) => x > window).length,
+    finalHitRatio: ratios.at(-1) ?? 0,
+    meanHitRatio: ratios.length > 0 ? Math.round((ratios.reduce((s, x) => s + x, 0) / ratios.length) * 100) / 100 : 0,
+    costUsd: Math.round(cost * 1000) / 1000,
   };
 }
 

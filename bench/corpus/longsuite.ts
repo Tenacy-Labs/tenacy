@@ -34,6 +34,7 @@
  * Output: bench/corpus/dumps/longsuite.json; analysis via longanalysis.ts.
  */
 import { runKernel, runAccumulator, type Scenario, type RunRec } from "./maxsuite.ts";
+import { paramSetV1 } from "../../src/optimizer/params.ts";
 import { estTokens } from "../../src/optimizer/renderer.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -358,6 +359,11 @@ function runAppendCompact(name: string, spec: Scenario, window: number = WINDOW)
     };
   });
   const totals = turns.map((t) => t.totalTokens);
+  const ratios = turns.map((t) => t.hitRatio);
+  const ps = paramSetV1("mock");
+  const cost = turns.reduce((s, t) =>
+    s + (t.expectedHit / 1000) * ps.cache.pricePer1kCached
+      + ((t.totalTokens - t.expectedHit) / 1000) * ps.cache.pricePer1kUncached, 0);
   return {
     scenario: name, harness: "append-compact" as "accumulator", desc: spec.desc, recall,
     turns,
@@ -366,6 +372,9 @@ function runAppendCompact(name: string, spec: Scenario, window: number = WINDOW)
     peak: totals.length > 0 ? Math.max(...totals) : 0,
     mean: totals.length > 0 ? Math.round(totals.reduce((s, x) => s + x, 0) / totals.length) : 0,
     overBudgetTurns: totals.filter((x) => x > window).length,
+    finalHitRatio: ratios.at(-1) ?? 0,
+    meanHitRatio: ratios.length > 0 ? Math.round((ratios.reduce((s, x) => s + x, 0) / ratios.length) * 100) / 100 : 0,
+    costUsd: Math.round(cost * 1000) / 1000,
   };
 }
 

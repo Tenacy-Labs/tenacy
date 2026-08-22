@@ -14,7 +14,8 @@ import { StandingItem } from "../../src/optimizer/items.ts";
 import { INTENT_PROTOCOL_DOC } from "../../src/optimizer/live.ts";
 import { Ledger } from "../../src/optimizer/ledger.ts";
 import { loadCorpus } from "../../src/optimizer/corpus.ts";
-import { reportGauges } from "../../src/optimizer/reports.ts";
+import { reportGauges, type BeliefGapInput } from "../../src/optimizer/reports.ts";
+import { lcpTokens } from "./maxsuite.ts";
 import { loadHarnessConfig, paramSetFor } from "../../src/optimizer/harness-config.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -31,13 +32,14 @@ async function main(): Promise<void> {
   // Budget pressure: the corpus reference configuration (Λ=2048).
   const cfg = loadHarnessConfig();
   const ps = { ...paramSetFor("glm-5.2", cfg), budgetLambda: 2048 };
+  const renderTexts: string[] = [];          // per-turn render bytes (LCP truth)
 
   for (const name of scenarioNames) {
     const spec = SPEC[name];
     if (spec === undefined) throw new Error(`unknown scenario ${name}`);
     const engine = new TurnBoundaryWatcher();
     const loop = new AgentLoop(new MockProvider(), ps, ledger, {
-      onRender: (_rr): void => undefined,
+      onRender: (rr): void => { renderTexts.push(rr.text); },
     });
     loop.watcher = engine;
     loop.fileContent = (t) => { try { return readFileSync(resolve(ROOT, t), "utf8"); } catch { return ""; } };
@@ -57,7 +59,14 @@ async function main(): Promise<void> {
 
   await ledger.drain();
   const corpus = await loadCorpus([ledgerPath], "realized");
-  const g = reportGauges(corpus, ps);
+  // LCP truth map: independent recomputation over actual render bytes —
+  // supplies Gauge 6 when providers report nothing (mock corpora).
+  const truthByTurn = new Map<number, number>();
+  renderTexts.forEach((text, i) => {
+    const prev = renderTexts[i - 1] ?? "";
+    truthByTurn.set(i + 1, lcpTokens(prev, text));
+  });
+  const g = reportGauges(corpus, ps, { basis: "lcp-truth", truthByTurn } satisfies BeliefGapInput);
   console.log("── ADR-0006 §7 baseline gauges (current solver, pre-§2) ──");
   console.log(JSON.stringify({
     scenario: scenarioNames.join("+"),
@@ -68,6 +77,14 @@ async function main(): Promise<void> {
     deadTokenShare: g.deadTokenShare === null ? null : round(g.deadTokenShare),
     writeToHarvest: g.writeToHarvest === null ? null : round(g.writeToHarvest),
     harvestBasis: g.harvestBasis,
+    beliefGap: g.beliefGap === null ? null : {
+      basis: g.beliefGap.basis,
+      compared: g.beliefGap.compared,
+      maeTokens: round(g.beliefGap.maeTokens),
+      signedMeanTokens: round(g.beliefGap.signedMeanTokens),
+      slopeTokensPerTurn: round(g.beliefGap.slopeTokensPerTurn),
+      signature: g.beliefGap.signature,
+    },
     raw: { flips: g.flips, evictions: g.evictions, reExpansions: g.reExpansions, restructures: g.restructures },
   }, null, 2));
 }
