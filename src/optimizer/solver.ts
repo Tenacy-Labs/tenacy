@@ -12,6 +12,7 @@ import type { ContextItem, ItemLedger, Placement, RenderOption, Zone } from "./t
 import { evidenceValueFactor } from "./evidence.ts";
 import { ZONE_ORDER } from "./types.ts";
 import type { ParamSet } from "./params.ts";
+import { capHorizons, effectiveHysteresis } from "./horizon.ts";
 import { blockDigest } from "./cache-model.ts";
 import { estTokens } from "./renderer.ts";
 
@@ -21,6 +22,9 @@ export interface Incumbent {
   totalTokens: number;
   /** Block count of the previous render — suffix pricing needs it (0004 §5). */
   blockCount: number;
+  /** ADR-0006 §5: EWMA of net durable standing-mass drift (tokens/turn).
+   *  Maintained by the loop; absent → T* = ∞ → fixed-cap fallback. */
+  standingMassDrift?: number;
 }
 
 export interface SolverResult {
@@ -49,12 +53,15 @@ const ALWAYS_HELD = new Set(["identity", "goal"]);
  * kinds (small α — notice/error) have long re-reference streams; fast-decay
  * kinds (α≈1) have short ones. q(s) is the realization fraction per state.
  */
-function futureValue(mu0: number, alpha: number, deltaT: number, tokens: number, q: number, ps: ParamSet): number {
+function futureValue(mu0: number, alpha: number, deltaT: number, tokens: number, q: number, ps: ParamSet, hValue: number = ps.fv.horizon): number {
   // Each future turn realizes the THEN-current value of the content in its
   // held state (q scales for lossiness/handle-ness), minus that turn's seat
   // rent. The k=0 seat is charged separately (the `seat` term) — never here.
+  // ADR-0006 §5: the stream is capped at hValue = min(fv.horizon, T*) —
+  // value cannot be collected past the window's expected turnover.
   let fv = 0;
-  for (let k = 1; k <= ps.fv.horizon; k++) {
+  const H = Math.min(ps.fv.horizon, Math.max(1, Math.floor(hValue)));
+  for (let k = 1; k <= H; k++) {
     fv += Math.pow(ps.fv.gamma, k) * (q * mu0 * Math.pow(1 + deltaT + k, -alpha) - ps.reservationPrice * tokens);
   }
   return fv;
@@ -65,6 +72,8 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   const chosen: { item: ContextItem; option: RenderOption; utility: number }[] = [];
   // Incumbent order (by position) — the prefix the provider already holds in KV.
   const incumbentOrder = Array.from(incumbent.rendered).sort((a, b) => a[1].position - b[1].position).map(([id]) => id);
+  // ADR-0006 §5: T* turnover caps — computed once per solve.
+  const caps = capHorizons(ps, ps.budgetLambda, incumbent.totalTokens, incumbent.standingMassDrift);
 
   // ── 1. Value forecasts and option selection per item ──────────────────────
   for (const item of items.values()) {
@@ -110,16 +119,23 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     // transform amortization, handle optionality, and delayed re-reference
     // value. q(state) picks the realization fraction per option class.
     const scored = options.map((o) => {
+      // Two-class recoverability (ADR-0006 §3): a MERGED/CONSOLIDATED render
+      // whose bytes are recoverable (verbatim journal underneath) is NOT
+      // priced lossy — its re-reference realizes full value via re-expansion.
+      const recoverable = item.recoverability === "verbatim-preserving" || item.recoverability === "rereadable";
       const q = o.zeroValue === true
         ? ps.fv.qHandle
         : o.representation === "SUMMARY" || o.representation === "MERGED"
-          ? ps.fv.qLossy
+          ? (recoverable ? ps.fv.qRendered : ps.fv.qLossy)
           : ps.fv.qRendered;
       const fvDeltaT = item.valueMass !== undefined && item.valueMass > 0
         ? Math.max(0, turn - item.createdTurn) : deltaT;
-      const fv = futureValue(mass * profile.mu0, profile.alpha, fvDeltaT, o.tokens, q, ps);
+      const fv = futureValue(mass * profile.mu0, profile.alpha, fvDeltaT, o.tokens, q, ps, caps.hValue);
       const cacheCost = transactionCost(item, o, prev === null ? undefined : prev, incumbent, ps);
-      const fidelity = fidelityPenalty(o, ps);
+      // ADR-0006 §3 (fidelity half): the summary-confidence prior prices
+      // information LOSS; a recoverable consolidation loses none — the
+      // re-expansion writeback is priced where it occurs (transactionCost).
+      const fidelity = fidelityPenalty(o, ps, item);
       const rotEstimate = ps.lambda * ps.rotCurve.sizeCoef * (incumbent.totalTokens + o.tokens) * 0.01;
       // Expected-invalidation risk premium (emergence pass 2026-08-22):
       // hazard is the per-turn change probability this item will rewrite.
@@ -150,19 +166,22 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     let best = scored[0]!;
 
     // Hysteresis: keep the incumbent option unless the challenger clears the margin (0002b §6)
+    // ADR-0006 §2.4: the margin scales with posterior uncertainty — evidence
+    // thickens, margin tightens; thin evidence holds the incumbent.
+    const hystMargin = effectiveHysteresis(ps, item);
     let decision: ItemLedger["decision"] = "keep";
     let accepted = true;
     let margin = 0;
     if (prev !== null) {
       const incumbentOption = scored.find((s) => s.o.id === prev.optionId);
       if (incumbentOption !== undefined && incumbentOption !== best) {
-        margin = best.utility - incumbentOption.utility - ps.hysteresisMargin;
+        margin = best.utility - incumbentOption.utility - hystMargin;
         if (margin < 0) {
           // Challenger fails hysteresis: keep incumbent; log near-miss
-          itemLedgers.push(ledgerFor(turn, item, profile, deltaT, hazard, evBasis, value, incumbentOption, "keep", true, -(ps.hysteresisMargin - (best.utility - incumbentOption.utility)), incumbentOption.o.id));
+          itemLedgers.push(ledgerFor(turn, item, profile, deltaT, hazard, evBasis, value, incumbentOption, "keep", true, -(hystMargin - (best.utility - incumbentOption.utility)), incumbentOption.o.id));
           chosen.push({ item, option: incumbentOption.o, utility: incumbentOption.utility });
           // rejected challenger is data
-          itemLedgers.push(rejectedLedger(turn, item, best, incumbentOption.utility + ps.hysteresisMargin - best.utility));
+          itemLedgers.push(rejectedLedger(turn, item, best, incumbentOption.utility + hystMargin - best.utility));
           continue;
         }
         decision = "move";
@@ -407,8 +426,10 @@ function transactionCost(item: ContextItem, o: RenderOption, prev: PrevRender | 
 }
 
 /** A6: lossy representations carry a standing fidelity penalty until regret data relaxes it. */
-function fidelityPenalty(o: RenderOption, ps: ParamSet): number {
+function fidelityPenalty(o: RenderOption, ps: ParamSet, item?: ContextItem): number {
   if (o.representation === "SUMMARY" || o.representation === "MERGED") {
+    const recoverable = item?.recoverability === "verbatim-preserving" || item?.recoverability === "rereadable";
+    if (recoverable) return 0;
     return ps.summaryConfidencePrior * (1 + o.tokens / 2000);
   }
   return 0;

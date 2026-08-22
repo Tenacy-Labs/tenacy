@@ -45,9 +45,21 @@ export class AgentLoop {
     rendered: Map<string, { position: number; zone: Zone; digest: string; representation: string; optionId: string }>;
     totalTokens: number;
     blockCount: number;
+    standingMassDrift?: number;
   } = { rendered: new Map(), totalTokens: 0, blockCount: 0 };
+  /** ADR-0006 §5: EWMA state for the standing-mass drift a_t. */
+  private driftEwmaState: number | undefined;
   turn = 0;
   interrupts: SteeringIntent[] = [];
+
+  /** EWMA update for a_t (β = 0.7); returns undefined until a first sample. */
+  private driftEwma(sample: number | undefined): number | undefined {
+    if (sample === undefined) return this.driftEwmaState;
+    this.driftEwmaState = this.driftEwmaState === undefined
+      ? sample
+      : 0.7 * this.driftEwmaState + 0.3 * sample;
+    return this.driftEwmaState;
+  }
 
   constructor(
     private provider: Provider,
@@ -185,6 +197,14 @@ export class AgentLoop {
       }])),
       totalTokens: rr.blocks.reduce((s, b) => s + b.tokens, 0),
       blockCount: rr.blocks.length,
+      // ADR-0006 §5: EWMA of net standing-mass drift (tokens/turn). ΔW
+      // includes restructures (this turn's realized layout mass change is
+      // the honest drift signal while we lack per-move attribution).
+      standingMassDrift: this.driftEwma(
+        this.incumbent.totalTokens > 0
+          ? rr.blocks.reduce((s, b) => s + b.tokens, 0) - this.incumbent.totalTokens
+          : undefined,
+      ),
     };
 
     const outcome: TurnOutcome = {
