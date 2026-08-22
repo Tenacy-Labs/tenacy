@@ -9,6 +9,7 @@
  * ordering with hysteresis margins — deterministic, bounded, journaled.
  */
 import type { ContextItem, ItemLedger, Placement, RenderOption, Zone } from "./types.ts";
+import { evidenceValueFactor } from "./evidence.ts";
 import { ZONE_ORDER } from "./types.ts";
 import type { ParamSet } from "./params.ts";
 import { blockDigest } from "./cache-model.ts";
@@ -92,6 +93,13 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     const hazard = item.hazardOverride ?? ps.hazardPriors[item.kind] ?? 0.05;
     const hazardBasis: "prior" | "observed" = item.hazardOverride !== undefined ? "observed" : "prior";
 
+    // ADR-0006 §2.1: evidence-priced value. λᵢ posterior (shrinkage toward
+    // the kind prior) rescales the value forecast; absent evidence → factor
+    // exactly 1 — bit-identical behavior for evidence-less items.
+    const evFactor = evidenceValueFactor(item, ps.hazardPriors[item.kind] ?? 0.05, turn);
+    if (evFactor !== 1) value *= evFactor;
+    const evBasis: "prior" | "observed" = item.refEvidence !== undefined ? "observed" : "prior";
+
     const prev = incumbent.rendered.get(item.id) ?? null;
     const options = item.options();
     if (options.length === 0) continue; // item presents no options this turn (e.g. purged lens)
@@ -151,7 +159,7 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
         margin = best.utility - incumbentOption.utility - ps.hysteresisMargin;
         if (margin < 0) {
           // Challenger fails hysteresis: keep incumbent; log near-miss
-          itemLedgers.push(ledgerFor(turn, item, profile, deltaT, hazard, hazardBasis, value, incumbentOption, "keep", true, -(ps.hysteresisMargin - (best.utility - incumbentOption.utility)), incumbentOption.o.id));
+          itemLedgers.push(ledgerFor(turn, item, profile, deltaT, hazard, evBasis, value, incumbentOption, "keep", true, -(ps.hysteresisMargin - (best.utility - incumbentOption.utility)), incumbentOption.o.id));
           chosen.push({ item, option: incumbentOption.o, utility: incumbentOption.utility });
           // rejected challenger is data
           itemLedgers.push(rejectedLedger(turn, item, best, incumbentOption.utility + ps.hysteresisMargin - best.utility));
@@ -173,7 +181,7 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       }
     }
 
-    itemLedgers.push(ledgerFor(turn, item, profile, deltaT, hazard, hazardBasis, value, best, decision, accepted, margin, best.o.id));
+    itemLedgers.push(ledgerFor(turn, item, profile, deltaT, hazard, evBasis, value, best, decision, accepted, margin, best.o.id));
     chosen.push({ item, option: best.o, utility: best.utility });
   }
 

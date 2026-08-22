@@ -180,6 +180,8 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
       m.summary = undefined;
       m.markReexpanded();
       store.touch(s.id);
+      // ADR-0006 §2.1: re-expansion is the strongest re-reference evidence.
+      store.recordAccess(s.id, "reExpanded", turn);
       if (wasLossy) ledger?.recordSignal({ type: "realized-lossiness", itemId: s.id, turn });
       return { op: s.op, ok: true, result: wasLossy ? `${s.id} restored to verbatim (realized lossiness journaled)` : `${s.id} was already verbatim` };
     }
@@ -314,7 +316,12 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
         const text = it.serialize();
         let re: RegExp;
         try { re = new RegExp(s.pattern, "i"); } catch { return { op: s.op, ok: false, result: `bad pattern: ${s.pattern}` }; }
-        if (re.test(text) || re.test(it.id)) lines.push(`${it.id} (${it.kind})`);
+        if (re.test(text) || re.test(it.id)) {
+          lines.push(`${it.id} (${it.kind})`);
+          // ADR-0006 §2.1: search hits are re-reference evidence (0002h's
+          // journaled-but-unpriced signal loop closes here).
+          store.recordAccess(it.id, "searchHit", turn);
+        }
       }
       return { op: s.op, ok: true, result: lines.length > 0 ? lines.join("; ") : `no matches for /${s.pattern}/` };
     }

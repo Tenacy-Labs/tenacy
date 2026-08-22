@@ -71,6 +71,14 @@ export interface ContextItem {
   signalClass?: "model-authored" | "optimizer" | undefined;
   /** Dream output (0002f §4): when set, a SUMMARY option joins the surface. Store record stays verbatim. */
   summary?: string | undefined;
+  /** ADR-0006 §2.1: per-item re-reference evidence ledger → λᵢ posterior (absent → kind prior). */
+  refEvidence?: { hits: number[]; accessClass: "cited" | "distilledFrom" | "searchHit" | "reExpanded" } | undefined;
+  /** ADR-0006 §2.2: substrate recoverability class (absent → "unknown"). */
+  recoverability?: "verbatim-preserving" | "rereadable" | "lossy" | "unknown" | undefined;
+  /** ADR-0006 §2.3: content-churn descriptor (absent → prior behavior). */
+  churnProfile?: { ewmaChurn: number; lastChangeTurn?: number | undefined } | undefined;
+  /** ADR-0006 §2.4: forecast variance σ² (computed; absent → no variance pricing). */
+  forecastVariance?: number | undefined;
   /** Conversation lens (0002f §2): verbatim access for re-expansion; merge-group membership. */
   verbatim?: () => string;
   mergedInto?: string | undefined;
