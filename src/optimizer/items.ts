@@ -83,7 +83,12 @@ export class GoalItem {
     }
     return [
       opt("active-full", ["identity"], "AS_IS", this.serialize(), true),
-      opt("active-compact", ["foundational"], "AS_IS", `[g] ${this.text.slice(0, 60)}`, false),
+      // Multi-period honesty (2026-08-22): the compact form is a LOSSY
+      // truncation (60 chars) — typed SUMMARY so the A6 fidelity penalty and
+      // qLossy price its future stream. Typed AS_IS it rode at full
+      // realization while costing less seat, undercutting the full goal in
+      // identity — goals stopped riding identity (goal-zone test failure).
+      opt("active-compact", ["foundational"], "SUMMARY", `[g] ${this.text.slice(0, 60)}`, false),
     ];
   }
   toContextItem(): ContextItem {
