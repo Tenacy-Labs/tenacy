@@ -202,7 +202,10 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       const utility = optValue + fv - cacheCost - fidelity - rotEstimate - hazardPremium - seat;
       return { o, cacheCost, fidelity, rotEstimate, hazardPremium, seat, fv, utility, optValue };
     });
-    scored.sort((a, b) => b.utility - a.utility || a.o.id.localeCompare(b.o.id));
+    // Survey II.4 #4: code-unit comparison — localeCompare collation varies
+    // by locale/ICU build; ADR-0003 treats re-solve instability as a signal,
+    // and collation drift would masquerade as exactly that.
+    scored.sort((a, b) => b.utility - a.utility || (a.o.id < b.o.id ? -1 : a.o.id > b.o.id ? 1 : 0));
     let best = scored[0]!;
 
     // Hysteresis: keep the incumbent option unless the challenger clears the margin (0002b §6)
@@ -313,7 +316,9 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     if (pa < 0 && pb >= 0) return 1;
     const da = density(a), db = density(b);
     if (da !== db) return db - da;
-    return a.item.id.localeCompare(b.item.id);
+    // Survey II.4 #4: code-unit comparison — localeCompare varies by
+    // locale/ICU build; a determinism hazard in a decision path.
+    return a.item.id < b.item.id ? -1 : a.item.id > b.item.id ? 1 : 0;
   });
 
   // ── 3. Budget: drop lowest-utility droppable items until within Λ ─────────
@@ -372,6 +377,9 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   const placements: Placement[] = [];
   let position = 0;
   const suffixTokens = totalTokens; // for rot share attribution
+  // Survey II.4 #1: Map keyed at push time — find() inside the placement
+  // loop was O(n²) per solve (~10⁴ comparisons at 100 items).
+  const ledgerById = new Map(itemLedgers.map((l) => [l.id, l] as const));
   for (const c of chosen) {
     position += 1;
     // Digest the bytes actually rendered — the chosen option's text — not
@@ -387,8 +395,8 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       id: c.item.id, zone, position, tokens: c.option.tokens,
       representation: c.option.representation, optionId: c.option.id, digest,
     });
-    const led = itemLedgers.find((l) => l.id === c.item.id && l.decision !== "drop" && l.optionChosen === c.option.id);
-    if (led) led.utility.rotShare = rotShare;
+    const led = ledgerById.get(c.item.id);
+    if (led !== undefined && led.decision !== "drop" && led.optionChosen === c.option.id) led.utility.rotShare = rotShare;
     c.item.lastRender = { position, digest };
   }
 
