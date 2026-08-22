@@ -18,6 +18,8 @@ export interface Incumbent {
   /** Previous render's per-item state; empty map on first render. */
   rendered: Map<string, { position: number; zone: Zone; digest: string; representation: string; optionId: string }>;
   totalTokens: number;
+  /** Block count of the previous render — suffix pricing needs it (0004 §5). */
+  blockCount: number;
 }
 
 export interface SolverResult {
@@ -37,6 +39,8 @@ const ALWAYS_HELD = new Set(["identity", "goal"]);
 export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps: ParamSet, turn: number): SolverResult {
   const itemLedgers: ItemLedger[] = [];
   const chosen: { item: ContextItem; option: RenderOption; utility: number }[] = [];
+  // Incumbent order (by position) — the prefix the provider already holds in KV.
+  const incumbentOrder = Array.from(incumbent.rendered).sort((a, b) => a[1].position - b[1].position).map(([id]) => id);
 
   // ── 1. Value forecasts and option selection per item ──────────────────────
   for (const item of items.values()) {
@@ -135,9 +139,22 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   }
 
   // ── 2. Zone layout: canonical order; within zone by value density then hazard ──
+  // Prefix discipline (Daniel, 2026-08-22): cache cost is sequence-dependent —
+  // reordering two blocks re-prices every block after them. The layout must
+  // preserve the incumbent order wherever it still applies; only genuinely
+  // new items take density slots. Old rule (density-then-id) reordered the
+  // evolving zone every turn as values decayed (turn-10 before turn-2), a
+  // 100% cache miss the objective never saw.
   chosen.sort((a, b) => {
-    const za = ZONE_ORDER.indexOf(zoneOf(a)), zb = ZONE_ORDER.indexOf(zoneOf(b));
+    const za = ZONE_ORDER.indexOf(zoneOfDyn(a, incumbent.rendered.get(a.item.id))), zb = ZONE_ORDER.indexOf(zoneOfDyn(b, incumbent.rendered.get(b.item.id)));
     if (za !== zb) return za - zb;
+    // within-zone: incumbent items keep their relative order (stable, prefix-
+    // preserving); new items append after them, density-ranked among themselves.
+    const pa = incumbentOrder.indexOf(a.item.id);
+    const pb = incumbentOrder.indexOf(b.item.id);
+    if (pa >= 0 && pb >= 0) return pa - pb;
+    if (pa >= 0 && pb < 0) return -1;   // incumbent stays before new arrivals
+    if (pa < 0 && pb >= 0) return 1;
     const da = density(a), db = density(b);
     if (da !== db) return db - da;
     return a.item.id.localeCompare(b.item.id);
@@ -187,7 +204,7 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     // what hit the wire (second-pass review finding 1).
     const text = c.option.text;
     const digest = blockDigest(text);
-    const zone = zoneOf(c);
+    const zone = zoneOfDyn(c, incumbent.rendered.get(c.item.id));
     const rotShare = ps.lambda * (ps.rotCurve.sizeCoef * suffixTokens * 0.01
       + ps.rotCurve.midPenalty * ZONE_ROT_WEIGHT[zone] * c.option.tokens * 0.01);
     placements.push({
@@ -204,6 +221,23 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
 
 function zoneOf(c: { item: ContextItem; option: RenderOption }): Zone {
   return c.option.zones[0] ?? "evolving";
+}
+
+/**
+ * Cache-continuity zoning (Daniel, 2026-08-22): the declared zone is a claim;
+ * the prefix decides. A block that rewrites this turn (digest differs from
+ * incumbent, or fresh content) poisons every block after it — so a mutating
+ * "stable" item is demoted to the volatile TAIL, where its churn re-bills
+ * only the tail. Stable placement is earned by byte-identity (keep-branch);
+ * a stable item that stabilizes promotes back with one suffix re-bill and
+ * locks thereafter. Foundational/evolving/volatile declarations pass through.
+ */
+function zoneOfDyn(c: { item: ContextItem; option: RenderOption }, prev: { digest: string; zone: Zone } | undefined): Zone {
+  const declared = c.option.zones[0] ?? "evolving";
+  if (declared !== "stable") return declared;
+  if (prev === undefined) return "volatile";                              // unproven: park at tail
+  if (prev.digest === blockDigest(c.option.text)) return "stable";        // keep: earned
+  return "volatile";                                                      // mutating: tail
 }
 function density(c: { item: ContextItem; option: RenderOption }): number {
   const p = c.item;
@@ -231,6 +265,13 @@ function worstDensityDroppable(chosen: { item: ContextItem; option: RenderOption
 interface PrevRender { position: number; zone: Zone; digest: string; representation: string; optionId: string }
 function transactionCost(item: ContextItem, o: RenderOption, prev: PrevRender | undefined, incumbent: Incumbent, ps: ParamSet): number {
   const cache = ps.cache;
+  if (prev !== undefined && prev.digest === blockDigest(o.text)) {
+    // KEEP (Daniel, 2026-08-22): bytes identical to the incumbent render —
+    // zero cache transaction. The prefix holds bit-for-bit; the provider
+    // serves it from KV. Previously every unchanged item was billed as a
+    // full rewrite, so the objective preferred churn over keep.
+    return 0;
+  }
   if (o.purelyAdditive) {
     // append at tail: pay the (cheap) cache-write price for the new bytes
     return (o.tokens / 1000) * cache.pricePer1kCached;
@@ -239,10 +280,15 @@ function transactionCost(item: ContextItem, o: RenderOption, prev: PrevRender | 
     // fresh non-additive entry: its own uncached write
     return (o.tokens / 1000) * cache.pricePer1kUncached;
   }
-  // rewrite of a rendered item: own tokens + everything after its old position re-billed at the spread
-  const suffix = Math.max(0, incumbent.totalTokens - prev.position * 0); // position in blocks; suffix approximated by total
-  const own = (o.tokens / 1000) * (cache.pricePer1kUncached - cache.pricePer1kCached);
-  const suffixCost = (suffix / 1000) * (cache.pricePer1kUncached - cache.pricePer1kCached) * 0.5; // conservative half — not all suffix re-bills when zones hold
+  // rewrite in place: own tokens at full uncached price + the suffix after
+  // the item's old block position re-billed at the spread. prev.position is
+  // the 1-based block index in the incumbent render; the suffix is the token
+  // mass of blocks AFTER it (approximated from the incumbent placements
+  // token-share; exact when positions are dense).
+  const own = (o.tokens / 1000) * cache.pricePer1kUncached;
+  const blocksAfter = Math.max(0, incumbent.blockCount - prev.position);
+  const tokensAfter = incumbent.totalTokens * (blocksAfter / Math.max(1, incumbent.blockCount));
+  const suffixCost = (tokensAfter / 1000) * (cache.pricePer1kUncached - cache.pricePer1kCached);
   return own + suffixCost;
 }
 

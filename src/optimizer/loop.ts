@@ -44,7 +44,8 @@ export class AgentLoop {
   private incumbent: {
     rendered: Map<string, { position: number; zone: Zone; digest: string; representation: string; optionId: string }>;
     totalTokens: number;
-  } = { rendered: new Map(), totalTokens: 0 };
+    blockCount: number;
+  } = { rendered: new Map(), totalTokens: 0, blockCount: 0 };
   turn = 0;
   interrupts: SteeringIntent[] = [];
 
@@ -171,6 +172,7 @@ export class AgentLoop {
         representation: p.representation, optionId: p.optionId,
       }])),
       totalTokens: rr.blocks.reduce((s, b) => s + b.tokens, 0),
+      blockCount: rr.blocks.length,
     };
 
     const outcome: TurnOutcome = {

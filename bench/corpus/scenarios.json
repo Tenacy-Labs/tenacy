@@ -165,7 +165,7 @@
    "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 721, \"to\": 760}",
    "{\"op\": \"files.expand\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 761, \"to\": 800}",
    "{\"op\": \"files.release\", \"target\": \"bench/corpus/fixtures/api.log\", \"from\": 761, \"to\": 800}",
-   "say scan complete. Findings: A-1042 WARN, pump-B micro-fracture at depot-north."
+   "say scan complete."
   ],
   "recall": [
    "A-1042",

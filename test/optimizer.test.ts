@@ -33,7 +33,7 @@ describe("solver", () => {
     const goal = new GoalItem("goal:1", "ship the loop milestone");
     store.add(goal.toContextItem());
     store.add(makeTurnItem("turn-1-user", "user", "begin", 1));
-    const r = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0 }, ps, 2);
+    const r = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0, blockCount: 0 }, ps, 2);
     const zones = r.placements.map((p) => p.zone);
     expect(zones.indexOf("identity")).toBeGreaterThanOrEqual(0);
     // identity zone holds identity + goal; episodic lands after
@@ -53,7 +53,7 @@ describe("solver", () => {
     const tiny = makeTurnItem("tiny", "user", "lorem ipsum", 1);
     store.add(fat);
     store.add(tiny);
-    const fresh = { rendered: new Map(), totalTokens: 0 };
+    const fresh = { rendered: new Map(), totalTokens: 0, blockCount: 0 };
     // Phase 0: unconstrained render to learn the natural layout.
     const r0 = solve(store.snapshot(), fresh, ps, 1);
     const fatTokens = r0.placements.find((p) => p.id === "fat")!.tokens;
@@ -102,7 +102,7 @@ describe("solver", () => {
     lensItem.ranges.push([0, big.length]); // expanded: options exist (empty lens offers none)
     store.add(lensItem.toContextItem());
     const ps = { ...paramSetV1("test-model"), budgetLambda: 1000 };
-    const result = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0 }, ps, 1);
+    const result = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0, blockCount: 0 }, ps, 1);
     const lens = result.placements.find((p) => p.id === "lens:notes.txt");
     expect(lens).toBeDefined();
     expect(lens!.optionId).toBe("purge");  // tombstoned by relief, handle kept
@@ -118,19 +118,20 @@ describe("solver", () => {
     const store = new ContextStore();
     store.add(new GoalItem("g", "survive budget pressure", undefined, "standing").toContextItem());
     const tight = { ...ps, budgetLambda: 10 };
-    const r = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0 }, tight, 1);
+    const r = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0, blockCount: 0 }, tight, 1);
     expect(r.placements.some((p) => p.id === "g")).toBe(true);
   });
 
   test("hysteresis: incumbent option survives a marginal challenger", () => {
     const store = newStoreWithFileLens(600);
-    const first = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0 }, ps, 1);
+    const first = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0, blockCount: 0 }, ps, 1);
     const incumbent = {
       rendered: new Map(first.placements.map((p) => [p.id, {
         position: p.position, zone: p.zone, digest: p.digest,
         representation: p.representation, optionId: p.optionId,
       }])),
       totalTokens: first.totalTokens,
+      blockCount: first.placements.length,
     };
     const second = solve(store.snapshot(), incumbent, ps, 2);
     const lensFirst = first.placements.find((p) => p.id.startsWith("lens:"));
@@ -141,7 +142,7 @@ describe("solver", () => {
   test("deterministic: same inputs, same placements and ledgers", () => {
     const store = freshStore();
     store.add(makeTurnItem("t1", "user", "hello", 1));
-    const inc = { rendered: new Map(), totalTokens: 0 };
+    const inc = { rendered: new Map(), totalTokens: 0, blockCount: 0 };
     const a = solve(store.snapshot(), inc, ps, 2);
     const b = solve(store.snapshot(), inc, ps, 2);
     expect(a.placements).toEqual(b.placements);
@@ -156,7 +157,7 @@ describe("solver", () => {
     const store1 = new ContextStore(); store1.add(err.toContextItem()); store1.add(ep);
     const store2 = new ContextStore(); store2.add(err.toContextItem()); store2.add(ep);
     // simulate 10 turns of decay: error keeps floor via profile (floorTurns=8)
-    const r1 = solve(store1.snapshot(), { rendered: new Map(), totalTokens: 0 }, p1, 10);
+    const r1 = solve(store1.snapshot(), { rendered: new Map(), totalTokens: 0, blockCount: 0 }, p1, 10);
     const led1 = r1.itemLedgers.find((l) => l.id === "e1")!;
     expect(led1.forecast.mu0).toBe(p1.profiles.error.mu0);
     expect(led1.decision === "drop" || led1.decision === "keep").toBe(true);
@@ -178,7 +179,7 @@ function newStoreWithFileLens(contentLen: number): ContextStore {
 describe("renderer", () => {
   test("byte-deterministic given placements", () => {
     const store = newStoreWithFileLens(2000);
-    const solved = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0 }, ps, 1);
+    const solved = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0, blockCount: 0 }, ps, 1);
     const a = render(solved.placements, store.snapshot(), ps);
     const b = render(solved.placements, store.snapshot(), ps);
     expect(a.text).toBe(b.text);
@@ -188,7 +189,7 @@ describe("renderer", () => {
   test("zones in canonical order in the text", () => {
     const store = freshStore();
     store.add(makeTurnItem("t1", "user", "hi", 1));
-    const solved = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0 }, ps, 2);
+    const solved = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0, blockCount: 0 }, ps, 2);
     const rr = render(solved.placements, store.snapshot(), ps);
     const iId = rr.text.indexOf("## IDENTITY");
     const iEv = rr.text.indexOf("## WORKING");
@@ -875,7 +876,7 @@ describe("finer splits — fragment items + solver coupling", () => {
     const f2 = items.get("lens:budget.ts#2")!;
     f2.valueBump = { amount: 8, untilTurn: 30 };
     const ps = { ...paramSetV1("m"), budgetLambda: 430 } as never;
-    const res = solve(items, { rendered: new Map(), totalTokens: 0 }, ps, 5);
+    const res = solve(items, { rendered: new Map(), totalTokens: 0, blockCount: 0 }, ps, 5);
     const placed = res.placements.filter((p) => p.id.startsWith("lens:budget.ts#"));
     const heldFull = placed.filter((p) => p.optionId === "range-full");
     if (heldFull.length === 0) throw new Error("no fragment held under pressure — solver had no fine-grained path");
@@ -894,7 +895,7 @@ describe("finer splits — fragment items + solver coupling", () => {
     store.add(new StandingItem("identity", "identity", "t").toContextItem());
     store.add(lens.toContextItem());
     for (const f of lens.fragments()) store.add(f.toContextItem());
-    const res = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0 }, paramSetV1("m"), 5);
+    const res = solve(store.snapshot(), { rendered: new Map(), totalTokens: 0, blockCount: 0 }, paramSetV1("m"), 5);
     const parent = res.placements.find((p) => p.id === "lens:coupled.ts");
     if (parent === undefined) throw new Error("parent not placed");
     const frags = res.placements.filter((p) => p.id.startsWith("lens:coupled.ts#"));
