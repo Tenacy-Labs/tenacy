@@ -163,7 +163,100 @@ const L3: Scenario = {
   recall: ["A-1042", "drawer 4", "remote-3"],
 };
 
-const LONG: Record<string, Scenario> = { "L1-marathon-facts": L1, "L2-marathon-file": L2, "L3-interleave": L3 };
+// ── L4: big-file sweep @50k (generated fixture, ~81k tokens) ─────────────
+// Deterministic synthetic log: 4,500 lines, 12 planted facts at spread
+// lines. 90 sequential 50-line chunks: expand → summarize → (distill at
+// fact chunks) → release. True sustained pressure at Λ=50k: the sweep
+// content (~81k tokens) exceeds the window; only distillates + the moving
+// lens survive.
+const L4_FACTS: string[] = Array.from({ length: 12 }, (_, i): string => `ORD-${88200 + i * 37} rejected`);
+function genBigLog(): string {
+  let s = "";
+  let seed = 42;
+  const rnd = (): number => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const factLine = new Set<number>();
+  for (let i = 0; i < L4_FACTS.length; i++) factLine.add(200 + i * 350);
+  for (let ln = 1; ln <= 4500; ln++) {
+    const tick = 900 + ln;
+    if (factLine.has(ln)) { s += `2026-08-16T0${ln % 10}:12:${String(ln % 60).padStart(2, "0")}Z intake validateOrder WARN ${L4_FACTS[(factLineAnno(ln, factLine))]}\n`; continue; }
+    const lvl = rnd() < 0.12 ? "WARN" : rnd() < 0.5 ? "INFO" : "DEBUG";
+    s += `2026-08-16T0${ln % 10}:12:${String(ln % 60).padStart(2, "0")}Z intake heartbeat ${lvl} tick=${tick} qdepth=${Math.floor(rnd() * 24)} lag=${(rnd() * 400).toFixed(0)}ms\n`;
+  }
+  return s;
+}
+function factLineAnno(ln: number, set: Set<number>): number { let i = 0; for (const v of set) { if (v === ln) return i; i += 1; } return 0; }
+const BIG_FACT_LINES: number[] = Array.from({ length: 12 }, (_, i): number => 200 + i * 350);
+const L4: Scenario = {
+  desc: "L4 big-file sweep: generated 4,500-line log (~81k tokens), 90 x 50-line chunks, distill at 12 fact lines, release per chunk — sustained 50k-window pressure",
+  turns: null,
+  steps: ((): Array<{ msg?: string; intent?: unknown }> => {
+    const steps: Array<{ msg?: string; intent?: unknown }> = [];
+    for (let c = 0; c < 90; c++) {
+      const from = 1 + c * 50;
+      const to = from + 49;
+      steps.push({ intent: { op: "files.expand", target: "bench/corpus/dumps/bigapi.log", from, to } });
+      steps.push({ msg: "Summarize this chunk in one line." });
+      const fi = BIG_FACT_LINES.findIndex((fl) => fl >= from && fl <= to);
+      if (fi >= 0) steps.push({ msg: `say WARN ${L4_FACTS[fi]} at line ${BIG_FACT_LINES[fi]}.` });
+      steps.push({ intent: { op: "files.release", target: "bench/corpus/dumps/bigapi.log", from, to } });
+    }
+    steps.push({ msg: `Final report: all rejected-order incidents (${L4_FACTS.length} planted).` });
+    return steps;
+  })(),
+  recall: L4_FACTS,
+  windows: [50_000],
+};
+
+// ── L5: marathon-session @50k (300 turns, ~150t user messages) ───────────
+const L5_POOL: Array<[string, string]> = [
+  ["ORCHID-7", "Batch ORCHID-7 cleared QA at the Fremont dock"], ["12,500", "Miller consolidation tier caps orders at 12,500 units"],
+  ["drawer 4", "The spare pump-B seals live in drawer 4 of the parts cage"], ["remote-3", "Critical orders must never ship from warehouse remote-3"],
+  ["A-1042", "Order A-1042 was rejected for quantity zero on MTG-88"], ["pump-B", "Coolant pump B on depot-north has a known micro-fracture"],
+  ["depot-north", "Depot-north hosts the coolant loop with pump B"], ["INTAKE-231", "Review thread INTAKE-231 flagged the intake queue stall"],
+  ["qdepth=2", "The intake queue drained to qdepth=2 at tick 46"], ["MTG-88", "Sku MTG-88 requires dual sign-off above 400 units"],
+  ["KFRG-dock", "The KFRG dock reopens Tuesday after resurfacing"], ["Fremont", "Fremont handles all ORCHID-line batches"],
+  ["seal-kit-9", "Seal-kit-9 fits pump B housings"], ["loop-alpha", "Coolant loop-alpha runs parallel to loop-bravo"],
+  ["tick=46", "Heartbeat tick=46 marked the queue-drain event"], ["bin-17", "Overflow inventory stages in bin-17"],
+  ["Miller", "Miller is the consolidation tier owner"], ["dual sign-off", "Dual sign-off came in from Chen and Osei"],
+  ["resurfacing", "Dock resurfacing delayed crate returns"], ["ORCHID-line", "The ORCHID-line has no open quarantines"],
+  ["depot-south", "Depot-south took the overflow from bin-17"], ["Osei", "Osei countersigned the MTG-88 exception"],
+  ["loop-bravo", "Loop-bravo shares the pump-B interlock"], ["quarantine-11", "Quarantine-11 was released last week"],
+];
+const L5_FLAVOR: string[] = [
+  "shift handoff notes", "intake queue telemetry", "depot floor walk observations", "maintenance window minutes",
+  "shipping manifest deltas", "vendor portal updates", "parts-cage audit rows", "coolant loop sensor reads",
+];
+const L5: Scenario = {
+  desc: "L5 marathon-session: 300 turns of ~150-token ops updates planting 24 facts, probes every 10th turn, interval distills every 30th — conversation-mass pressure at Λ=50k",
+  turns: null,
+  steps: ((): Array<{ msg?: string; intent?: unknown }> => {
+    const steps: Array<{ msg?: string; intent?: unknown }> = [];
+    for (let t = 1; t <= 300; t++) {
+      const [fact, sentence] = L5_POOL[(t - 1) % L5_POOL.length]!;
+      const flavor = L5_FLAVOR[t % L5_FLAVOR.length]!;
+      if (t % 30 === 0) {
+        const soFar = L5_POOL.slice(0, Math.min(L5_POOL.length, t)).map((f) => f[0]).join(", ");
+        steps.push({ msg: `say Session notes so far: ${soFar}.` });
+        continue;
+      }
+      if (t % 10 === 0) {
+        const pFact = L5_POOL[(t / 10) % L5_POOL.length]![0];
+        steps.push({ msg: `Question: what do we know about ${pFact}?` });
+        continue;
+      }
+      steps.push({ msg: `Ops update ${t} (${flavor}): ${sentence}. Night crew should verify against the standing board before shift change; log any discrepancy in the intake thread with the batch tag.` });
+    }
+    steps.push({ msg: `Final report: everything known about ${L5_POOL.map((f) => f[0]).join(", ")}.` });
+    return steps;
+  })(),
+  recall: L5_POOL.map((f) => f[0]),
+  windows: [50_000],
+};
+
+const LONG: Record<string, Scenario> = {
+  "L1-marathon-facts": L1, "L2-marathon-file": L2, "L3-interleave": L3,
+  "L4-bigfile-sweep": L4, "L5-marathon-session": L5,
+};
 
 // ── append->compact baseline (honest strong baseline) ────────────────────
 /**
@@ -175,7 +268,7 @@ const LONG: Record<string, Scenario> = { "L1-marathon-facts": L1, "L2-marathon-f
  * This is deliberately strong: a real summarizer would lose facts; ours
  * loses only what left the retention window before being compacted in.
  */
-function runAppendCompact(name: string, spec: Scenario): RunRec {
+function runAppendCompact(name: string, spec: Scenario, window: number = WINDOW): RunRec {
   const SYSTEM = "You are a helpful assistant.";
   type Msg = { role: "user" | "assistant"; content: string };
   const transcript: Msg[] = [];
@@ -205,7 +298,7 @@ function runAppendCompact(name: string, spec: Scenario): RunRec {
   const push = (label: string, msg?: Msg): void => {
     if (msg !== undefined) transcript.push(msg);
     let prompt = assemble();
-    if (estTokens(prompt) > WINDOW) {
+    if (estTokens(prompt) > window) {
       compactCount += 1;
       // drop the middle half of messages; rolling summary carries facts
       const keepHead = 2;
@@ -272,7 +365,7 @@ function runAppendCompact(name: string, spec: Scenario): RunRec {
     facts: Object.fromEntries(recall.map((f) => [f, final.includes(f)])),
     peak: totals.length > 0 ? Math.max(...totals) : 0,
     mean: totals.length > 0 ? Math.round(totals.reduce((s, x) => s + x, 0) / totals.length) : 0,
-    overBudgetTurns: totals.filter((x) => x > WINDOW).length,
+    overBudgetTurns: totals.filter((x) => x > window).length,
   };
 }
 
@@ -284,13 +377,18 @@ function lcpHit(a: string, b: string): number {
 
 // ── main ─────────────────────────────────────────────────────────────────
 const runs: RunRec[] = [];
+writeFileSync(resolve(ROOT, "bench/corpus/dumps/bigapi.log"), genBigLog());
+const WINS: Array<[string, number]> = [["2k", 2048], ["50k", 50_000]];
+for (const [winName, win] of WINS) {
 for (const [name, spec] of Object.entries(LONG)) {
-  const k = await runKernel(name, spec, "normal");
-  const a = runAccumulator(name, spec, "normal");
-  const c = runAppendCompact(name, spec);
-  runs.push(k, a, c);
+  const allowed: number[] = spec.windows ?? [2048, 50_000];
+  if (!allowed.includes(win)) continue;
+  const k = await runKernel(name, spec, "normal", win);
+  const c = runAppendCompact(name, spec, win);
+  runs.push({ ...k, scenario: `${name}@${winName}` }, { ...c, scenario: `${name}@${winName}` });
   const fcount = (r: RunRec): string => `${Object.values(r.facts).filter(Boolean).length}/${r.recall.length}`;
-  console.log(`${name}: kernel ${k.peak}t/${fcount(k)} · trunc ${a.peak}t/${fcount(a)} · compact ${c.peak}t/${fcount(c)}`);
+  console.log(`${name}@${winName}: kernel ${k.peak}t/${fcount(k)} · compact ${c.peak}t/${fcount(c)}`);
+}
 }
 writeFileSync(resolve(ROOT, "bench/corpus/dumps/longsuite.json"), JSON.stringify(runs, null, 1));
 console.log(`\nwrote bench/corpus/dumps/longsuite.json (${runs.length} runs)`);

@@ -38,8 +38,10 @@ interface Scenario {
   desc: string;
   turns: unknown;
   script?: string[];
-  steps?: Array<{ msg?: string; intent?: unknown }>;
+  steps?: Array<{ msg?: string; intent?: unknown; mutate?: string }>;
   recall: string[];
+  /** windows this scenario should run at (default: both 2k and 50k) */
+  windows?: number[];
 }
 const WINDOW = 2048;
 
@@ -89,10 +91,10 @@ function fileLineSlice(target: string, from: number, to: number): string {
 }
 
 // ── KERNEL harness ───────────────────────────────────────────────────────
-async function runKernel(name: string, spec: Scenario, kind: "normal" | "stressA" | "stressB"): Promise<RunRec> {
+async function runKernel(name: string, spec: Scenario, kind: "normal" | "stressA" | "stressB", window: number = WINDOW): Promise<RunRec> {
   const engine = new TurnBoundaryWatcher();
   const ps = paramSetV1("m");
-  ps.budgetLambda = 2048;
+  ps.budgetLambda = window;
   const rrs: RenderResult[] = [];
   const hits: number[] = [];
   const labels: string[] = [];
@@ -170,6 +172,12 @@ async function runKernel(name: string, spec: Scenario, kind: "normal" | "stressA
     } else if (spec.steps !== undefined) {
       let sayN = 0;
       for (const st of spec.steps) {
+        if ((st as { mutate?: string }).mutate === "append-alert") {
+          appendFileSync(logPath, `2026-08-15T04:19:00Z fleet coolant ALERT pump-B temperature excursion depot-north (append)\n`);
+          engine.push({ lensId: apiLensId, path: "bench/corpus/fixtures/api.log", kind: "change" });
+          loop.refreshLensFromSubstrate(apiLensId);
+          continue;
+        }
         if (st.intent !== undefined) { executeIntent(st.intent as SteeringIntent, loop.store, null); continue; }
         if (st.msg !== undefined && st.msg.startsWith("say ")) {
           sayN += 1;
@@ -209,14 +217,14 @@ async function runKernel(name: string, spec: Scenario, kind: "normal" | "stressA
     facts: Object.fromEntries(recall.map((f) => [f, finalText.includes(f)])),
     peak: totals.length > 0 ? Math.max(...totals) : 0,
     mean: totals.length > 0 ? Math.round(totals.reduce((s, x) => s + x, 0) / totals.length) : 0,
-    overBudgetTurns: totals.filter((x) => x > WINDOW).length,
+    overBudgetTurns: totals.filter((x) => x > window).length,
   };
 }
 
 export { runKernel, runAccumulator, type Scenario, type RunRec, type TurnRec, lcpTokens, fileLineSlice, WINDOW, SUITE, SPEC, ROOT };
 
 // ── ACCUMULATOR twin (identical world events) ────────────────────────────
-function runAccumulator(name: string, spec: Scenario, kind: "normal" | "stressA" | "stressB"): RunRec {
+function runAccumulator(name: string, spec: Scenario, kind: "normal" | "stressA" | "stressB", window: number = WINDOW): RunRec {
   const SYSTEM = "You are a helpful assistant.";
   type Msg = { role: "user" | "assistant"; content: string };
   const transcript: Msg[] = [];
@@ -230,7 +238,7 @@ function runAccumulator(name: string, spec: Scenario, kind: "normal" | "stressA"
   const push = (label: string, msg?: Msg): void => {
     if (msg !== undefined) transcript.push(msg);
     let prompt = assemble();
-    if (estTokens(prompt) > WINDOW) {
+    if (estTokens(prompt) > window) {
       // traditional truncation: anchor first exchange + last 6 messages
       transcript.splice(1, transcript.length - 7);
       prompt = assemble();
@@ -345,7 +353,7 @@ function runAccumulator(name: string, spec: Scenario, kind: "normal" | "stressA"
     facts: Object.fromEntries(recall.map((f) => [f, final.includes(f)])),
     peak: totals.length > 0 ? Math.max(...totals) : 0,
     mean: totals.length > 0 ? Math.round(totals.reduce((s, x) => s + x, 0) / totals.length) : 0,
-    overBudgetTurns: totals.filter((x) => x > WINDOW).length,
+    overBudgetTurns: totals.filter((x) => x > window).length,
   };
 }
 
