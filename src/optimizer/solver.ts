@@ -67,14 +67,18 @@ const ALWAYS_HELD = new Set(["identity", "goal"]);
  * kinds (small α — notice/error) have long re-reference streams; fast-decay
  * kinds (α≈1) have short ones. q(s) is the realization fraction per state.
  */
-function futureValue(mu0: number, alpha: number, deltaT: number, tokens: number, q: number, ps: ParamSet, hValue: number = ps.fv.horizon): number {
-  // Each future turn realizes the THEN-current value of the content in its
-  // held state (q scales for lossiness/handle-ness), minus that turn's seat
-  // rent. The k=0 seat is charged separately (the `seat` term) — never here.
-  // ADR-0006 §5: the stream is capped at hValue = min(fv.horizon, T*) —
-  // value cannot be collected past the window's expected turnover.
+export function futureValue(mu0: number, alpha: number, deltaT: number, tokens: number, q: number, ps: ParamSet, hValue: number = ps.fv.horizon): number {
+  // Each future turn realizes the THEN-current value of the held content
+  // minus that turn's seat rent. The k=0 seat is charged separately (the
+  // `seat` term) — never here. ADR-0006 §5: the stream is capped at
+  // hValue = min(fv.horizon, T*) — value cannot be collected past the
+  // window's expected turnover.
   let fv = 0;
-  const H = Math.min(ps.fv.horizon, Math.max(1, Math.floor(hValue)));
+  // Review A-M2 fix (2026-08-22): a non-positive hValue (T*=0: the window
+  // is already over budget) collects NO lookahead — the previous
+  // Math.max(1, …) floor granted every item a full turn of FV exactly
+  // when lookahead is definitionally worthless. Tests may pin H = 0.
+  const H = Math.min(ps.fv.horizon, Math.max(0, Math.floor(hValue)));
   for (let k = 1; k <= H; k++) {
     fv += Math.pow(ps.fv.gamma, k) * (q * mu0 * Math.pow(1 + deltaT + k, -alpha) - ps.reservationPrice * tokens);
   }
@@ -245,7 +249,7 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       // hysteresis does not apply to it (emergence pass 2026-08-22: the
       // reservation price otherwise rejects oversized fresh lenses before
       // relief can tombstone them, dropping the handle entirely).
-      margin = best.utility - ps.hysteresisMargin;
+      margin = best.utility - effectiveHysteresis(ps, item);
       if (margin < 0 && !ALWAYS_HELD.has(item.kind) && best.o.zeroValue !== true) {
         itemLedgers.push(rejectedLedger(turn, item, best, margin));
         continue;
@@ -369,7 +373,7 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   // with the cache suffix it would strand priced in.
   let totalTokens = chosen.reduce((s, c) => s + c.option.tokens, 0);
   if (ps.reliefMode === "exact-mckp" && totalTokens > ps.budgetLambda) {
-    exactMckpRelief(chosen, itemLedgers, incumbent, ps, turn);
+    exactMckpRelief(chosen, itemLedgers, incumbent, ps, turn, caps);
     totalTokens = chosen.reduce((s, c) => s + c.option.tokens, 0);
   }
   while (totalTokens > ps.budgetLambda) {
@@ -538,6 +542,7 @@ function exactMckpRelief(
   incumbent: Incumbent,
   ps: ParamSet,
   turn: number,
+  caps: ReturnType<typeof capHorizons>,
 ): void {
   const SCALE = 1000;
   // Held prefix (ALWAYS_HELD): constant load, never a decision group.
@@ -556,8 +561,19 @@ function exactMckpRelief(
   }
 
   const groups = droppable.map((c) => {
+    // Review A-M1 fix (2026-08-22): the strand cost is the real cost of
+    // RELIEF — evicting this item forces the suffix's re-bill. The old
+    // code computed it and discarded it (`void strand`): exact-MCKP was
+    // strand-blind and evicted the FRONT item whose eviction re-bills
+    // 300t of prefix while the density path correctly protected it.
+    // Domain-honest charge: keep-profit = utility + strandCost. The
+    // strand is what the window LOSES if the item goes, so retention
+    // value rises with it; the solver now prefers evicting the item
+    // whose loss (utility + strand) is smallest — the honest victim,
+    // matching the density path's prefix pricing.
+    const strand = strandCost.get(c.item.id) ?? 0;
     const keepW = c.option.tokens;
-    const keepP = Math.max(0, Math.round((c.utility) * SCALE));
+    const keepP = Math.max(0, Math.round((c.utility + strand) * SCALE));
     // Tombstone profit is NOT zero: the handle carries the item's future
     // re-reference stream at qHandle (the same economics phase-1 gives
     // zeroValue options — see solver §1 "its future stream is handle
@@ -566,8 +582,12 @@ function exactMckpRelief(
     // the recovery path the density loop preserved by construction.
     const profile = ps.profiles[c.item.kind];
     const deltaT = Math.max(0, turn - c.item.lastTouchTurn);
+    // Review A-M10 fix (2026-08-22): price the tombstone's FV at THIS
+    // solve's capped horizon — the default-horizon call overpriced
+    // tombstones ~0.4 utility in over-budget windows (T*≈0), biasing
+    // relief toward tombstoning exactly when the window is fullest.
     const tombFV = profile !== undefined
-      ? futureValue(profile.mu0, profile.alpha, deltaT, 0, ps.fv.qHandle, ps)
+      ? futureValue(profile.mu0, profile.alpha, deltaT, 0, ps.fv.qHandle, ps, caps.hValue)
       : 0;
     const opts: { id: string; weight: number; profit: number }[] = [
       { id: "keep", weight: keepW, profit: keepP },
@@ -600,15 +620,17 @@ function exactMckpRelief(
       });
       c.option = tomb;
     } else {
+      // Strand (review A-M1): journal the realized suffix re-bill on the
+      // drop row — the relief decision priced it via keep-profit, so the
+      // ledger should carry the same number.
       const strand = strandCost.get(c.item.id) ?? 0;
       chosen.splice(i, 1);
       itemLedgers.push({
         turn, id: c.item.id,
         forecast: { mu0: ps.profiles[c.item.kind]?.mu0 ?? 1, alpha: ps.profiles[c.item.kind]?.alpha ?? 1, deltaT: turn - c.item.lastTouchTurn, hazard: ps.hazardPriors[c.item.kind] ?? 0.05, basis: "prior", expectedValue: c.utility },
-        utility: { benefit: c.utility, cacheCost: 0, rotShare: 0, total: c.utility },
+        utility: { benefit: c.utility, cacheCost: strand, rotShare: 0, total: c.utility },
         decision: "drop", accepted: true, marginVsHysteresis: ps.budgetLambda,
       });
-      void strand;
     }
   }
 }
