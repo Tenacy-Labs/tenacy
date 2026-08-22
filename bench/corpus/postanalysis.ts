@@ -137,7 +137,7 @@ const NA = (r: RunRec): boolean => NA_FACTS.has(r.scenario);
   const aRate = aFact.reduce((s, r) => s + Object.values(r.facts).filter(Boolean).length, 0);
   const aTot = aFact.reduce((s, r) => s + r.recall.length, 0);
   L.push("");
-  L.push(`**C2 (recall).** On fact-bearing scenarios (excl. N/A stresses), kernel final prompts carried ${kRate}/${kTot} recall strings vs accumulator ${aRate}/${aTot}. The one kernel miss is s1 \`remote-3\` — the fact existed only in an expired user turn and the lens was released by intent; the accumulator keeps it only by never dropping anything. Ever-carried (facts present at the moment they were needed): kernel ${countEver(kFact)}/${kTot}.`);
+  L.push(`**C2 (recall).** On fact-bearing scenarios (excl. N/A stresses), kernel final prompts carried ${kRate}/${kTot} recall strings vs accumulator ${aRate}/${aTot}. Kernel final misses are three: s1 \`remote-3\` (rode the released intake 1-25 file LENS — no user turn ever contained it — and the release was by intent) plus s3b's two (harness artifact, see note 2). The symmetric accumulator miss is s3 \`A-1042\` (lost to truncation). Ever-carried (facts present at the moment they were needed): kernel ${countEver(kFact)}/${kTot}.`);
 }
 {
   // C3: peak efficiency
@@ -145,26 +145,26 @@ const NA = (r: RunRec): boolean => NA_FACTS.has(r.scenario);
   const peakPairs = rows.map(([n, e]) => ({ n, k: e.kernel!.peak, a: e.accum!.peak }));
   const wins = peakPairs.filter((p) => p.k <= p.a).length;
   L.push("");
-  L.push(`**C3 (peak efficiency).** Kernel peak ≤ accumulator peak on ${wins}/${peakPairs.length} scenarios. But peaks are workload-dependent, not architecture-dependent: light scenarios (s1, s4, s7, STRESS-B) never approach Λ for either harness — the accumulator's append-only prompt is simply short there. The architecture claim is about behavior AT the window: s3 (2,048 vs 2,557) and STRESS-A (1,632 vs 4,346) — the kernel holds the line, the accumulator blows through, and its truncation then destroys recall (s3: 3/4 final facts, and the 4th only because truncation kept the first exchange).`);
+  L.push(`**C3 (peak efficiency).** Kernel peak ≤ accumulator peak on ${wins}/${peakPairs.length} scenarios (s3, s3b, STRESS-A — exactly the scenarios that press the window). Light scenarios (s1, s4, s7, STRESS-B) never approach Λ for either harness — the accumulator's append-only prompt is simply short there. The architecture claim is about behavior AT the window: s3 (2,048 vs 2,557) and STRESS-A (1,632 vs 4,346) — the kernel holds the line, the accumulator blows through, and its truncation then destroys recall (s3 final: 3/4 facts; the survivors ride the LAST-6-MESSAGE window — the say-ALERT-near-716 distill — not the first-exchange anchor, which contains no recall strings; \`A-1042\` aged out of that window with both its carriers).`);
 }
 {
   // C4: cache stability
   const kCliffs = LOG.filter((r) => r.harness === "kernel" && !NA_FACTS.has(r.scenario));
   L.push("");
-  L.push(`**C4 (stability).** Kernel max adjacent-turn hit cliffs: ${kCliffs.filter((r) => maxHitDrop(r) > 25).length} of ${kCliffs.length} scenarios exceed 25% — all in scenarios where CONTENT CHANGES (s3b watch drains, s6/s7 merges) or where the prefix legitimately grows turn-over-turn. The accumulator's stability is high in light scenarios (nothing ever moves) and cliffs at truncation. Believed-hit vs LCP cross-check: max divergence ${Math.max(...LOG.filter((r) => r.harness === "kernel").map((r) => hitDivergence(r).maxAbs))}t — the CacheModel numbers are trustworthy within estimator granularity.`);
+  L.push(`**C4 (stability).** Kernel max adjacent-turn hit cliffs: ${kCliffs.filter((r) => maxHitDrop(r) > 25).length} of ${kCliffs.length} scenarios exceed 25% — the exceeders are s3 (63%, t40→41, release before final report), s5 (100%, t7→8 — a believed-miss on the goals.update turn when the foundational zone appears), and s7 (41%, t8→9, the convo.merge). The accumulator's stability is high in light scenarios (nothing ever moves) and cliffs at truncation (s3 67%, STRESS-A 83%). Believed-hit vs LCP cross-check: max divergence ${Math.max(...LOG.filter((r) => r.harness === "kernel").map((r) => hitDivergence(r).maxAbs))}t, one-sided (lcpHit ≥ believed on 103/103 comparable turns — the CacheModel systematically UNDER-estimates by ~10-20t; conservative, not inflated).`);
 }
 {
   // C5: the honest losses
   L.push("");
-  L.push(`**C5 (honest losses).** Kernel loses to accumulator on raw prompt size in 6 of 10 scenarios — the identity+intent protocol doc and per-item render structure carry a fixed overhead the accumulator does not pay. At Λ=2,048 this overhead is the price of admission: it buys zoning, budget enforcement before the fact, and the ability to release content at all. Below ~600t of workload the accumulator is simply smaller, not smarter.`);
+  L.push(`**C5 (honest losses).** Kernel loses to accumulator on raw prompt size on peak in 7 of 10 scenarios and on mean/final-prompt size in 8 of 10 — the identity+intent protocol doc alone is a fixed 468t floor every turn (larger than the accumulator's ENTIRE final prompt in s1/s7/STRESS-B). At Λ=2,048 this overhead is the price of admission: it buys zoning, budget enforcement before the fact, and the ability to release content at all. Below ~600t of workload the accumulator is simply smaller, not smarter.`);
 }
 L.push("");
 L.push("## 4. Data quality notes");
 L.push("");
-L.push("- STRESS-A/B recall rows are N/A: their recall sets were inherited from s3/s4 but the stress shapes never plant those facts in-range (api.log fact lines sit at 47/716; the stress reads 1–40; rollover plants nothing).");
-L.push("- s3b final-prompt facts are 0/2 BY DESIGN — the scenario's last step releases the lens and asks for recall from distillate; ever-carried is the meaningful row.");
+L.push("- STRESS-A/B recall FINAL rows are N/A (inherited recall sets); ever-carried is still logged. STRESS-A's mutation lines themselves plant pump-B in-range (file lines 7–18), hence its 1/4 ever; STRESS-B plants nothing (0/4).");
+L.push("- s3b facts are 0/2 in EVERY turn of both harnesses — a harness artifact, not by-design recall-from-distillate: the appended alert lands at file end (~line 801) outside the 1–40 window, and in mock mode no lens is ever created (only a live model expands from the NL ask). The mechanism under test — CHANGES tail on mutation — is checked separately.");
 L.push("- Kernel hit ratios on early turns are structurally low (identity prefix only); the min-prefix metric floors at 400t prompts to avoid noise.");
-L.push("- Accumulator re-read turns in STRESS-A append the full 40-line window each turn; its LCP hit drops to 0 at every mutation because the mutated line sits early in the window.");
+L.push("- STRESS-A accumulator: pre-truncation each append-only prompt extends the previous one, so its LCP hit is the ENTIRE prior prompt (growing 617→3,723); post-truncation it pins at a constant 625 (the stable anchored prefix). It never drops to 0.");
 
 writeFileSync(resolve(ROOT, "bench/corpus/dumps/maxsuite-report.md"), L.join("\n"));
 console.log(L.join("\n"));
