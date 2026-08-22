@@ -142,6 +142,15 @@ export class AgentLoop {
             const storeItem = this.store.get(d.lensId);
             if (storeItem !== undefined) (storeItem as unknown as { hazardOverride?: number }).hazardOverride = obs;
           }
+          // ChurnProfile promotion (ADR-0006 §2.3): churn leaves its
+          // watcher-local silo and becomes an item property, so the FV
+          // stream prices content renewal. Same dual-write as hazard —
+          // registry object + store copy (fields snapshot by value).
+          const churnE = this.watcher.churnOf(d.lensId);
+          const churnProfile = { ewmaChurn: churnE, lastChangeTurn: this.turn };
+          (lens as unknown as { churnProfile?: { ewmaChurn: number; lastChangeTurn: number } }).churnProfile = churnProfile;
+          const storeItem2 = this.store.get(d.lensId);
+          if (storeItem2 !== undefined) (storeItem2 as unknown as { churnProfile?: { ewmaChurn: number; lastChangeTurn: number } }).churnProfile = churnProfile;
         }
         tailNotices.push(TurnBoundaryWatcher.tailNotice(d));
         this.ledger?.recordSignal({ type: "live-delta", itemId: d.lensId, markers: d.markers, coalesced: d.coalescedEvents, turn: this.turn });

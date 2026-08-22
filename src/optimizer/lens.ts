@@ -28,6 +28,8 @@ export abstract class Lens {
   ranges: Array<[number, number]> = [];
   baseBlockTurn = -1;   // when the base block was written (-1: no base yet)
   state: LensState = "FULL";
+  /** ADR-0006 §2.3: content-renewal descriptor (watcher-fed; absent → no renewal credit). */
+  churnProfile?: { ewmaChurn: number; lastChangeTurn?: number | undefined } | undefined;
   constructor(
     public readonly id: string,          // "lens:src/kernel.ts"
     public readonly target: string,      // substrate address (fs path, dir, …)
@@ -292,6 +294,9 @@ export abstract class Lens {
       upstreams: this.upstreams, lastRender: this.lastRender, lastTouchTurn: this.lastTouchTurn,
       createdTurn: this.createdTurn, hazardOverride: this.hazardOverride, valueBump: this.valueBump,
       watch: this.watch,
+      // ADR-0006 §2.3: content-renewal descriptor travels with the snapshot
+      // so the solver's FV stream can credit renewal (value decay ≠ content decay).
+      churnProfile: this.churnProfile,
       // ADR-0006 §3 (review C-C1): lens bytes are re-readable from the host
       // substrate (file/dir content) — a SUMMARY/compact render is
       // recoverable by re-reading, not lost.
