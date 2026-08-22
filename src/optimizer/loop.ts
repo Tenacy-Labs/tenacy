@@ -86,6 +86,11 @@ export class AgentLoop {
     this.interrupts.push(intent);
   }
 
+  /** Test/introspection surface: current per-block write turns (§4 TTL provenance). */
+  incumbentWriteTurns(): readonly number[] {
+    return this.incumbent.blockWriteTurns ?? [];
+  }
+
   async run(userMessage: string): Promise<TurnOutcome> {
     const steering = this.interrupts.splice(0);
     const toolResults: TurnOutcome["toolResults"] = [];
@@ -191,7 +196,31 @@ export class AgentLoop {
     this.cacheModel.update(rr.blocks);
     this.ledger?.recordTurn(rr, this.ps, this.turn, solved.itemLedgers);
     this.ledger?.recordCache(cl);
+    // Review A-minor-4: shared-bill credit is journaled, never a selection
+    // input — but it never reached the Ledger at all. Signal it per turn.
+    if (solved.sharedBillCredit !== 0) {
+      this.ledger?.recordSignal({ type: "shared-bill-credit", credit: solved.sharedBillCredit, turn: this.turn });
+    }
 
+    // Review M5/B12/B20: write turns carry FORWARD for digest-identical
+    // blocks — a byte-identical keep does not re-write the KV block, so
+    // its TTL age is the ORIGINAL write. Only changed/new blocks stamp
+    // the current turn. (Sliding-TTL refresh-on-read semantics would make
+    // the §4 expiry branch dead code; honest write provenance instead.)
+    const prevWriteTurns = this.incumbent.blockWriteTurns;
+    const prevChain = new Map<string, number>();
+    if (prevWriteTurns !== undefined) {
+      (this.cacheModel.believedChain()).forEach((d, i) => {
+        prevChain.set(d, prevWriteTurns[i] ?? this.turn);
+      });
+    }
+    const prevMass = this.incumbent.blockMass;
+    const prevMassMap = new Map<string, number>();
+    if (prevMass !== undefined) {
+      (this.cacheModel.believedChain()).forEach((d, i) => {
+        prevMassMap.set(d, prevMass[i] ?? 0);
+      });
+    }
     this.incumbent = {
       rendered: new Map(rr.placements.map((p) => [p.id, {
         position: p.position, zone: p.zone, digest: p.digest,
@@ -207,10 +236,8 @@ export class AgentLoop {
           ? rr.blocks.reduce((s, b) => s + b.tokens, 0) - this.incumbent.totalTokens
           : undefined,
       ),
-      // ADR-0006 §4: exact per-block mass + write turns feed suffix pricing
-      // and the TTL-expiry free-restructure windows.
-      blockMass: rr.blocks.map((b) => b.tokens),
-      blockWriteTurns: rr.blocks.map((b) => this.turn),
+      blockMass: rr.blocks.map((b) => prevMassMap.get(b.digest) ?? b.tokens),
+      blockWriteTurns: rr.blocks.map((b) => prevChain.get(b.digest) ?? this.turn),
     };
 
     const outcome: TurnOutcome = {
@@ -405,7 +432,7 @@ export class AgentLoop {
       // A-M3 cont.: the facade must serve BOTH shapes — call the closure
       // form, return the getter string directly.
       verbatim: () => (typeof anyT.verbatim === "function" ? anyT.verbatim() : anyT.verbatim as unknown as string),
-      markReexpanded: () => { if (anyT.markReexpanded !== undefined) anyT.markReexpanded(); else t.lastTouchTurn = this.store.turn; },
+      markReexpanded: () => { if (anyT.markReexpanded !== undefined) anyT.markReexpanded(); t.lastTouchTurn = this.store.turn; },
     };
   }
   private turnRegistry = new Map<string, TurnItem | ReturnType<typeof makeTurnItem>>();
@@ -537,6 +564,10 @@ export function makeTurnItem(id: string, role: "user" | "model", text: string, t
     // Conversation-lens surface (0002f §2) — closure-backed:
     verbatim: () => convo.verbatim,
     mergedInto: undefined as string | undefined,
+    // Review A-minor-2: the closure pins the CREATION turn (module-level fn,
+    // no store access) — the convoTurn facade corrects the clock to the
+    // STORE's current turn after delegation, so re-expand at logical turn 5
+    // leaves lastTouchTurn = 5, not 1.
     markReexpanded: () => { item.lastTouchTurn = turn; },
     setMergedInto: (v: string | undefined) => { convo.mergedInto = v; item.mergedInto = v; },
   };

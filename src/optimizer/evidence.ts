@@ -32,7 +32,10 @@ const WINDOW = 64;
 function observedTurns(item: ContextItem, turn?: number): number {
   if (item.refEvidence === undefined) return 0;
   const t = turn ?? item.lastTouchTurn;
-  return Math.max(1, t - item.createdTurn + 1);
+  // Review A-minor-6: cap n at the evidence window — an old item with a
+  // recent hit burst kept n ≈ age, dragging λᵢ to the prior regardless of
+  // activity. The hit store caps at WINDOW; the denominator must too.
+  return Math.max(1, Math.min(t - item.createdTurn + 1, WINDOW));
 }
 
 /**

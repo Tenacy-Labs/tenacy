@@ -105,13 +105,24 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       value = item.valueMass * Math.pow(1 + groupDeltaT, -profile.alpha);
     }
     if (profile.floorTurns !== undefined && profile.floorValue !== undefined && deltaT <= profile.floorTurns) {
-      value = Math.max(value, profile.floorValue);
+      // Review A-minor-7: valueMass items run a createdTurn-based value
+      // clock — the floor must compare against the SAME clock, not the
+      // lastTouch-based deltaT.
+      const floorClockT = item.valueMass !== undefined && item.valueMass > 0
+        ? Math.max(0, turn - item.createdTurn)
+        : deltaT;
+      if (floorClockT <= profile.floorTurns) value = Math.max(value, profile.floorValue);
     }
     if (item.valueBump !== undefined && turn <= item.valueBump.untilTurn) {
       value += item.valueBump.amount;
     }
 
-    const hazard = item.hazardOverride ?? ps.hazardPriors[item.kind] ?? 0.05;
+    const hazard = item.hazardOverride !== undefined
+      // Review A-minor-9: clamp overrides to [0, 1] — a fuzz-passed 1.2 let
+      // the premium exceed the full spread cost; overrides are producer
+      // hints, not trust boundaries.
+      ? Math.min(1, Math.max(0, item.hazardOverride))
+      : ps.hazardPriors[item.kind] ?? 0.05;
     const hazardBasis: "prior" | "observed" = item.hazardOverride !== undefined ? "observed" : "prior";
 
     // ADR-0006 §2.1: evidence-priced value. λᵢ posterior (shrinkage toward
@@ -166,7 +177,12 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       // window. Charge the honest minimum: the item's own tokens.
       const suffixTokensH = prev == null
         ? o.tokens
-        : Math.max(0, incumbent.totalTokens - prev.position * Math.max(1, incumbent.totalTokens / Math.max(1, incumbent.blockCount)));
+        : incumbent.blockMass !== undefined && incumbent.blockMass.length > 0
+          // Review A-minor-8: exact per-block mass when the incumbent carries
+          // it (§4 objective) — the proportional share is only the fallback
+          // for legacy incumbents without blockMass.
+          ? suffixMassAfter(incumbent, prev.position)
+          : Math.max(0, incumbent.totalTokens - prev.position * Math.max(1, incumbent.totalTokens / Math.max(1, incumbent.blockCount)));
       const hazardPremium = hz * (suffixTokensH / PremiumScale) * (ps.cache.pricePer1kUncached - ps.cache.pricePer1kCached);
       // No-content options (zeroValue) render nothing — their value is zero,
       // not the item's vᵢ: utility cannot flow from bytes not rendered.
@@ -285,8 +301,11 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     if (za !== zb) return za - zb;
     // within-zone: incumbent items keep their relative order (stable, prefix-
     // preserving); new items append after them, density-ranked among themselves.
-    const pa = incumbentOrder.indexOf(a.item.id);
-    const pb = incumbentOrder.indexOf(b.item.id);
+    // Review A-minor-10: precompute positions — indexOf inside the comparator
+    // was O(n²·log n). Missing ids keep the old −1 sentinel semantics.
+    const incumbentPos = new Map(incumbentOrder.map((id, i) => [id, i] as const));
+    const pa = incumbentPos.get(a.item.id) ?? -1;
+    const pb = incumbentPos.get(b.item.id) ?? -1;
     if (pa >= 0 && pb >= 0) return pa - pb;
     if (pa >= 0 && pb < 0) return -1;   // incumbent stays before new arrivals
     if (pa < 0 && pb >= 0) return 1;

@@ -34,6 +34,16 @@ import { resolve } from "node:path";
 
 const ROOT = resolve(import.meta.dir, "..", "..");
 const SPEC = JSON.parse(readFileSync(resolve(import.meta.dir, "scenarios.json"), "utf8")) as Record<string, Scenario>;
+/**
+ * Review B16: BOTH harnesses' cost bases pinned to one explicit constant —
+ * kernel-side pricing previously read paramSetV1("mock").cache while the
+ * accumulator used its own; identical today only by accident. A per-model
+ * price table (A2) diverges them silently unless this pin moves first.
+ */
+export const PRICE_PER_1K_UNCACHED = 3;      // $/1k uncached input (mock v1)
+export const PRICE_PER_1K_CACHED = 0.3;      // $/1k cached (10% of uncached)
+const costOf = (hit: number, tot: number): number =>
+  (hit / 1000) * PRICE_PER_1K_CACHED + ((tot - hit) / 1000) * PRICE_PER_1K_UNCACHED;
 interface Scenario {
   desc: string;
   turns: unknown;
@@ -215,9 +225,7 @@ async function runKernel(name: string, spec: Scenario, kind: "normal" | "stressA
   const finalText = rrs.at(-1)?.text ?? "";
   const totals = turns.map((t) => t.totalTokens);
   const ratios = turns.map((t) => t.hitRatio);
-  const cost = turns.reduce((s, t) =>
-    s + (t.expectedHit / 1000) * ps.cache.pricePer1kCached
-      + ((t.totalTokens - t.expectedHit) / 1000) * ps.cache.pricePer1kUncached, 0);
+  const cost = turns.reduce((s, t) => s + costOf(t.expectedHit, t.totalTokens), 0);
   return {
     scenario: name, harness: "kernel", desc: spec.desc, recall,
     turns,
@@ -362,8 +370,7 @@ function runAccumulator(name: string, spec: Scenario, kind: "normal" | "stressA"
   const totals = turns.map((t) => t.totalTokens);
   const ratios = turns.map((t) => t.hitRatio);
   const cost = turns.reduce((s, t) =>
-    s + (t.expectedHit / 1000) * ps.cache.pricePer1kCached
-      + ((t.totalTokens - t.expectedHit) / 1000) * ps.cache.pricePer1kUncached, 0);
+    s + costOf(t.expectedHit, t.totalTokens), 0);
   return {
     scenario: name, harness: "accumulator", desc: spec.desc, recall,
     turns,

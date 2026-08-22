@@ -7,8 +7,11 @@
  * expected savings can never exceed it.
  *
  * a_t is net durable drift: expected growth of the non-sheddable prefix per
- * turn, maintained by the loop as an EWMA over Δ(standing mass) with
- * restructures excluded. Absent/undefined drift → T* = ∞ → fixed-cap
+ * turn, maintained by the loop as an EWMA over Δ(standing mass). v1 INCLUDES
+ * restructures (the realized layout-mass change is the honest drift signal
+ * while we lack per-move attribution — see loop.ts's incumbent update; the
+ * split-out is a v2 refinement, not today's claim). Absent/undefined drift
+ * → T* = ∞ → fixed-cap
  * fallback (bit-identical behavior for callers that do not track it).
  */
 import type { ParamSet } from "./params.ts";
@@ -18,7 +21,10 @@ import { evidenceVariance } from "./evidence.ts";
 export function turnoverStar(lambda: number, wTokens: number, drift: number | undefined): number {
   if (drift === undefined) return Infinity;
   if (drift <= 0) return Infinity;
-  return (lambda - wTokens) / drift;
+  // Review A-minor-1: W > Λ (already over budget) used to yield negative
+  // T*, leaking a k=1 term through H = max(1, floor(negative)). Clamp at 0
+  // → H = 0: an over-budget window collects no lookahead.
+  return Math.max(0, (lambda - wTokens) / drift);
 }
 
 export interface HorizonCaps {
@@ -49,7 +55,10 @@ export function capHorizons(ps: ParamSet, lambda: number, wTokens: number, drift
  */
 export function effectiveHysteresis(ps: ParamSet, item: ContextItem): number {
   if (item.refEvidence === undefined) return ps.hysteresisMargin;
-  const prior = 0.3;   // neutral prior for margin scaling
+  // Review A-minor-5: use the KIND prior (consistent with evidenceValueFactor)
+  // instead of a hardcoded 0.3 — identity/episodic (0) and error (0) items
+  // previously got variance scaled against the wrong reference.
+  const prior = ps.hazardPriors[item.kind];
   const v = item.forecastVariance ?? evidenceVariance(item, prior);
   if (v === null) return ps.hysteresisMargin;
   // σ ∈ (0, 0.5); scale margin by σ/σ₀ where σ₀ = 0.15 (the margin-neutral

@@ -261,8 +261,16 @@ async function runScenario(name: string, spec: Scenario, ps: ParamSet, stress = 
 }
 
 // ── Scoring ──────────────────────────────────────────────────────────────
-function score(run: RunLog, ideals: Ideal[]): { name: string; pass: boolean; detail: string }[] {
-  return ideals.map((i) => ({ name: i.name, pass: i.check(run), detail: i.want }));
+// Review B13: tautological ideals (check: () => true, verified structurally
+// elsewhere) are scored as DEFERRED — excluded from the pass-rate fraction
+// instead of silently inflating it.
+export interface IdealScore { name: string; pass: boolean; detail: string; deferred: boolean }
+
+function score(run: RunLog, ideals: Ideal[]): IdealScore[] {
+  return ideals.map((i) => {
+    const deferred = i.check.length === 0 || (i.check(run) === true && /^structural|verified|scripted|scored by/.test(i.want ?? ""));
+    return { name: i.name, pass: deferred ? true : i.check(run), detail: i.want, deferred };
+  });
 }
 
 async function main(): Promise<void> {
@@ -279,17 +287,18 @@ async function main(): Promise<void> {
   runs.push(await runScenario("STRESS-A-thrash", SPEC["s3-chunked-read"]!, base, true));
   runs.push(await runScenario("STRESS-B-rollover", SPEC["s4-review-session"]!, base, false));
 
-  let total = 0, passed = 0;
+  let total = 0, passed = 0, deferred = 0;
   for (const run of runs) {
     const ideals = IDEALS[run.scenario] ?? [];
     const results = score(run, ideals);
     console.log(`\n── ${run.scenario} (${run.turns.length} turns)`);
     for (const res of results) {
-      console.log(`  ${res.pass ? "✓" : "✗"} ${res.name} — ${res.detail}`);
+      console.log(`  ${res.deferred ? "◦" : res.pass ? "✓" : "✗"} ${res.name} — ${res.detail}${res.deferred ? " [deferred: structural]" : ""}`);
+      if (res.deferred) { deferred += 1; continue; }
       total += 1; if (res.pass) passed += 1;
     }
   }
-  console.log(`\nIDEAL PASS RATE: ${passed}/${total}`);
+  console.log(`\nIDEAL PASS RATE: ${passed}/${total} (${deferred} deferred, excluded — structural/verified elsewhere)`);
   writeFileSync(resolve(ROOT, "bench/corpus/dumps/emergence.json"), JSON.stringify(runs, null, 1));
   process.exit(0);
 }

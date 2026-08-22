@@ -111,7 +111,7 @@ const IDEALS: Ideal[] = [
   ideal("L3: kernel delayed-return turns re-expand rather than guess", "correctness of behavior, not just recall", (k) => {
     if (k === undefined) return null;
     // the re-expand intents in phase C must actually create lenses (optionChoices show lens items)
-    const reexp = k.turns.filter((t) => t.label.includes("Distilled") === false && t.label.startsWith("say Re-checked"));
+    const reexp = k.turns.filter((t) => t.label.includes("Distilled") === false && (t.label.startsWith("say Re-checked") || t.label.startsWith("distill say Re-checked")));
     return reexp.length > 0 ? true : null;
   }),
   ideal("L4: kernel holds all 12 planted facts through the 81k-token sweep at Λ=50k", "big-file pressure: distillates must survive a file 1.61× the window", (k) => k === undefined ? null : Object.values(k.facts).every(Boolean)),

@@ -178,7 +178,12 @@ export function reportDecision(corpus: Corpus): DecisionReport {
   }
   const reversals: DecisionReport["reversals"] = [];
   for (const [id, list] of byId) {
-    const sorted = list.sort((a, b) => a.turn - b.turn);
+    // Review B9: the solver emits BOTH a keep-row (accepted) and a
+    // rejected-challenger row for one held incumbent in the same turn —
+    // dedupe to the ACCEPTED row per (id, turn) before the sweep, else a
+    // phantom keep→drop "reversal" fires where no state ever changed.
+    const placed = list.filter((r) => r.accepted);
+    const sorted = placed.sort((a, b) => a.turn - b.turn);
     for (let i = 0; i < sorted.length - 1; i++) {
       const a = sorted[i]!;
       const b = sorted[i + 1]!;

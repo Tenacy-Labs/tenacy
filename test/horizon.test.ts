@@ -57,9 +57,12 @@ describe("ADR-0006 §2.4 — variance-scaled hysteresis", () => {
 
   test("thick evidence shrinks the margin; thin evidence raises it (risk aversion follows uncertainty)", () => {
     const ps = paramSetV1("mock");
+    // Review A-minor-5: prior is the KIND prior now (was hardcoded 0.3), so
+    // the fixture uses a nonzero-prior kind (lens 0.08) — identity (prior 0)
+    // collapses Beta variance and clamps to the floor regardless.
     const base = new StandingItem("identity", "identity", "x").toContextItem();
-    const thin: ContextItem = { ...base, createdTurn: 0, lastTouchTurn: 2, refEvidence: { hits: [1], accessClass: "cited" } };
-    const thick: ContextItem = { ...base, createdTurn: 0, lastTouchTurn: 40, refEvidence: { hits: Array.from({ length: 40 }, (_, i) => i + 1), accessClass: "cited" } };
+    const thin: ContextItem = { ...base, kind: "lens", createdTurn: 0, lastTouchTurn: 2, refEvidence: { hits: [1], accessClass: "cited" } };
+    const thick: ContextItem = { ...base, kind: "lens", createdTurn: 0, lastTouchTurn: 40, refEvidence: { hits: Array.from({ length: 40 }, (_, i) => i + 1), accessClass: "cited" } };
     const mThin = effectiveHysteresis(ps, thin);
     const mThick = effectiveHysteresis(ps, thick);
     expect(mThick).toBeLessThan(ps.hysteresisMargin);
