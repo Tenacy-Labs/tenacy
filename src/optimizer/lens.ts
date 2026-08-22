@@ -134,16 +134,33 @@ export abstract class Lens {
 
   /** Ratchet: fold consumed deltas into the base. Permanent. */
   commitConsolidation(choiceId: string, turn: number): void {
+    // Base establishment (STRESS A gap, probe-confirmed 2026-08-22): the
+    // first committed byte-carrying render CREATES the base the lattice
+    // consolidates against. Without it baseBlockTurn stays −1 forever,
+    // noteLiveDelta no-ops, and a 5-delta burst renders 'full' x8 with the
+    // lattice never arming (probe-burst: identical arms, $3.234 each).
+    if (this.baseBlockTurn < 0) {
+      if (choiceId === "full" || choiceId === "consolidated") this.baseBlockTurn = turn;
+      else return;                    // header-only/fragment picks carry no substrate bytes
+      this.pendingDeltas = [];
+      return;
+    }
     if (this.pendingDeltas.length === 0) return;
     if (choiceId === "full" || choiceId === "consolidated") {
       // base re-written wholesale: nothing pending remains
-    } else if (choiceId === "base+d1+d2") {
-      // chain kept: base block advances to include the chain
-      this.baseBlockTurn = turn;
-    } else if (choiceId === "base+(d1,d2)" || choiceId === "(base,d1,d2)") {
+    } else if (choiceId.startsWith("base+(") || /^\(base,/.test(choiceId)) {
+      // fusion-class pick (any arity): base+(d1) / base+(d1,d2,d3) / (base,d1,…)
+      // — structural match; the shipped literal-id check silently skipped
+      // 1- and 3+-delta fusions, leaving a consumed journal pending
+      // (probe-burst 2026-08-22: t7 fusion, t8 still carrying it).
       this.baseBlockTurn = turn;
     } else {
-      return;                                        // purge/compact/split: deltas stay pending
+      // chain (base+d1+d2) KEEPS the journal open — choosing the sequential
+      // formulation IS the "publish deltas separately" policy; purge/compact/
+      // split likewise leave deltas pending. Only a fusion choice consumes
+      // (ruling #2). Consuming on chain would make publish-then-fuse
+      // unreachable in live flow (probe question 2026-08-22).
+      return;
     }
     this.pendingDeltas = [];                          // finer states discarded (ratchet)
   }
