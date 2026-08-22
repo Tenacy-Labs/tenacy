@@ -32,7 +32,7 @@ export interface SessionHeader {
 interface StandingRow { t: "standing"; id: string; kind: "identity" | "directive"; text: string; immutable: boolean; watch: string | undefined }
 interface GoalRow { t: "goal"; id: string; text: string; parentId?: string | undefined; horizon?: string | undefined; status: "active" | "completed" }
 interface TurnRow { t: "turn"; id: string; role: "user" | "model" | "tool-result"; verbatim: string; summary?: string | undefined; rep: string; mergedInto?: string | undefined }
-interface LensRow { t: "lens"; id: string; target: string; tag: string; ranges: Array<[number, number]>; baseBlockTurn: number; state: string; selected?: string[]; prefixes?: string[]; projection?: string }
+interface LensRow { t: "lens"; id: string; target: string; tag: string; ranges: Array<[number, number]>; baseBlockTurn: number; state: string; selected?: string[]; prefixes?: string[]; projection?: string; pendingDeltas?: Array<{ turn: number; lines: number[]; snapshot: string }> }
 interface NoticeRow { t: "notice"; id: string; text: string }
 type Row = StandingRow | GoalRow | TurnRow | LensRow | NoticeRow;
 
@@ -110,10 +110,16 @@ export function saveSession(loop: AgentLoop, path: string, providerName: string)
         const f = loop.lensRegistryView().get(it.id);
         if (f === undefined) break;  // orphaned lens row — skip honestly
         const row: LensRow = { t: "lens", id: f.id, target: f.target, tag: f.substrateTagView(), ranges: f.ranges, baseBlockTurn: f.baseBlockTurn, state: f.state };
-        const extra = f as unknown as { selected?: string[]; prefixes?: string[]; projection?: string };
+        const extra = f as unknown as { selected?: string[]; prefixes?: string[]; projection?: string; pendingDeltas?: Array<{ turn: number; lines: number[]; snapshot: string }> };
         if (Array.isArray(extra.selected)) (row as { selected?: string[] }).selected = extra.selected;
         if (Array.isArray(extra.prefixes)) (row as { prefixes?: string[] }).prefixes = extra.prefixes;
         if (extra.projection !== undefined) (row as { projection?: string }).projection = extra.projection;
+        if (Array.isArray(extra.pendingDeltas) && extra.pendingDeltas.length > 0) {
+          // Journal round-trip (2026-08-22 battery): the lattice state (base
+          // + pending deltas) is accounting truth — losing it on save/resume
+          // orphans published deltas and misprices every render after restore.
+          (row as { pendingDeltas?: Array<{ turn: number; lines: number[]; snapshot: string }> }).pendingDeltas = extra.pendingDeltas.map((d) => ({ turn: d.turn, lines: [...d.lines], snapshot: d.snapshot }));
+        }
         rows.push(row);
         break;
       }
@@ -172,6 +178,11 @@ export function restoreSession(loop: AgentLoop, path: string): { header: Session
         }
         case "lens": {
           loop.attachLens(r.id, r.target, r.ranges, r.baseBlockTurn, r.state as LensState, r.tag, { selected: r.selected, prefixes: r.prefixes, projection: r.projection });
+          const rl = loop.lensRegistryView().get(r.id);
+          if (rl !== undefined && Array.isArray(r.pendingDeltas) && r.pendingDeltas.length > 0) {
+            (rl as unknown as { pendingDeltas: Array<{ turn: number; lines: number[]; snapshot: string }> }).pendingDeltas =
+              r.pendingDeltas.map((d) => ({ turn: d.turn, lines: [...d.lines], snapshot: d.snapshot }));
+          }
           break;
         }
         case "notice": {
