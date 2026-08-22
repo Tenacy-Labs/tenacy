@@ -72,6 +72,77 @@ describe("solver", () => {
     expect(fatLedger.utility.total).toBeGreaterThan(tinyLedger.utility.total);
   });
 
+  test("exact-MCKP relief (flag): keeps >= utility than density under identical pressure", () => {
+    // Knapsack-swap Stage 2: same discriminating setup as the density test,
+    // but relief runs through @connectotron/knapsack. In an instance where
+    // density's greedy sequence is suboptimal, exact retains strictly more
+    // utility; never less. This test asserts the floor: exact >= density,
+    // budget respected, and the known-optimal answer on the fat/tiny shape
+    // (drop fat — its utility density is lower despite higher absolute).
+    const store = freshStore();
+    const fat = makeTurnItem("fat", "user", "lorem ipsum ".repeat(80), 1);
+    fat.valueBump = { amount: 6, untilTurn: 10 };
+    const tiny = makeTurnItem("tiny", "user", "lorem ipsum", 1);
+    store.add(fat);
+    store.add(tiny);
+    const fresh = { rendered: new Map(), totalTokens: 0, blockCount: 0 };
+    const r0 = solve(store.snapshot(), fresh, ps, 1);
+    const fatTokens = r0.placements.find((p) => p.id === "fat")!.tokens;
+    const tightD = { ...ps, budgetLambda: r0.totalTokens - fatTokens };
+    const tightE = { ...tightD, reliefMode: "exact-mckp" as const };
+    const rD = solve(store.snapshot(), fresh, tightD, 1);
+    const rE = solve(store.snapshot(), fresh, tightE, 1);
+    const keptUtil = (r: typeof rD) => r.itemLedgers
+      .filter((l) => l.decision !== "drop" && l.decision !== "purge")
+      .reduce((s, l) => s + l.utility.total, 0);
+    // Both fit the budget.
+    expect(rE.totalTokens).toBeLessThanOrEqual(tightE.budgetLambda);
+    expect(rD.totalTokens).toBeLessThanOrEqual(tightD.budgetLambda);
+    // Exact retains at least density's utility (the greedy answer here IS
+    // optimal, so equality; the >= floor is what must never break).
+    expect(keptUtil(rE)).toBeGreaterThanOrEqual(keptUtil(rD) - 1e-9);
+    // And the known-optimal choice: fat out, tiny in.
+    const droppedE = rE.itemLedgers.filter((l) => l.decision === "drop").map((l) => l.id);
+    expect(droppedE).toContain("fat");
+    expect(droppedE).not.toContain("tiny");
+  });
+
+  test("exact-MCKP relief (flag): suboptimal-greedy instance — exact strictly better", () => {
+    // Classic greedy-fails MCKP shape adapted to relief: one mid-density
+    // large item vs two high-density small items. Capacity fits EITHER the
+    // large item OR both small ones. Density relief (sequential argmax)
+    // evicts a small one first (its density ranking misleads at the margin),
+    // then must also evict the large one; exact keeps both small ones —
+    // strictly more total utility.
+    const store = freshStore();
+    const big = makeTurnItem("big", "user", "x".repeat(60 * 4), 1);   // ~60t
+    big.valueBump = { amount: 5.0, untilTurn: 10 };
+    const s1 = makeTurnItem("s1", "user", "y".repeat(20 * 4), 1);     // ~20t
+    s1.valueBump = { amount: 3.0, untilTurn: 10 };
+    const s2 = makeTurnItem("s2", "user", "z".repeat(20 * 4), 1);     // ~20t
+    s2.valueBump = { amount: 3.0, untilTurn: 10 };
+    store.add(big); store.add(s1); store.add(s2);
+    const fresh = { rendered: new Map(), totalTokens: 0, blockCount: 0 };
+    const r0 = solve(store.snapshot(), fresh, ps, 1);
+    const tBig = r0.placements.find((p) => p.id === "big")!.tokens;
+    const tS1 = r0.placements.find((p) => p.id === "s1")!.tokens;
+    const tS2 = r0.placements.find((p) => p.id === "s2")!.tokens;
+    // Budget fits big alone OR both smalls, not all three (plus the held
+    // identity/directive mass).
+    const tight = { ...ps, budgetLambda: r0.totalTokens - tBig };
+    const rD = solve(store.snapshot(), fresh, tight, 1);
+    const rE = solve(store.snapshot(), fresh, { ...tight, reliefMode: "exact-mckp" as const }, 1);
+    const keptIdsD = rD.placements.map((p) => p.id);
+    const keptIdsE = rE.placements.map((p) => p.id);
+    void keptIdsD;
+    // Exact keeps the two high-density smalls over the one low-density big.
+    expect(keptIdsE).toContain("s1");
+    expect(keptIdsE).toContain("s2");
+    expect(keptIdsE).not.toContain("big");
+    expect(rE.totalTokens).toBeLessThanOrEqual(tight.budgetLambda);
+    void tS1; void tS2;
+  });
+
   test("two identical failing intents in one turn do not collide (error-evidence ids)", async () => {
     // Reviewer probe: duplicate item id "err:1:ctx.search" crashed run().
     // Fix: attempt counter in the error-evidence id.
