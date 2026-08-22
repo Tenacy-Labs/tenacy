@@ -168,8 +168,16 @@ async function runKernel(name: string, spec: Scenario, kind: "normal" | "stressA
       await loop.run("report your findings");
       record("final report");
     } else if (spec.steps !== undefined) {
+      let sayN = 0;
       for (const st of spec.steps) {
         if (st.intent !== undefined) { executeIntent(st.intent as SteeringIntent, loop.store, null); continue; }
+        if (st.msg !== undefined && st.msg.startsWith("say ")) {
+          sayN += 1;
+          loop.store.add(makeTurnItem("distill-" + sayN, "model", st.msg.slice(4), sayN));
+          await loop.run(st.msg);
+          record("distill " + st.msg.slice(4, 60));
+          continue;
+        }
         if (st.msg === undefined) continue;
         await loop.run(st.msg);
         record(st.msg);
@@ -205,7 +213,7 @@ async function runKernel(name: string, spec: Scenario, kind: "normal" | "stressA
   };
 }
 
-export { runKernel, type Scenario, type RunRec, type TurnRec, lcpTokens, fileLineSlice, WINDOW, SUITE, SPEC, ROOT };
+export { runKernel, runAccumulator, type Scenario, type RunRec, type TurnRec, lcpTokens, fileLineSlice, WINDOW, SUITE, SPEC, ROOT };
 
 // ── ACCUMULATOR twin (identical world events) ────────────────────────────
 function runAccumulator(name: string, spec: Scenario, kind: "normal" | "stressA" | "stressB"): RunRec {
@@ -290,6 +298,11 @@ function runAccumulator(name: string, spec: Scenario, kind: "normal" | "stressA"
       }
       const msg = (st as { msg?: string }).msg;
       if (msg === undefined) continue;
+      if (msg.startsWith("say ")) {
+        transcript.push({ role: "assistant", content: msg.slice(4) });
+        push("say " + msg.slice(4, 60));
+        continue;
+      }
       transcript.push({ role: "user", content: msg });
       transcript.push({ role: "assistant", content: "Noted." });
       push(msg);
