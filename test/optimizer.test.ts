@@ -721,6 +721,114 @@ function readFileSyncLines(p: string): string[] {
     if (!rt.text.includes("@t")) throw new Error("turn-cited marker missing");
   });
 
+
+// ── watcher pattern across substrates (0002d §4/§5) ────────────────────
+
+describe("substrate watchers — dir, code, ns live refresh (push, not poll)", () => {
+  test("dir lens: add/unlink events refresh listing + ride render tail", async () => {
+    const { TurnBoundaryWatcher, LiveLensAdapter } = await import("../src/optimizer/live-views.ts");
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("m"));
+    loop.watcher = new TurnBoundaryWatcher();
+    let listing = "a.ts\nb.ts\n";
+    loop.dirListing = () => listing;
+    loop.store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    const lens = loop.dirLens("src");
+    lens.expand(1, 2);
+    const adapter = new LiveLensAdapter(loop.watcher!, lens.id, "/tmp/ak-dir-watch", "dir", () => loop.refreshLensFromSubstrate(lens.id));
+    adapter.start();
+    // external change: file added — nobody polls
+    listing = "a.ts\nb.ts\nNEW.ts\n";
+    loop.watcher!.push({ lensId: lens.id, path: "src/NEW.ts", kind: "add" });
+    loop.refreshLensFromSubstrate(lens.id);
+    await loop.run("turn after external add");
+    const rr = loop.lastRender;
+    if (rr === null || rr === undefined) throw new Error("no render");
+    if (!rr.text.includes("+src/NEW.ts")) throw new Error("add marker missing from tail: " + rr.text.slice(-150));
+    if (!rr.text.includes("NEW.ts")) throw new Error("listing not refreshed into render");
+    adapter.stop();
+  });
+
+  test("code lens: change event re-extracts symbols — untouched symbol digests survive", async () => {
+    const { TurnBoundaryWatcher, LiveLensAdapter } = await import("../src/optimizer/live-views.ts");
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("m"));
+    loop.watcher = new TurnBoundaryWatcher();
+    let src = "export function alpha() { return 1; }\n\nexport function beta() { return 2; }\n";
+    loop.fileContent = () => src;
+    loop.store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    const lens = loop.codeLens("mod.ts");
+    lens.expandSymbol("alpha");
+    lens.expandSymbol("beta");
+    const before = lens.serialize();
+    const adapter = new LiveLensAdapter(loop.watcher!, lens.id, "/tmp/ak-code-watch/mod.ts", "code", () => loop.refreshLensFromSubstrate(lens.id));
+    adapter.start();
+    // external edit: alpha's body changes, beta untouched
+    src = "export function alpha() { return 42; }\n\nexport function beta() { return 2; }\n";
+    loop.watcher!.push({ lensId: lens.id, path: "mod.ts", kind: "change" });
+    loop.refreshLensFromSubstrate(lens.id);
+    await loop.run("turn after external edit");
+    const after = lens.serialize();
+    if (!after.includes("return 42")) throw new Error("refreshed content missing new alpha body");
+    if (before === after) throw new Error("content did not change after refresh");
+    const rr = loop.lastRender;
+    if (rr !== null && rr !== undefined && !rr.text.includes("~mod.ts")) throw new Error("change marker missing: " + rr.text.slice(-120));
+    adapter.stop();
+  });
+
+  test("ns lens: fs event under prefix triggers producer refresh + applyCommits replay", async () => {
+    const { TurnBoundaryWatcher, LiveLensAdapter } = await import("../src/optimizer/live-views.ts");
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("m"));
+    loop.watcher = new TurnBoundaryWatcher();
+    loop.store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    // in-memory producer with external-mutation semantics + commit log
+    let files: Record<string, number> = { "src/alpha.ts": 100, "src/beta.ts": 200 };
+    let cursor = 0;
+    const commits: Array<{ turn: number; changes: Array<{ marker: "+" | "-" | "->"; path: string }> }> = [];
+    const producer = {
+      children: (prefix: string) => Object.entries(files)
+        .filter(([k]) => k.startsWith(prefix))
+        .map(([path, size]) => ({ path, kind: "binding" as const, repr: `${size}b` })),
+      commitsSince: (turn: number) => commits.filter((c) => c.turn > turn),
+      refresh: () => {
+        // re-scan: the watcher saw src/gamma.ts appear
+        files = { ...files, "src/gamma.ts": 50 };
+        cursor += 1;
+        commits.push({ turn: cursor, changes: [{ marker: "+", path: "src/gamma.ts" }] });
+      },
+    };
+    loop.nsProducers.set("ns:src", () => producer);
+    const lens = loop.nsLens("ns:src");
+    lens.focus("src");
+    const adapter = new LiveLensAdapter(loop.watcher!, lens.id, "/tmp/ak-ns-watch", "ns", () => loop.refreshLensFromSubstrate(lens.id));
+    adapter.start();
+    // external mutation: producer refresh appends commit
+    loop.watcher!.push({ lensId: lens.id, path: "src/gamma.ts", kind: "add" });
+    loop.refreshLensFromSubstrate(lens.id);
+    lens.applyCommits(3);
+    if (!lens.listingLines().some((l) => l.includes("gamma.ts"))) throw new Error("ns listing not refreshed after watcher event: " + JSON.stringify(lens.listingLines()));
+    const lastDelta = (lens as unknown as { lastDelta?: string[] }).lastDelta;
+    if (lastDelta === undefined || !lastDelta.some((m) => m.includes("+src/gamma.ts"))) throw new Error("commit replay marker missing: " + JSON.stringify(lastDelta));
+    await loop.run("ns turn");
+    const rr = loop.lastRender;
+    if (rr !== null && rr !== undefined && !rr.text.includes("gamma.ts")) throw new Error("ns refresh did not reach render");
+    adapter.stop();
+  });
+
+  test("conversation and goals are in-process: coordinator IS the watcher — no adapters", async () => {
+    // The contract: attachLens/intents mutate store items directly; there is
+    // no external substrate to observe. This test pins the DESIGN (and guards
+    // against someone wiring fs watchers on turns/goals by accident).
+    const { TurnBoundaryWatcher } = await import("../src/optimizer/live-views.ts");
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("m"));
+    loop.watcher = new TurnBoundaryWatcher();
+    loop.store.add(new StandingItem("identity", "identity", "t").toContextItem());
+    await loop.run("hello");
+    await loop.run("second");
+    // no pending events, no deltas — turns ARE the events
+    const deltas = loop.watcher!.drain(99);
+    if (deltas.length !== 0) throw new Error("in-process substrates must not produce watcher deltas: " + JSON.stringify(deltas));
+  });
+});
+
 // ── finer splits: per-range fragment items (0004/0005 refinement) ──────
 
 describe("finer splits — fragment items + solver coupling", () => {

@@ -13,9 +13,15 @@
  *   a live lens that thrashes is demoted to polled (optimizer flip,
  *   never feeds value decay).
  *
- * v1 ships the debounce/coalesce engine + fs watch adapter for file and
- * directory lenses; the namespace lens subscribes via commit replay
- * (its applyCommits), not fs events.
+ * Substrate adapters (0002d §4/§5): one engine, four substrates.
+ * - file: fs.watch on the file; change -> refresh content from disk.
+ * - dir: fs.watch recursive on the directory; add/unlink/rename markers.
+ * - code: fs.watch on the source file; change -> symbol-table refresh,
+ *   diff at SYMBOL granularity (untouched symbols keep digests).
+ * - ns: fs.watch recursive on the prefix root; events under focus
+ *   refresh the producer snapshot; commit replay stays the seq-legible
+ *   channel (applyCommits), fs events just trigger the refresh.
+ * Conversation/goals are in-process — the coordinator IS the watcher.
  */
 import { watch, type FSWatcher } from "node:fs";
 import type { Lens } from "./lens.ts";
@@ -90,27 +96,37 @@ export class TurnBoundaryWatcher {
 }
 
 /**
- * fs watch adapter — watches a path for a lens, pushes raw events into
- * the engine. Ignore-globs: .git, node_modules, build output (§5).
+ * LiveLensAdapter — substrate-aware live watcher for one lens. Shares the
+ * single TurnBoundaryWatcher engine; refreshes the lens from its producer
+ * hook when events arrive so render always sees current substrate state.
  */
-export class FsWatchAdapter {
+export class LiveLensAdapter {
   private watcher: FSWatcher | null = null;
+
   constructor(
     private readonly engine: TurnBoundaryWatcher,
     private readonly lensId: string,
     private readonly root: string,
+    /** Substrate: decides path scope + event interpretation + refresh. */
+    private readonly substrate: "file" | "dir" | "code" | "ns",
+    /** Lens refresh hook — re-reads substrate, returns nothing (mutates lens in place). */
+    private readonly refresh: () => void,
   ) {}
 
   start(): void {
     try {
-      this.watcher = watch(this.root, { recursive: true }, (_event, filename) => {
+      const recursive = this.substrate === "dir" || this.substrate === "ns";
+      this.watcher = watch(this.root, { recursive }, (event, filename) => {
         const f = filename === null ? "" : String(filename);
         if (f === "" || f.includes(".git") || f.includes("node_modules") || f.includes("dist/")) return;
-        this.engine.push({ lensId: this.lensId, path: f, kind: "change" });
+        const kind: WatchEvent["kind"] = event === "rename" ? "rename" : "change";
+        this.engine.push({ lensId: this.lensId, path: f, kind });
+        // refresh from producer immediately (event coalescing still applies
+        // to the MARKERS; the lens content itself must never go stale)
+        this.refresh();
       });
     } catch {
-      // OS watch limits are real (§5 Risks) — degrade to polled silently
-      this.watcher = null;
+      this.watcher = null;  // OS watch limits (§5 Risks) — degrade to polled
     }
   }
 
@@ -119,6 +135,9 @@ export class FsWatchAdapter {
     this.watcher = null;
   }
 }
+
+// Back-compat alias: the file-substrate adapter keeps its name.
+export { LiveLensAdapter as FsWatchAdapter };
 
 /** Apply a committed delta to a lens's legibility fields (identity stable). */
 export function applyDeltaToLens(lens: Lens, delta: LensDelta, turn: number): void {

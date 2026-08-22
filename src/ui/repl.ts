@@ -28,7 +28,7 @@
  * any intents the model proposed (shown as [op] ok/FAIL lines).
  */
 import { AgentLoop } from "../optimizer/loop.ts";
-import { TurnBoundaryWatcher, FsWatchAdapter } from "../optimizer/live-views.ts";
+import { TurnBoundaryWatcher, LiveLensAdapter } from "../optimizer/live-views.ts";
 import { resolve, dirname } from "node:path";
 import process from "node:process";
 const cwd = () => process.cwd();
@@ -74,7 +74,7 @@ const agent = new AgentLoop(model, paramSetFor(inner.modelId, loadHarnessConfig(
 // per-lens when a lens flips to live (via /watch or model ctx.watch).
 const liveEngine = new TurnBoundaryWatcher();
 agent.watcher = liveEngine;
-const liveAdapters = new Map<string, FsWatchAdapter>();
+const liveAdapters = new Map<string, LiveLensAdapter>();
 
 agent.store.add(new StandingItem("identity", "identity",
   "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator. " + INTENT_PROTOCOL_DOC,
@@ -294,17 +294,27 @@ async function command(line: string): Promise<void> {
       if (intent === null) { console.log(`unknown command: ${cmd} (try /help)`); break; }
       const r = executeIntent(intent, agent.store, ledger);
       console.log(r.result);
-      // /watch live attaches a REAL fs watcher for file lenses (0002d §5)
+      // /watch live attaches a REAL substrate-aware watcher (0002d §4/§5):
+      // file/code watch the source file; dir/ns watch the tree recursively;
+      // every event refreshes the lens from its producer hook.
       if (intent.op === "ctx.watch" && intent.mode === "live" && !intent.id.startsWith("turn-")) {
         const lens = agent.lensRegistryView().get(intent.id);
-        const path = lens !== undefined && "target" in lens ? String((lens as unknown as { target: string }).target) : intent.id.replace(/^lens:/, "");
-        const abs = path.startsWith("/") ? path : resolve(cwd(), path);
+        const target = lens !== undefined && "target" in lens ? String((lens as unknown as { target: string }).target) : intent.id.replace(/^lens:/, "");
+        const substrate: "file" | "dir" | "code" | "ns" = target.startsWith("code:")
+          ? "code"
+          : target.startsWith("ns:")
+            ? "ns"
+            : intent.id.startsWith("lens:dir:") ? "dir" : "file";
+        const rawPath = target.replace(/^code:/, "").replace(/^ns:/, "");
+        const abs = rawPath.startsWith("/") ? rawPath : resolve(cwd(), rawPath);
+        const watchRoot = substrate === "dir" || substrate === "ns" ? dirname(abs) : abs;
+        const refresh = () => agent.refreshLensFromSubstrate(intent.id);
         const existing = liveAdapters.get(intent.id);
         if (existing !== undefined) { existing.stop(); liveAdapters.delete(intent.id); }
-        const adapter = new FsWatchAdapter(liveEngine, intent.id, dirname(abs));
+        const adapter = new LiveLensAdapter(liveEngine, intent.id, watchRoot, substrate, refresh);
         adapter.start();
         liveAdapters.set(intent.id, adapter);
-        console.log(`live: fs.watch on ${dirname(abs)} -> lens ${intent.id}`);
+        console.log(`live: fs.watch(${recursiveFor(substrate)}) on ${watchRoot} -> lens ${intent.id} [${substrate}]`);
       }
       if (intent.op === "ctx.watch" && intent.mode !== "live") {
         const existing = liveAdapters.get(intent.id);
@@ -313,6 +323,10 @@ async function command(line: string): Promise<void> {
       break;
     }
   }
+}
+
+function recursiveFor(substrate: "file" | "dir" | "code" | "ns"): string {
+  return substrate === "dir" || substrate === "ns" ? "recursive" : "file";
 }
 
 function parseLocalIntent(parts: string[]): SteeringIntent | null {

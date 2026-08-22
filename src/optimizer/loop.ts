@@ -404,6 +404,31 @@ export class AgentLoop {
    * fragment items into the store (add new, update ranges, remove stale).
    * Parent option surface keeps the aggregated alternatives — coupled.
    */
+  /**
+   * Watcher-driven substrate refresh (0002d §5): re-read the substrate
+   * through the producer hooks and update the lens IN PLACE — identity
+   * stable, digests recomputed on next options() call. The adapter calls
+   * this on every fs event; markers still coalesce per turn.
+   */
+  refreshLensFromSubstrate(lensId: string): void {
+    const lens = this.lensRegistry.get(lensId);
+    if (lens === undefined) return;
+    const target = lens.target;
+    if (lens instanceof DirectoryLensItem) {
+      const listing = this.dirListing(target);
+      if (listing !== "") lens.listing = listing;
+    } else if (lens instanceof CodeLensItem) {
+      const content = this.fileContent(target.replace(/^code:/, ""));
+      if (content !== "") lens.content = content;
+    } else if (lens instanceof NSLensItem) {
+      const prod = this.nsProducer(target);
+      if (prod?.refresh !== undefined) prod.refresh();
+    } else if (lens instanceof FileLensItem) {
+      const content = this.fileContent(target);
+      if (content !== "") lens.content = content;
+    }
+  }
+
   materializeFragments(): void {
     for (const lens of this.lensRegistry.values()) {
       const frags = lens.fragments();

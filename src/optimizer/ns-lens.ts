@@ -33,6 +33,14 @@ export interface NamespaceProducer {
   children(prefix: string): NamespaceNode[];
   /** The commit log since a turn, for replay-diff subscription. */
   commitsSince(turn: number): NamespaceCommit[];
+  /**
+   * Optional watcher hook (0002d §5): called by the live adapter when a
+   * substrate event lands under the namespace. The producer re-scans its
+   * snapshot and appends to its commit log; the lens then replays via
+   * applyCommits at the turn boundary. Producers without external state
+   * simply omit it (namespace is subscribable BY DESIGN, not by default).
+   */
+  refresh?: () => void;
 }
 
 /**
