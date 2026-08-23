@@ -51,10 +51,13 @@ digest-identical keeps.
 - **A-M3** Thrash detector dead after B9 dedupe — thrashCount identically 0.
 - **A-M4** Gauge 4 wrong both directions (per-item vs per-token ρ;
   (turn,id) join lets rejected row overwrite accepted keep).
-- **A-M5** Prior-0 evidence branch: any access evidence quarters value
-  (`Math.max(KAPPA*0.05, 1)` identically 1 — dead subexpression). (Found
-  independently by both A runs.) Owner ruling wanted: this is the
-  prior-0 semantics decision, not a mechanical fix.
+- ~~**A-M5** Prior-0 evidence branch: any access evidence quarters value~~
+  **RESOLVED (owner rulings 2026-08-23, PR #19 + follow-up):** prior-0 kinds
+  evidence-NEUTRAL at every layer (value + variance); identity ANCHORED
+  (structurally decayExempt — immune to recall and age); errors
+  sticky-until-resolved (`err.resolve`, state-based floor, episodic glide);
+  episodic prior split deferred to B-5 access data. ADR-0006 amendment note
+  added; pins in `test/review-a-m5.test.ts` (RED-verified).
 - **A-M10** (first-A M2, measured) Tombstone-relief FV uses the UNCAPPED
   horizon (default 20) while keeps are T*-capped — over-budget windows
   overprice tombstones 0.419 util (419 MCKP units vs margin 0.15), biasing

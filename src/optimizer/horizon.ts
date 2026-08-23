@@ -55,6 +55,12 @@ export function capHorizons(ps: ParamSet, lambda: number, wTokens: number, drift
  */
 export function effectiveHysteresis(ps: ParamSet, item: ContextItem): number {
   if (item.refEvidence === undefined) return ps.hysteresisMargin;
+  // A-M5 owner ruling (2026-08-23): prior-0 kinds are evidence-NEUTRAL at
+  // every pricing layer. One search hit on an identity anchor → σ low →
+  // margin HALVED — access evidence perturbing prior-0 pricing through the
+  // variance side door. Only an explicitly stamped forecastVariance is
+  // honored (deliberate signal), never access-derived posteriors.
+  if (ps.hazardPriors[item.kind] <= 0 && item.forecastVariance === undefined) return ps.hysteresisMargin;
   // Review A-minor-5: use the KIND prior (consistent with evidenceValueFactor)
   // instead of a hardcoded 0.3 — identity/episodic (0) and error (0) items
   // previously got variance scaled against the wrong reference.

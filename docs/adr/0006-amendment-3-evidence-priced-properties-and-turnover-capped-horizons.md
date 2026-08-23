@@ -150,6 +150,31 @@ Cold start is acknowledged: new items fall back to kind priors — no worse than
 
 ---
 
+## Amendment note (2026-08-23) — prior-0 evidence semantics, owner rulings
+
+A-M5 was resolved by owner ruling in three parts, closing the defect where
+`HAZARD_PRIORS_V1[kind] = 0` silently served two different claims (hazard
+"never changes" vs re-reference prior "never referenced again"):
+
+1. **Prior-0 kinds are evidence-NEUTRAL** at every pricing layer. Access
+   evidence never rescales their value (the prior<=0 branch in
+   `evidenceValueFactor` — dead subexpression `Math.max(KAPPA*0.05, 1)` —
+   quartered value on first access) and never perturbs their hysteresis
+   margin (`effectiveHysteresis` now returns the param margin for prior-0
+   kinds unless a `forecastVariance` is deliberately stamped). Promotion
+   stays deliberate: `ctx.promote` (0002g); searches journal, never
+   auto-price (0002h).
+2. **Identity is ANCHORED** — immune to recall AND age, structurally:
+   `decayExempt: true` on the identity profile, not alpha-arithmetic, so a
+   per-model refit cannot silently re-price the anchor.
+3. **Errors are sticky-until-resolved** (state-based, not time-based):
+   `floorWhileUnresolved` holds at any age while `resolvedTurn` is unset;
+   `err.resolve` stamps it and the item glides out at episodic-speed decay.
+4. **Episodic prior split deferred**: the re-reference prior stays 0 until
+   B-5 live wiring supplies real access data for a deliberate calibration.
+
+---
+
 **Index** — line anchors as of this revision.
 
 *Update this index whenever the file is edited.*
