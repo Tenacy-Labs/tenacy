@@ -327,7 +327,13 @@ export class AgentLoop {
       } catch (e) {
         lastErr = e;
         const msg = String(e).toLowerCase();
-        const transient = msg.includes("429") || msg.includes("rate") || msg.includes("overload") ||
+        // Review B-10 fix (2026-08-23): "rate" as a bare substring matched
+        // "generate", "moderate", "generate completion" — non-transient auth/
+        // bad-request errors retried as if transient. Word-boundary the
+        // rate-limit token: match "rate limit"/"rate-limit"/"rate_limit" or
+        // the standalone word, not every word containing the letters.
+        const rateHit = /\brate[- _]?limit|\brates\b|\brate\b/.test(msg);
+        const transient = msg.includes("429") || rateHit || msg.includes("overload") ||
           msg.includes("502") || msg.includes("503") || msg.includes("504") || msg.includes("timeout") ||
           msg.includes("econnreset") || msg.includes("econnrefused") || msg.includes("fetch failed") ||
           msg.includes("network") || msg.includes("eai_again");
@@ -429,12 +435,17 @@ export class AgentLoop {
   }
 
   codeLens(target: string): CodeLensItem {
-    const id = `lens:code:${target}`;
+    // Review B-12 fix (2026-08-23): canonicalize the target — a bare path and
+    // a code:-prefixed path previously minted two different lens ids
+    // (lens:code:<f> and lens:code:code:<f>) for the same file, splitting
+    // watchers, cache blocks, and restore rows across two items.
+    const canon = target.replace(/^code:/, "");
+    const id = `lens:code:${canon}`;
     let c = this.lensRegistry.get(id);
     if (c === undefined) {
-      const content = this.fileContent(target);
-      if (content === "") throw new Error(`no such file: ${target}`);
-      c = new CodeLensItem(id, target, content);
+      const content = this.fileContent(canon);
+      if (content === "") throw new Error(`no such file: ${canon}`);
+      c = new CodeLensItem(id, canon, content);
       c.lastTouchTurn = this.store.turn;
       c.createdTurn = this.store.turn;
       this.lensRegistry.set(id, c);

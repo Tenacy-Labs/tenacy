@@ -17,7 +17,6 @@ import { effectiveDeltaT } from "./churn.ts";
 import { suffixMassAfter } from "./suffix.ts";
 import { sharedBillSurcharge } from "./suffix.ts";
 import { blockDigest } from "./cache-model.ts";
-import { estTokens } from "./renderer.ts";
 import { solve as solveMckp } from "@connectotron/knapsack";
 
 export interface Incumbent {
@@ -507,10 +506,6 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   return { placements, itemLedgers, totalTokens, sharedBillCredit };
 }
 
-function zoneOf(c: { item: ContextItem; option: RenderOption }): Zone {
-  return c.option.zones[0] ?? "evolving";
-}
-
 /**
  * Cache-continuity zoning (Daniel, 2026-08-22): the declared zone is a claim;
  * the prefix decides. A block that rewrites this turn (digest differs from
@@ -639,7 +634,13 @@ function exactMckpRelief(
     // FREE evict (0 tokens, 0 profit) over a 10-token tombstone — killing
     // the recovery path the density loop preserved by construction.
     const profile = ps.profiles[c.item.kind];
-    const deltaT = Math.max(0, turn - c.item.lastTouchTurn);
+    // Review A-m3 fix (2026-08-23): §1 prices value off the churn-credit
+    // clock (effectiveDeltaT) — relief's tombFV used the raw wall clock.
+    // A purged item is definitionally churn-renewed: its content is fresh,
+    // so its handle's future re-reference stream must price off the same
+    // effective age §1 used, or relief and §1 disagree on the same item in
+    // the same turn.
+    const deltaT = effectiveDeltaT(c.item, Math.max(0, turn - c.item.lastTouchTurn));
     // Review A-M10 fix (2026-08-22): price the tombstone's FV at THIS
     // solve's capped horizon — the default-horizon call overpriced
     // tombstones ~0.4 utility in over-budget windows (T*≈0), biasing

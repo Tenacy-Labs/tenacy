@@ -292,13 +292,16 @@ export function reportGauges(corpus: Corpus, ps: ParamSet, beliefGapInput?: Beli
   const turnsCount = corpus.turns.length;
   const flipsPer100 = turnsCount > 0 ? (flips / turnsCount) * 100 : 0;
 
-  // Gauge 2 — evictions: accepted drops. Re-expansions: an expand-type signal
-  // on an item that was evicted at any earlier turn (re-entry after drop).
+  // Gauge 2 — evictions: accepted DROPS only (review A-m1 fix, 2026-08-23).
+  // A purge is deliberate compaction policy, not budget pressure — counting
+  // it as eviction made the wrong-drop detector unable to distinguish solver
+  // policy from forced ejection. Re-expansion after purge is policy recall,
+  // not a wrong drop; only DROP-evicted ids seed the re-expansion count.
   const evictions = corpus.items.filter(
-    (i) => i.accepted && (i.decision === "drop" || i.decision === "purge"),
+    (i) => i.accepted && i.decision === "drop",
   ).length;
   const evictedIds = new Set(
-    corpus.items.filter((i) => i.accepted && (i.decision === "drop" || i.decision === "purge")).map((i) => i.id),
+    corpus.items.filter((i) => i.accepted && i.decision === "drop").map((i) => i.id),
   );
   let reExpansions = 0;
   for (const s of corpus.signals) {

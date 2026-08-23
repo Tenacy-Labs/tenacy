@@ -190,6 +190,11 @@ export function restoreSession(loop: AgentLoop, path: string): { header: Session
           break;
         }
         case "lens": {
+          // Review B-11 fix (2026-08-23): restore must be idempotent —
+          // /resume on a loop that already holds these rows threw on the
+          // duplicate store.add. Clear the prior lens row first; attachLens
+          // re-mints and re-adds it below.
+          loop.store.remove(r.id);
           loop.attachLens(r.id, r.target, r.ranges, r.baseBlockTurn, r.state as LensState, r.tag, { selected: r.selected, prefixes: r.prefixes, projection: r.projection });
           const rl = loop.lensRegistryView().get(r.id);
           if (rl !== undefined && Array.isArray(r.pendingDeltas) && r.pendingDeltas.length > 0) {
