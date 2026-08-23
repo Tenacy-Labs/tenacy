@@ -23,6 +23,7 @@ export type SteeringIntent =
   | { op: "ctx.why"; id: string }
   | { op: "ctx.promote"; id: string }
   | { op: "ctx.demote"; id: string }
+  | { op: "err.resolve"; id: string }
   | { op: "ctx.watch"; id: string; mode: "live" | "polled" | "frozen" }
   | { op: "ctx.search"; pattern: string }
   | { op: "dirs.expand"; target: string; from: number; to: number }
@@ -304,6 +305,13 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
     case "ctx.demote": {
       store.bump(s.id, -3, turn + 6);
       return { op: s.op, ok: true, result: `demoted ${s.id} (−3 value, 6 turns)` };
+    }
+    case "err.resolve": {
+      // A-M5 owner ruling (2026-08-23): the model marks an error dealt
+      // with — sticky floor lifts, lesson glides out. Model-authored only.
+      const ok = store.resolveError(s.id);
+      ledger?.recordSignal({ type: "err-resolve", itemId: s.id, turn });
+      return { op: s.op, ok, result: ok ? `resolved ${s.id} — floor lifted, decaying` : `no unresolved error ${s.id}` };
     }
     case "ctx.watch": {
       store.setWatch(s.id, s.mode);

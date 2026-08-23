@@ -22,6 +22,10 @@ export interface ValueProfile {
   /** Value floor for N turns (error evidence — ADR-0004 §2). */
   floorTurns?: number;
   floorValue?: number;
+  /** A-M5 owner ruling 2026-08-23: errors are sticky UNTIL RESOLVED — the
+   * floor holds while the item's resolvedTurn is unset; resolution releases
+   * it and the item decays at the profile alpha (episodic-speed glide). */
+  floorWhileUnresolved?: number;
 }
 
 /** Cache price model — ADR-0002 §2 CacheModel beliefs, self-calibrating. */
@@ -104,7 +108,7 @@ export const PROFILES_V1: Record<ItemKind, ValueProfile> = {
   kernelView:    { kind: "kernelView", mu0: 5.0, alpha: 0.4 },
   artifact:      { kind: "artifact", mu0: 4.0, alpha: 0.5 },
   notice:        { kind: "notice", mu0: 2.0, alpha: 1.2 },
-  error:         { kind: "error", mu0: 4.5, alpha: 0.15, floorTurns: 8, floorValue: 2.0 },  // A1 (0004 §2)
+  error:         { kind: "error", mu0: 4.5, alpha: 1.0, floorWhileUnresolved: 2.0 },  // A1 (0004 §2); A-M5 owner ruling 2026-08-23: sticky until resolvedTurn, then episodic-speed glide
 };
 
 export const HAZARD_PRIORS_V1: Record<ItemKind, number> = {

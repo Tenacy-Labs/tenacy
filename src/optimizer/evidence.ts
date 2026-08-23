@@ -57,17 +57,14 @@ export function lambdaPosterior(item: ContextItem, prior: number, turn?: number)
  */
 export function evidenceValueFactor(item: ContextItem, prior: number, turn?: number): number {
   if (item.refEvidence === undefined) return 1;
-  // Review A-C1/M1: kinds with hazard prior 0 (identity/episodic/error —
-  // the "never re-referenced" class) made lam/prior = 0/0 = NaN with zero
-  // hits, and x/0 = ∞ → clamp 4 with one hit. Zero evidence on a prior-0
-  // kind is neutral (1.0); positive evidence floors the prior in the ratio
-  // so the factor is finite and evidence-thickening, not ceiling-pinned.
-  if (prior <= 0) {
-    const hits = item.refEvidence.hits.filter((h) => (turn === undefined ? true : h <= turn)).length;
-    if (hits === 0) return 1;
-    const lam = lambdaPosterior(item, prior, turn); // (0 + hits)/(κ + n)
-    return clamp(lam / Math.max(KAPPA * 0.05, 1), 0.25, 4); // effective floor prior
-  }
+  // A-M5 owner ruling (2026-08-23): prior-0 kinds (identity, episodic,
+  // error) are evidence-NEUTRAL — access never rescales their value. The
+  // old prior<=0 branch quartered value on first hit (dead subexpression
+  // Math.max(KAPPA*0.05, 1) === 1 → clamp floor 0.25); identity anchors,
+  // recall-answer turns, and error lessons were punished for being used.
+  // Promotion for these kinds stays deliberate: ctx.promote (0002g) and
+  // the 0002h weak-signal ruling (searches journal, never auto-price).
+  if (prior <= 0) return 1;
   const lam = lambdaPosterior(item, prior, turn);
   return clamp(lam / prior, 0.25, 4);
 }

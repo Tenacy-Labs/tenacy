@@ -65,6 +65,20 @@ export class ContextStore {
     this.#emit({ type: "watch-flip", itemId: id, mode, author: "model-authored" });
   }
 
+  /** A-M5 owner ruling (2026-08-23): resolve an error item — sticky floor
+   * lifts, item glides out at profile alpha. Idempotent; earliest
+   * resolution wins (a re-resolve never extends stickiness). */
+  resolveError(id: string): boolean {
+    const it = this.items.get(id);
+    if (!it || it.kind !== "error") return false;
+    if (it.resolvedTurn === undefined) {
+      it.resolvedTurn = this.turn;
+      it.lastTouchTurn = this.turn;
+      this.#emit({ type: "error-resolved", itemId: id, turn: this.turn });
+    }
+    return true;
+  }
+
   /** DAG invalidation — ADR-0002c §5: invalidating a leaf covers the subtree. */
   invalidateUpstream(id: string): string[] {
     const seen = new Set<string>();
@@ -116,7 +130,8 @@ export class ContextStore {
 export type StoreJournalEvent =
   | { type: "value-bump"; itemId: string; amount: number; untilTurn: number }
   | { type: "watch-flip"; itemId: string; mode: "live" | "polled" | "frozen"; author: "model-authored" }
-  | { type: "dag-invalidate"; itemId: string };
+  | { type: "dag-invalidate"; itemId: string }
+  | { type: "error-resolved"; itemId: string; turn: number };
 
 // kindZone removed with velocity (ADR-0006 §2, owner ruling 2026-08-22):
 // zones are chosen per-option by the solver (options carry their legal

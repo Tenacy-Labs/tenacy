@@ -33,7 +33,7 @@ interface StandingRow { t: "standing"; id: string; kind: "identity" | "directive
 interface GoalRow { t: "goal"; id: string; text: string; parentId?: string | undefined; horizon?: string | undefined; status: "active" | "completed" }
 interface TurnRow { t: "turn"; id: string; role: "user" | "model" | "tool-result"; verbatim: string; summary?: string | undefined; rep: string; mergedInto?: string | undefined }
 interface LensRow { t: "lens"; id: string; target: string; tag: string; ranges: Array<[number, number]>; baseBlockTurn: number; state: string; selected?: string[]; prefixes?: string[]; projection?: string; pendingDeltas?: Array<{ turn: number; lines: number[]; snapshot: string }> }
-interface NoticeRow { t: "notice"; id: string; text: string }
+interface NoticeRow { t: "notice"; id: string; kind?: "notice" | "error"; text: string; resolvedTurn?: number | undefined }
 type Row = StandingRow | GoalRow | TurnRow | LensRow | NoticeRow;
 
 export interface SessionFile {
@@ -124,7 +124,11 @@ export function saveSession(loop: AgentLoop, path: string, providerName: string)
         break;
       }
       case "notice": {
-        rows.push({ t: "notice", id: it.id, text: ci.serialize() });
+        // B-7-adjacent (fixed with A-M5 2026-08-23): notice rows must carry
+        // their kind — restore previously hardcoded "notice", silently
+        // reclassifying error evidence (and its lifecycle) on every
+        // save/restore. resolvedTurn round-trips for the error lifecycle.
+        rows.push({ t: "notice", id: it.id, kind: ci.kind === "error" ? "error" : "notice", text: ci.serialize(), resolvedTurn: ci.resolvedTurn });
         break;
       }
     }
@@ -186,8 +190,13 @@ export function restoreSession(loop: AgentLoop, path: string): { header: Session
           break;
         }
         case "notice": {
-          const n = new NoticeItem(r.id, "notice", r.text);
-          loop.store.add(n.toContextItem());
+          // B-7-adjacent fix rides with A-M5: kind round-trips (was
+          // hardcoded "notice" — error evidence was reclassified on every
+          // restore); resolvedTurn round-trips for the lifecycle.
+          const n = new NoticeItem(r.id, r.kind === "error" ? "error" : "notice", r.text);
+          const nc = n.toContextItem();
+          if (r.resolvedTurn !== undefined) nc.resolvedTurn = r.resolvedTurn;
+          loop.store.add(nc);
           break;
         }
       }
