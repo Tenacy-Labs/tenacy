@@ -14,14 +14,26 @@
 import { describe, expect, test } from "bun:test";
 import { evidenceValueFactor } from "../src/optimizer/evidence.ts";
 import { makeTurnItem } from "../src/optimizer/loop.ts";
-import { HAZARD_PRIORS_V1, paramSetV1 } from "../src/optimizer/params.ts";
+import { HAZARD_PRIORS_V1, paramSetV1, PROFILES_V1 } from "../src/optimizer/params.ts";
 import { solve } from "../src/optimizer/solver.ts";
+import { effectiveHysteresis } from "../src/optimizer/horizon.ts";
 import { ContextStore } from "../src/optimizer/store.ts";
 import type { ContextItem } from "../src/optimizer/types.ts";
+import { StandingItem } from "../src/optimizer/items.ts";
 
 function withHits(item: ContextItem, hits: number[], accessClass: "cited" | "distilledFrom" | "searchHit" | "reExpanded" = "searchHit"): ContextItem {
   (item as { refEvidence?: unknown }).refEvidence = { hits, accessClass };
   return item;
+}
+
+function emptyIncumbent() {
+  return { rendered: new Map(), totalTokens: 0, blockCount: 0 };
+}
+
+function ledgerValue(r: { itemLedgers: Array<{ id: string; forecast: { expectedValue: number } }> }, id: string): number {
+  const led = r.itemLedgers.find((l) => l.id === id);
+  if (!led) throw new Error("no ledger for " + id);
+  return led.forecast.expectedValue;
 }
 
 describe("A-M5: prior-0 kinds are evidence-neutral", () => {
@@ -159,5 +171,67 @@ describe("err.resolve signal", () => {
     const ep = makeTurnItem("turn-1", "user", "hi", 1);
     store.add(ep);
     expect(store.resolveError("turn-1")).toBe(false);
+  });
+});
+
+
+
+// ---------------------------------------------------------------------------
+// A-M5 completion (owner rulings, 2026-08-23, second pass):
+//   identity = ANCHORED — immune to recall AND age, structurally
+//   episodic = evidence-neutral now; prior split deferred to B-5 data
+// ---------------------------------------------------------------------------
+describe("A-M5 completion: identity anchored, variance layer neutral", () => {
+  test("identity profile is structurally decayExempt (config invariant)", () => {
+    expect(PROFILES_V1.identity.decayExempt).toBe(true);
+    expect(PROFILES_V1.identity.alpha).toBe(0);
+  });
+
+  test("identity value flat at any age (age immunity)", () => {
+    const ps = paramSetV1("mock-1");
+    // Real production path: StandingItem with kind identity
+    const si = new StandingItem("identity:1", "identity", "You are the kernel agent.");
+    const fresh = solve([si.toContextItem()], emptyIncumbent(), ps, 5);
+    const stale = solve([si.toContextItem()], emptyIncumbent(), ps, 500);
+    const vFresh = ledgerValue(fresh, "identity:1");
+    const vStale = ledgerValue(stale, "identity:1");
+    expect(vFresh).toBeCloseTo(10.0, 6);
+    expect(vStale).toBeCloseTo(10.0, 6);
+    expect(vStale).toBe(vFresh);
+  });
+
+  test("identity with access hits: value unchanged AND hysteresis margin intact", () => {
+    const ps = paramSetV1("mock-1");
+    const withHits: ContextItem = {
+      id: "identity:2", kind: "identity", immutable: true, tokens: 40,
+      serialize: () => "You are the kernel agent. Lambda = 24000 binds.",
+      options: () => [], lastTouchTurn: 0, createdTurn: 0,
+      refEvidence: { hits: [7], accessClass: "searchHit" },
+    };
+    // value layer: factor must be exactly 1 (neutral)
+    expect(evidenceValueFactor(withHits, HAZARD_PRIORS_V1.identity, 10)).toBe(1);
+    // variance layer: one hit must not halve the incumbent margin
+    expect(effectiveHysteresis(ps, withHits)).toBe(ps.hysteresisMargin);
+    // but a deliberately stamped forecastVariance IS honored (deliberate signal)
+    const stamped: ContextItem = { ...withHits, forecastVariance: 0.01 };
+    expect(effectiveHysteresis(ps, stamped)).toBeLessThan(ps.hysteresisMargin);
+  });
+
+  test("episodic prior split deferred: prior stays 0 until B-5 supplies access data", () => {
+    // Owner ruling: evidence-neutral NOW. The re-reference prior split out of
+    // the hazard table is a deliberate future calibration, not a hot-fix.
+    expect(HAZARD_PRIORS_V1.episodic).toBe(0);
+  });
+
+  test("err.resolve on ageless anchor refuses: resolveError only binds to kind error", () => {
+    const store = new ContextStore();
+    const identity: ContextItem = {
+      id: "identity:3", kind: "identity", immutable: true, tokens: 10,
+      serialize: () => "agent", options: () => [], lastTouchTurn: 0, createdTurn: 0,
+    };
+    store.add(identity);
+    store.turn = 4;
+    expect(store.resolveError("identity:3")).toBe(false);
+    expect(identity.resolvedTurn).toBeUndefined();
   });
 });

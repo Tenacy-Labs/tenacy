@@ -99,7 +99,7 @@ export interface ParamSet {
 }
 
 export const PROFILES_V1: Record<ItemKind, ValueProfile> = {
-  identity:      { kind: "identity", mu0: 10.0, alpha: 0.0 },   // standing value, never decays
+  identity:      { kind: "identity", mu0: 10.0, alpha: 0.0, decayExempt: true },  // A-M5 owner ruling 2026-08-23: ANCHORED — immune to recall AND age. Structural (decayExempt), not α-arithmetic, so a per-model refit can never silently re-price the anchor.
   directive:     { kind: "directive", mu0: 6.0, alpha: 0.2 },
   goal:          { kind: "goal", mu0: 8.0, alpha: 0.0, decayExempt: true },  // 0002f §3
   episodic:      { kind: "episodic", mu0: 3.0, alpha: 1.0 },    // α ≈ 1 to start (0002b §2)
