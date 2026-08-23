@@ -191,8 +191,9 @@ describe("A-M5 completion: identity anchored, variance layer neutral", () => {
     const ps = paramSetV1("mock-1");
     // Real production path: StandingItem with kind identity
     const si = new StandingItem("identity:1", "identity", "You are the kernel agent.");
-    const fresh = solve([si.toContextItem()], emptyIncumbent(), ps, 5);
-    const stale = solve([si.toContextItem()], emptyIncumbent(), ps, 500);
+    const items = new Map([["identity:1", si.toContextItem()]]);
+    const fresh = solve(items, emptyIncumbent(), ps, 5);
+    const stale = solve(items, emptyIncumbent(), ps, 500);
     const vFresh = ledgerValue(fresh, "identity:1");
     const vStale = ledgerValue(stale, "identity:1");
     expect(vFresh).toBeCloseTo(10.0, 6);
