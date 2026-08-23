@@ -17,7 +17,7 @@
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AgentLoop } from "./loop.ts";
-import { StandingItem, GoalItem, TurnItem, FileLensItem, NoticeItem } from "./items.ts";
+import { StandingItem, GoalItem, TurnItem, FileLensItem, NoticeItem , MergeGroupItem } from "./items.ts";
 import type { ContextItem, LensState } from "./types.ts";
 
 export interface SessionHeader {
@@ -31,10 +31,11 @@ export interface SessionHeader {
 
 interface StandingRow { t: "standing"; id: string; kind: "identity" | "directive"; text: string; immutable: boolean; watch: string | undefined }
 interface GoalRow { t: "goal"; id: string; text: string; parentId?: string | undefined; horizon?: string | undefined; status: "active" | "completed" }
-interface TurnRow { t: "turn"; id: string; role: "user" | "model" | "tool-result"; verbatim: string; summary?: string | undefined; rep: string; mergedInto?: string | undefined }
+interface TurnRow { t: "turn"; id: string; role: "user" | "model" | "tool-result"; verbatim: string; summary?: string | undefined; rep: string; mergedInto?: string | undefined; createdTurn?: number | undefined; lastTouchTurn?: number | undefined }
 interface LensRow { t: "lens"; id: string; target: string; tag: string; ranges: Array<[number, number]>; baseBlockTurn: number; state: string; selected?: string[]; prefixes?: string[]; projection?: string; pendingDeltas?: Array<{ turn: number; lines: number[]; snapshot: string }> }
-interface NoticeRow { t: "notice"; id: string; kind?: "notice" | "error"; text: string; resolvedTurn?: number | undefined }
-type Row = StandingRow | GoalRow | TurnRow | LensRow | NoticeRow;
+interface NoticeRow { t: "notice"; id: string; kind?: "notice" | "error"; text: string; resolvedTurn?: number | undefined; createdTurn?: number | undefined; lastTouchTurn?: number | undefined }
+interface MergeRow { t: "merge"; id: string; text: string; memberIds: string[]; valueMass: number; createdTurn: number }
+type Row = StandingRow | GoalRow | TurnRow | LensRow | NoticeRow | MergeRow;
 
 export interface SessionFile {
   header: SessionHeader;
@@ -97,7 +98,7 @@ export function saveSession(loop: AgentLoop, path: string, providerName: string)
         // TurnItem-like episodic rows: verbatim recoverable from serialize() minus the role prefix
         const body = stripRolePrefix(ci.serialize());
         {
-        const row: TurnRow = { t: "turn", id: it.id, role: roleFromId(it.id), verbatim: body, rep: turnRepOf(it) };
+        const row: TurnRow = { t: "turn", id: it.id, role: roleFromId(it.id), verbatim: body, rep: turnRepOf(it), createdTurn: it.createdTurn, lastTouchTurn: it.lastTouchTurn };
         const sum = turnSummaryOf(it);
         if (sum !== undefined) row.summary = sum;
         const mi = (it as { mergedInto?: string | undefined }).mergedInto;
@@ -128,7 +129,15 @@ export function saveSession(loop: AgentLoop, path: string, providerName: string)
         // their kind — restore previously hardcoded "notice", silently
         // reclassifying error evidence (and its lifecycle) on every
         // save/restore. resolvedTurn round-trips for the error lifecycle.
-        rows.push({ t: "notice", id: it.id, kind: ci.kind === "error" ? "error" : "notice", text: ci.serialize(), resolvedTurn: ci.resolvedTurn });
+        rows.push({ t: "notice", id: it.id, kind: ci.kind === "error" ? "error" : "notice", text: ci.serialize(), resolvedTurn: ci.resolvedTurn, createdTurn: it.createdTurn, lastTouchTurn: it.lastTouchTurn });
+        break;
+      }
+      case "merge": {
+        // Review B-4 fix (2026-08-23): merge groups previously had no row
+        // type — rowType() fell through to "turn" and the group restored as
+        // a bare TurnItem: valueMass lost, memberIds lost, coupling orphaned.
+        const gm = it as ContextItem & { valueMass?: number };
+        rows.push({ t: "merge", id: it.id, text: ci.serialize(), memberIds: [...(it.upstreams ?? [])], valueMass: gm.valueMass ?? 0, createdTurn: it.createdTurn });
         break;
       }
     }
@@ -177,7 +186,7 @@ export function restoreSession(loop: AgentLoop, path: string): { header: Session
           break;
         }
         case "turn": {
-          loop.addRestoredTurn(r.id, r.role, r.verbatim, r.summary, r.rep, r.mergedInto);
+          loop.addRestoredTurn(r.id, r.role, r.verbatim, r.summary, r.rep, r.mergedInto, r.createdTurn, r.lastTouchTurn);
           break;
         }
         case "lens": {
@@ -189,6 +198,14 @@ export function restoreSession(loop: AgentLoop, path: string): { header: Session
           }
           break;
         }
+        case "merge": {
+          // Review B-4 fix (2026-08-23): reconstruct the group with member
+          // upstreams and valueMass intact.
+          const g = new MergeGroupItem(r.id, r.memberIds, r.text, r.createdTurn);
+          g.valueMass = r.valueMass;
+          loop.store.addRestored(g.toContextItem());
+          break;
+        }
         case "notice": {
           // B-7-adjacent fix rides with A-M5: kind round-trips (was
           // hardcoded "notice" — error evidence was reclassified on every
@@ -196,7 +213,8 @@ export function restoreSession(loop: AgentLoop, path: string): { header: Session
           const n = new NoticeItem(r.id, r.kind === "error" ? "error" : "notice", r.text);
           const nc = n.toContextItem();
           if (r.resolvedTurn !== undefined) nc.resolvedTurn = r.resolvedTurn;
-          loop.store.add(nc);
+          if (r.lastTouchTurn !== undefined) { nc.lastTouchTurn = r.lastTouchTurn; nc.createdTurn = r.createdTurn ?? r.lastTouchTurn; }
+          loop.store.addRestored(nc);
           break;
         }
       }
@@ -209,9 +227,12 @@ export function restoreSession(loop: AgentLoop, path: string): { header: Session
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
-function rowType(it: ContextItem): "standing" | "goal" | "turn" | "lens" | "notice" {
+function rowType(it: ContextItem): "standing" | "goal" | "turn" | "lens" | "notice" | "merge" {
   if (it.kind === "identity" || it.kind === "directive") return "standing";
   if (it.kind === "goal") return "goal";
+  // Review B-4: a merge group is episodic-kind with member upstreams —
+  // distinguish BEFORE the generic episodic->turn fallthrough.
+  if (it.kind === "episodic" && (it.upstreams?.length ?? 0) > 0 && it.id.startsWith("merge:")) return "merge";
   if (it.kind === "episodic") return "turn";
   if (it.kind === "lens") return "lens";
   return "notice";

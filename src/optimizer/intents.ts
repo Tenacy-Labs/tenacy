@@ -142,18 +142,34 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
       if (host === null) return { op: s.op, ok: false, result: "no host bound" };
       const members: string[] = [];
       const texts: string[] = [];
+      // Review B-4 fix (2026-08-23): validate BEFORE mutating. The old loop
+      // stamped mergedInto inside the collection pass; a range holding a
+      // single turn returned ok:false with that member permanently stranded
+      // inside a merge that never materialized.
       for (let t = s.from; t <= s.to; t++) {
         for (const role of ["user", "model"] as const) {
           const m = host.convoTurn(`turn-${t}-${role}`);
           if (m !== undefined) {
             members.push(m.id);
             texts.push(firstSentence(m.verbatim()));
-            m.mergedInto = `merge:turn-${s.from}-user..turn-${s.to}-model`;
           }
         }
       }
       if (members.length < 2) return { op: s.op, ok: false, result: "fewer than two turns in range" };
       const groupId = `merge:turn-${s.from}-user..turn-${s.to}-model`;
+      for (const mid of members) {
+        const m = host.convoTurn(mid);
+        if (m !== undefined) m.mergedInto = groupId;
+        // Review B-4 fix (2026-08-23): the member's ContextItem.upstreams
+        // must point at the group. The solver's family coupling keys off
+        // upstreams[0]; without it, parent === undefined for every member,
+        // the verbatim fallback fired even when the group was chosen and
+        // carrying, and in-merge members were priced asymmetrically against
+        // fragments. (The TurnItem's own upstreams field is used for other
+        // lineage; we set the STORE copy's field.)
+        const storeMember = store.get(mid);
+        if (storeMember !== undefined) (storeMember as unknown as { upstreams?: readonly string[] }).upstreams = [groupId];
+      }
       const group = new MergeGroupItem(groupId, members, texts.join(" "), turn);
       // Value mass = summed member values at merge time (multi-period pass):
       // each member realizes its k=0 decayed value; the group inherits the

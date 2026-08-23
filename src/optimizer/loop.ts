@@ -132,6 +132,27 @@ export class AgentLoop {
         const lens = this.lensRegistry.get(d.lensId);
         if (lens !== undefined) {
           applyDeltaToLens(lens, d, this.turn);
+          // Review B-5 fix (2026-08-23): the drain loop fed markers, hazard,
+          // churn, and notices — everything EXCEPT the lattice. noteLiveDelta
+          // had zero production callers: pendingDeltas stayed empty forever
+          // and the consolidation lattice never armed past base. Line
+          // numbers are not derivable from a path-bearing FS event, so v1
+          // records the COARSE delta: affected lines = the lens's range
+          // union. The snapshot defaults to the live substrate slice (fresh
+          // at drain by construction — refresh ran at event time), so the
+          // fusion/chain bodies stay byte-honest; only affected-line
+          // granularity is coarse until producers supply real line sets.
+          const lv = lens as unknown as {
+            noteLiveDelta?: (t: number, l: number[]) => void;
+            ranges?: Array<[number, number]>;
+          };
+          if (typeof lv.noteLiveDelta === "function" && lv.ranges !== undefined && lv.ranges.length > 0) {
+            const lo = Math.min(...lv.ranges.map((r) => r[0]));
+            const hi = Math.max(...lv.ranges.map((r) => r[1]));
+            const lines: number[] = [];
+            for (let li = lo; li <= hi; li++) lines.push(li);
+            lv.noteLiveDelta(this.turn, lines);
+          }
           // Churn pricing (0002d §5): observed hazard feeds the lens item —
           // the solver, not a hard threshold, decides what thrash costs.
           // Both the registry object AND the store's ContextItem copy must
@@ -234,17 +255,25 @@ export class AgentLoop {
     // the §4 expiry branch dead code; honest write provenance instead.)
     const prevWriteTurns = this.incumbent.blockWriteTurns;
     const prevChain = new Map<string, number>();
-    if (prevWriteTurns !== undefined) {
-      (this.cacheModel.believedChain()).forEach((d, i) => {
-        prevChain.set(d, prevWriteTurns[i] ?? this.turn);
-      });
-    }
     const prevMass = this.incumbent.blockMass;
     const prevMassMap = new Map<string, number>();
-    if (prevMass !== undefined) {
-      (this.cacheModel.believedChain()).forEach((d, i) => {
-        prevMassMap.set(d, prevMass[i] ?? 0);
+    // Review B-3 fix (2026-08-23): carry-forward must be keyed by the
+    // PREVIOUS chain's digests, not zipped positionally against the NEW
+    // chain. cacheModel.update() already ran (line ~221): believedChain()
+    // here is the new layout. Positional zip of new-chain digests against
+    // old write-turns shifts provenance on any non-prefix change — a
+    // mid-chain insertion stamps the freshest block with an old turn (TTL
+    // inversion). The previous chain is the incumbent's own digests; we
+    // recover them from the rendered map (the incumbent's blocks in order).
+    const prevDigests = [...this.incumbent.rendered.values()].map((r) => r.digest);
+    if (prevWriteTurns !== undefined) {
+      prevDigests.forEach((d, i) => {
+        const wt = prevWriteTurns[i];
+        if (wt !== undefined) prevChain.set(d, wt);
       });
+    }
+    if (prevMass !== undefined) {
+      prevDigests.forEach((d, i) => prevMassMap.set(d, prevMass[i] ?? 0));
     }
     this.incumbent = {
       rendered: new Map(rr.placements.map((p) => [p.id, {
@@ -338,7 +367,7 @@ export class AgentLoop {
     this.store.remove(item.id);
     item.createdTurn = createdTurn;
     item.lastTouchTurn = lastTouchTurn;
-    this.store.add(item);
+    this.store.addRestored(item);
   }
   registerGoalRow(g: GoalItem): void {
     this.store.remove(g.id);
@@ -346,16 +375,22 @@ export class AgentLoop {
     g.createdTurn = this.store.turn;
     this.registerGoal(g);
   }
-  addRestoredTurn(id: string, role: "user" | "model" | "tool-result", verbatim: string, summary: string | undefined, rep: string, mergedInto?: string): void {
+  addRestoredTurn(id: string, role: "user" | "model" | "tool-result", verbatim: string, summary: string | undefined, rep: string, mergedInto?: string, createdTurn?: number, lastTouchTurn?: number): void {
     this.store.remove(id);
     const t = new TurnItem(id, role, verbatim);
     this.turnRegistry.set(id, t);
     if (summary !== undefined) t.summary = summary;
     if (mergedInto !== undefined) t.mergedInto = mergedInto;
     t.rep = (rep === "SUMMARY" ? "SUMMARY" : "VERBATIM");
-    t.lastTouchTurn = this.store.turn;
-    t.createdTurn = this.store.turn;
-    this.store.add(t.toContextItem());
+    // Review B-2 fix (2026-08-23): restored turns carry their save-time
+    // stamps. The old path stamped store.turn (0 during the restore loop —
+    // setTurn runs AFTER the rows) and then store.add re-stamped 0: every
+    // restored turn arrived as if created this instant, zeroing decay age.
+    t.lastTouchTurn = lastTouchTurn ?? this.store.turn;
+    t.createdTurn = createdTurn ?? this.store.turn;
+    // addRestored, not add: add() re-stamps created/lastTouch to the CURRENT
+    // store turn — during restore that is 0, clobbering what we just set.
+    this.store.addRestored(t.toContextItem());
   }
   attachLens(id: string, target: string, ranges: Array<[number, number]>, baseBlockTurn: number, state: LensState, tag?: string, extra?: { selected?: string[] | undefined; prefixes?: string[] | undefined; projection?: string | undefined }): void {
     let f: Lens;
