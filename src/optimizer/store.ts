@@ -23,6 +23,16 @@ export class ContextStore {
     this.items.set(item.id, item);
   }
 
+  /** Review B-2 fix (2026-08-23): insert WITHOUT stamping — for session
+   * restore, where items carry their save-time createdTurn/lastTouchTurn.
+   * The raw add() path stamps the CURRENT store turn, which during the
+   * restore loop is still 0 (setTurn runs after the row loop) — silently
+   * zeroing every restored stamp. */
+  addRestored(item: ContextItem): void {
+    if (this.items.has(item.id)) throw new Error(`duplicate item id: ${item.id}`);
+    this.items.set(item.id, item);
+  }
+
   get(id: string): ContextItem | undefined {
     return this.items.get(id);
   }

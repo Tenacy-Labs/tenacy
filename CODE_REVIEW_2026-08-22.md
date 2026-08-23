@@ -43,13 +43,13 @@ digest-identical keeps.
 
 ## MAJORS — verified, tracked (recommended next session)
 
-- **A-M1** Exact-MCKP relief strand-blind (`void strand`): evicts front
+- ~~**A-M1** Exact-MCKP relief strand-blind~~ **FIXED** PR #17 (2026-08-22): strand cost = real prefix re-bill, wired into relief.: evicts front
   items, eats prefix re-bill. The docstring's strand pricing never wired.
-- **A-M2** T*=0 clamp defeated by `Math.max(1, floor(hValue))` at solver
+- ~~**A-M2** T*=0 clamp defeated~~ **FIXED** PR #17 (2026-08-22): non-positive hValue collects no lookahead. at solver
   L77 — over-budget window still collects a full FV turn. (Found
   independently by both A runs; first-A measured −2.125 leaked at T*=0.)
-- **A-M3** Thrash detector dead after B9 dedupe — thrashCount identically 0.
-- **A-M4** Gauge 4 wrong both directions (per-item vs per-token ρ;
+- ~~**A-M3** Thrash detector dead~~ **FIXED** PR #18 (2026-08-22): decision-comparison restore. — thrashCount identically 0.
+- ~~**A-M4** Gauge 4 wrong~~ **FIXED** PR #18 (2026-08-22): both halves. (per-item vs per-token ρ;
   (turn,id) join lets rejected row overwrite accepted keep).
 - ~~**A-M5** Prior-0 evidence branch: any access evidence quarters value~~
   **RESOLVED (owner rulings 2026-08-23, PR #19 + follow-up):** prior-0 kinds
@@ -58,32 +58,32 @@ digest-identical keeps.
   sticky-until-resolved (`err.resolve`, state-based floor, episodic glide);
   episodic prior split deferred to B-5 access data. ADR-0006 amendment note
   added; pins in `test/review-a-m5.test.ts` (RED-verified).
-- **A-M10** (first-A M2, measured) Tombstone-relief FV uses the UNCAPPED
+- ~~**A-M10** Tombstone-relief FV uncapped~~ **FIXED** PR #17 (2026-08-22): threads caps.hValue into tombFV.
   horizon (default 20) while keeps are T*-capped — over-budget windows
   overprice tombstones 0.419 util (419 MCKP units vs margin 0.15), biasing
   toward tombstoning exactly when the window is fullest. Threads
   `caps.hValue` into `tombFV`.
-- **A-M11** (first-A minor, promoted) New-item re-entry margin at solver
+- ~~**A-M11** New-item re-entry margin flat~~ **FIXED** PR #17 (2026-08-22).
   L245 uses flat `ps.hysteresisMargin` while incumbent comparison uses
   variance-scaled `effectiveHysteresis` — inconsistent hysteresis pricing
   across the two paths (and the NaN-immune one).
-- **A-M6** `hazardBasis` computed but never journaled — observed-hazard
+- ~~**A-M6** hazardBasis never journaled~~ **FIXED** PR #18 (2026-08-22): journaled as its own signal. — observed-hazard
   items pool into prior buckets, contaminating hazard calibration.
-- **A-M7** Hysteresis-held items keep §1 rot estimate; Map-with-last-row-
+- ~~**A-M7** Hysteresis-held rot estimate~~ **FIXED** PR #18 (2026-08-22).; Map-with-last-row-
   wins changed journaled rotShare 70× for held items.
-- **A-M8** Family-rescue flip unjournaled; relief sees stale utility —
+- ~~**A-M8** Family-rescue flip unjournaled~~ **FIXED** PR #18 (2026-08-22).; relief sees stale utility —
   family can render zero content while ledgers claim keeps.
-- **A-M9** sharedBillCredit over-credits in TTL-expiry windows (computed
+- ~~**A-M9** sharedBillCredit over-credits~~ **FIXED** PR #18 (2026-08-22): discounted suffix masses. (computed
   from undiscounted suffix masses).
-- **B-2** Session restore zeroes turn stamps (`store.add` clobbers restore
+- ~~**B-2** Session restore zeroes turn stamps~~ **FIXED (2026-08-23):** turn/notice rows persist and restore save-time createdTurn/lastTouchTurn via store.addRestored (no re-stamp); setTurn-order clobber eliminated.
   API's stamps; `setTurn` runs after the row loop).
-- **B-3** `blockWriteTurns` carry-forward zips new-chain digests against
+- ~~**B-3** blockWriteTurns positional zip~~ **FIXED (2026-08-23):** carry-forward keyed by PREVIOUS chain digests (recovered from incumbent.rendered), not positional zip against the new chain.
   old write-turns positionally — inverts TTL provenance on non-prefix
   changes.
-- **B-4** Merge-group lifecycle unsafe (failed merge strands members with
+- ~~**B-4** Merge-group lifecycle~~ **FIXED (2026-08-23):** validation-before-mutation (no stranding), member upstreams → [groupId] (solver coupling; verbatim fallback reachable), MergeRow round-trips valueMass + memberIds.
   no verbatim escape; purge fallback unreachable — upstreams never set;
   groups don't round-trip; asymmetric in-merge pricing).
-- **B-5** `noteLiveDelta` has no production caller — the lattice never
+- ~~**B-5** noteLiveDelta no production caller~~ **FIXED (2026-08-23):** turn-boundary drain feeds noteLiveDelta (v1 coarse: affected lines = range union; snapshot defaults to live substrate slice). Lattice arms in live flow.
   arms in live flow (test-only machinery). Largest live-path gap.
 
 ## MINORS (documented, backlog)
