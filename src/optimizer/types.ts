@@ -149,14 +149,14 @@ export interface TurnLedger {
 export interface ItemLedger {
   turn: number;
   id: string;
-  forecast: { mu0: number; alpha: number; deltaT: number; hazard: number; basis: "prior" | "observed"; expectedValue: number; futureValue?: number };
+  forecast: { mu0: number; alpha: number; deltaT: number; hazard: number; basis: "prior" | "observed"; hazardBasis?: "prior" | "observed"; expectedValue: number; futureValue?: number };
   utility: { benefit: number; cacheCost: number; rotShare: number; total: number };
   decision: "keep" | "drop" | "move" | "consolidate" | "promote" | "purge" | "summarize-intent";
   accepted: boolean;
   marginVsHysteresis: number;       // negative for rejected near-misses
   optionChosen?: string | undefined;
   /** Coupled-cost reason (0005): fragment forced by parent's aggregated choice. */
-  coupledReason?: "parent-carries-bytes" | "budget-tombstone" | "budget-tombstone-exact" | "group-purged-verbatim-fallback" | undefined;
+  coupledReason?: "parent-carries-bytes" | "budget-tombstone" | "budget-tombstone-exact" | "group-purged-verbatim-fallback" | "family-flip-header" | undefined;
 }
 
 export interface CacheLedger {

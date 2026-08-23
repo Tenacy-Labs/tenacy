@@ -234,7 +234,7 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
         margin = best.utility - incumbentOption.utility - hystMargin;
         if (margin < 0) {
           // Challenger fails hysteresis: keep incumbent; log near-miss
-          itemLedgers.push(ledgerFor(turn, item, profile, deltaT, hazard, evBasis, value, incumbentOption, "keep", true, -(hystMargin - (best.utility - incumbentOption.utility)), incumbentOption.o.id));
+          itemLedgers.push(ledgerFor(turn, item, profile, deltaT, hazard, evBasis, hazardBasis, value, incumbentOption, "keep", true, -(hystMargin - (best.utility - incumbentOption.utility)), incumbentOption.o.id));
           chosen.push({ item, option: incumbentOption.o, utility: incumbentOption.utility });
           // rejected challenger is data
           itemLedgers.push(rejectedLedger(turn, item, best, incumbentOption.utility + hystMargin - best.utility));
@@ -256,7 +256,7 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       }
     }
 
-    itemLedgers.push(ledgerFor(turn, item, profile, deltaT, hazard, evBasis, value, best, decision, accepted, margin, best.o.id));
+    itemLedgers.push(ledgerFor(turn, item, profile, deltaT, hazard, evBasis, hazardBasis, value, best, decision, accepted, margin, best.o.id));
     chosen.push({ item, option: best.o, utility: best.utility });
   }
 
@@ -293,6 +293,21 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     if (flipScore > asIsScore) {
       parentEntry.option = headerOpt;
       parentsChosen.set(parentId, headerOpt.id);
+      // Review A-M8 fix (2026-08-22): the flip mutates the parent's render
+      // from a byte-carrying option to the ~10t header WITHOUT journaling
+      // — the ledger kept optionChosen "full" (300t, §1 utility) while the
+      // placement was "split" (10t), and relief priced the parent at its
+      // pre-flip utility. Journal the flip as a move row keyed to the
+      // header option; the placement-stage write-back (A-M7) and any
+      // downstream join on optionChosen now sees the true render.
+      itemLedgers.push({
+        turn, id: parentId,
+        forecast: { mu0: ps.profiles[parentEntry.item.kind]?.mu0 ?? 1, alpha: ps.profiles[parentEntry.item.kind]?.alpha ?? 1, deltaT: turn - parentEntry.item.lastTouchTurn, hazard: ps.hazardPriors[parentEntry.item.kind] ?? 0.05, basis: "prior", hazardBasis: "prior", expectedValue: 0 },
+        utility: { benefit: 0, cacheCost: 0, rotShare: 0, total: 0 },
+        decision: "move", accepted: true, marginVsHysteresis: flipScore - asIsScore, optionChosen: headerOpt.id,
+        coupledReason: "family-flip-header",
+      });
+      parentEntry.utility = 0; // header is zeroValue; relief must price the truth
     }
   }
   for (const c of [...chosen]) {
@@ -417,7 +432,32 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     return prev !== undefined && prev.digest !== blockDigest(c.option.text);
   }).map((c) => {
     const prev = incumbent.rendered.get(c.item.id)!;
-    return { position: prev.position, mass: suffixMassAfter(incumbent, prev.position) };
+    // Review A-M9 fix (2026-08-22): discount each restructure's suffix
+    // mass by its TTL-expired tail. The per-item transactionCost already
+    // collapses the suffix term when every block after the position is
+    // TTL-expired (free restructure), but the credit was computed from
+    // the UNDISCOUNTED suffix masses — fabricating a credit in cold
+    // windows where nobody paid the suffix bill in the first place.
+    let mass = suffixMassAfter(incumbent, prev.position);
+    {
+      // Review A-M9 fix (2026-08-22): discount each restructure's suffix
+      // mass by its TTL-expired tail. The per-item transactionCost already
+      // collapses the suffix term when every block after the position is
+      // TTL-expired (free restructure), but the credit was computed from
+      // the UNDISCOUNTED suffix masses — fabricating a credit in cold
+      // windows where nobody paid the suffix bill in the first place.
+      const wts = incumbent.blockWriteTurns;
+      const bm = (incumbent as unknown as { blockMass?: readonly number[] }).blockMass;
+      if (wts !== undefined && bm !== undefined) {
+        for (let i = prev.position; i < bm.length && i < wts.length; i++) {
+          const wt = wts[i];
+          if (wt === undefined) continue;
+          if (turn - wt > ps.cache.ttlTurns) mass -= bm[i]!;
+        }
+        mass = Math.max(0, mass);
+      }
+    }
+    return { position: prev.position, mass };
   });
   const sharedBillCredit = sharedBillSurcharge(ps, restructures);
   const placements: Placement[] = [];
@@ -425,7 +465,17 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
   const suffixTokens = totalTokens; // for rot share attribution
   // Survey II.4 #1: Map keyed at push time — find() inside the placement
   // loop was O(n²) per solve (~10⁴ comparisons at 100 items).
-  const ledgerById = new Map(itemLedgers.map((l) => [l.id, l] as const));
+  // Review A-M7 fix (2026-08-22): keep the Map but make it the FIRST row
+  // per id — the solver pushes the accepted keep row before the rejected
+  // challenger; last-row-wins handed the write-back the rejected row,
+  // whose optionChosen never matched, so hysteresis-held items silently
+  // kept the §1 size-only rot estimate (70× off the placement-stage
+  // rotShare). First-accepted-row restores the pre-refactor semantics.
+  const ledgerById = new Map<string, ItemLedger>();
+  for (const l of itemLedgers) {
+    if (l.decision === "drop") continue;
+    if (!ledgerById.has(l.id)) ledgerById.set(l.id, l);
+  }
   for (const c of chosen) {
     position += 1;
     // Digest the bytes actually rendered — the chosen option's text — not
@@ -682,13 +732,19 @@ function fidelityPenalty(o: RenderOption, ps: ParamSet, item?: ContextItem): num
 
 function ledgerFor(
   turn: number, item: ContextItem, profile: { mu0: number; alpha: number },
-  deltaT: number, hazard: number, basis: "prior" | "observed", value: number,
+  deltaT: number, hazard: number, basis: "prior" | "observed", hazardBasis: "prior" | "observed", value: number,
   s: { o: RenderOption; cacheCost: number; fidelity: number; rotEstimate: number; utility: number; fv?: number },
   decision: ItemLedger["decision"], accepted: boolean, margin: number, optionId: string,
 ): ItemLedger {
   return {
     turn, id: item.id,
-    forecast: { mu0: profile.mu0, alpha: profile.alpha, deltaT, hazard, basis, expectedValue: value, futureValue: s.fv ?? 0 },
+    // Review A-M6 fix (2026-08-22): hazard basis is journaled as its own
+    // field. `basis` is the VALUE basis (evidence-priced?); previously an
+    // observed hazardOverride with no refEvidence journaled basis "prior"
+    // while forecast.hazard carried the observed value — reportHazard
+    // bucketed observed data into prior buckets, contaminating the very
+    // calibration it measures.
+    forecast: { mu0: profile.mu0, alpha: profile.alpha, deltaT, hazard, basis, hazardBasis, expectedValue: value, futureValue: s.fv ?? 0 },
     utility: { benefit: value, cacheCost: s.cacheCost, rotShare: s.rotEstimate, total: s.utility },
     decision, accepted, marginVsHysteresis: margin, optionChosen: optionId,
   };

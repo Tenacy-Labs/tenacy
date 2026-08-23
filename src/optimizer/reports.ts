@@ -91,7 +91,7 @@ export function reportHazard(corpus: Corpus): HazardReport {
   // signals — the ADR's bucketing discipline is load-bearing, not cosmetic.
   const groups = new Map<string, Array<{ forecast: number; observed01: number }>>();
   for (const it of corpus.items) {
-    const key = it.forecast.basis + ":" + kindFromId(it.id);
+    const key = (it.forecast.hazardBasis ?? it.forecast.basis) + ":" + kindFromId(it.id);
     const observed01 = it.decision === "drop" || it.decision === "purge" ? 1 : 0;
     const list = groups.get(key) ?? [];
     list.push({ forecast: it.forecast.hazard, observed01 });
@@ -187,7 +187,15 @@ export function reportDecision(corpus: Corpus): DecisionReport {
     for (let i = 0; i < sorted.length - 1; i++) {
       const a = sorted[i]!;
       const b = sorted[i + 1]!;
-      if (a.turn + 3 >= b.turn && a.accepted !== b.accepted) {
+      // Review A-M3 fix (2026-08-22): compare DECISIONS, not accepted flags.
+      // The B9 dedupe (accepted rows only) made a.accepted !== b.accepted
+      // unreachable — thrashCount was identically 0 and genuine
+      // keep→drop→keep reversals (the report's whole purpose: ADR-0003
+      // re-solve instability) were never recorded. Among accepted rows the
+      // state toggle is drop/purge vs keep/move/consolidate/promote.
+      const aOut = a.decision === "drop" || a.decision === "purge";
+      const bOut = b.decision === "drop" || b.decision === "purge";
+      if (a.turn + 3 >= b.turn && aOut !== bOut) {
         reversals.push({ id, fromTurn: a.turn, toTurn: b.turn, decisions: [a.decision, b.decision] });
       }
     }
@@ -316,16 +324,30 @@ export function reportGauges(corpus: Corpus, ps: ParamSet, beliefGapInput?: Beli
   // Gauge 4 — dead-token share: rendered tokens whose forecast expectedValue
   // sits below the reservation price ρ (squatting seats without paying rent).
   // Denominator: forecast-covered rendered tokens (item-ledger × layout join).
+  // Review A-M4 fix (2026-08-22), both halves:
+  // (a) ρ is per-token by the solver's own seat test (v > ρ × tokens,
+  //     solver.ts §1) — an item is dead iff ev < ρ × tokens, NOT ev < ρ
+  //     (per-item compare let 1000t squatters pass as "alive").
+  // (b) the join key must pick the ACCEPTED row: the solver emits the
+  //     accepted keep before the rejected challenger; last-row-wins kept
+  //     the challenger's near-zero ev, marking healthy seat-paying items
+  //     100% dead.
   let deadNum = 0;
   let deadDen = 0;
   const forecastsByTurn = new Map<string, number>();
-  for (const i of corpus.items) forecastsByTurn.set(`${i.turn}:${i.id}`, i.forecast.expectedValue);
+  for (const i of corpus.items) {
+    if (!i.accepted) continue; // rejected challenger rows are near-miss data, not state
+    const k = `${i.turn}:${i.id}`;
+    // first accepted row wins — later duplicates for the same key cannot
+    // overwrite the row that describes the rendered state
+    if (!forecastsByTurn.has(k)) forecastsByTurn.set(k, i.forecast.expectedValue);
+  }
   for (const t of corpus.turns) {
     for (const e of t.layout) {
       const ev = forecastsByTurn.get(`${t.turn}:${e.id}`);
       if (ev === undefined) continue;
       deadDen += e.tokens;
-      if (ev < ps.reservationPrice) deadNum += e.tokens;
+      if (ev < ps.reservationPrice * e.tokens) deadNum += e.tokens;
     }
   }
   const deadTokenShare = deadDen > 0 ? deadNum / deadDen : null;
