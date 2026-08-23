@@ -123,6 +123,14 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
         : deltaT;
       if (floorClockT <= profile.floorTurns) value = Math.max(value, profile.floorValue);
     }
+    // A-M5 owner ruling (2026-08-23): state-based error stickiness. An
+    // UNRESOLVED error keeps its floor at ANY age — time was a proxy for
+    // "dealt with"; the real variable is the lifecycle state. Resolution
+    // (resolvedTurn set) lifts the floor; the item then glides out at
+    // profile alpha (episodic-speed) so settled lessons fall off.
+    if (profile.floorWhileUnresolved !== undefined && item.resolvedTurn === undefined) {
+      value = Math.max(value, profile.floorWhileUnresolved);
+    }
     if (item.valueBump !== undefined && turn <= item.valueBump.untilTurn) {
       value += item.valueBump.amount;
     }

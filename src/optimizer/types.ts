@@ -74,6 +74,11 @@ export interface ContextItem {
   summary?: string | undefined;
   /** ADR-0006 §2.1: per-item re-reference evidence ledger → λᵢ posterior (absent → kind prior). */
   refEvidence?: { hits: number[]; accessClass: "cited" | "distilledFrom" | "searchHit" | "reExpanded" } | undefined;
+  /** A-M5 owner ruling 2026-08-23: error-lifecycle stamp. Unset → the error
+   * is LIVE and keeps its value floor indefinitely (sticky until dealt
+   * with). Set → resolved: floor lifts and the item glides out at profile
+   * alpha (episodic-speed decay) so settled lessons fall off. */
+  resolvedTurn?: number | undefined;
   /** ADR-0006 §2.2: substrate recoverability class (absent → "unknown"). */
   recoverability?: "verbatim-preserving" | "rereadable" | "lossy" | "unknown" | undefined;
   /** ADR-0006 §2.3: content-churn descriptor (absent → prior behavior). */

@@ -220,21 +220,22 @@ describe("solver", () => {
     expect(a.itemLedgers).toEqual(b.itemLedgers);
   });
 
-  test("error evidence holds a value floor (A1)", () => {
+  test("error evidence holds a value floor (A1; A-M5 state-based ruling 2026-08-23)", () => {
     const p1 = paramSetV1("mock-1");
-    const p2 = paramSetV1("mock-1");
     const err = new NoticeItem("e1", "error", "cell threw: cannot read property of undefined");
     const ep = makeTurnItem("ep1", "model", "ok", 1);
     const store1 = new ContextStore(); store1.add(err.toContextItem()); store1.add(ep);
-    const store2 = new ContextStore(); store2.add(err.toContextItem()); store2.add(ep);
-    // simulate 10 turns of decay: error keeps floor via profile (floorTurns=8)
+    // simulate 10 turns of decay: UNRESOLVED error keeps the state floor at
+    // any age (floorWhileUnresolved — sticky until dealt with, owner ruling)
     const r1 = solve(store1.snapshot(), { rendered: new Map(), totalTokens: 0, blockCount: 0 }, p1, 10);
     const led1 = r1.itemLedgers.find((l) => l.id === "e1")!;
     expect(led1.forecast.mu0).toBe(p1.profiles.error.mu0);
     expect(led1.decision === "drop" || led1.decision === "keep").toBe(true);
-    // value with floor at deltaT=10 exceeds plain power-law decay
-    const vFloor = Math.max(p2.profiles.error.mu0 * Math.pow(11, -p2.profiles.error.alpha), p2.profiles.error.floorValue ?? 0);
-    expect(vFloor).toBeGreaterThan(1.5);
+    // unresolved: floor holds (2.0) despite 10 turns of α=1.0 decay
+    expect(led1.forecast.expectedValue).toBeGreaterThanOrEqual(p1.profiles.error.floorWhileUnresolved ?? 0);
+    // the state floor exceeds plain power-law decay at this age
+    expect(p1.profiles.error.floorWhileUnresolved ?? 0)
+      .toBeGreaterThan(p1.profiles.error.mu0 * Math.pow(11, -p1.profiles.error.alpha));
   });
 });
 
