@@ -14,7 +14,7 @@
  * free (the ADR's free-restructure moment).
  */
 import { describe, test, expect } from "bun:test";
-import { suffixMassAfter, sharedBillSurcharge, ttlWindowFree } from "../src/optimizer/suffix.ts";
+import { suffixMassAfter, sharedBillSurcharge } from "../src/optimizer/suffix.ts";
 import { paramSetV1 } from "../src/optimizer/params.ts";
 import { solve } from "../src/optimizer/solver.ts";
 import { estTokens } from "../src/optimizer/renderer.ts";
@@ -97,27 +97,4 @@ describe("ADR-0006 §4 — solver-level exact suffix + TTL window", () => {
 });
 
 describe("ADR-0006 §4 — TTL-expiry collapse (free restructures)", () => {
-  test("suffix terms after an expired block collapse to zero", () => {
-    const ps = paramSetV1("mock");  // ttlTurns 6
-    const blocks = [
-      { position: 1, mass: 100, writeTurn: 1 },
-      { position: 2, mass: 400, writeTurn: 10 },  // rewritten recently
-      { position: 3, mass: 250, writeTurn: 10 },
-    ];
-    // block at position 1 is 10 turns old at turn 10 → expired → free suffix
-    expect(ttlWindowFree(ps, blocks, 1, 10)).toBe(true);
-    expect(ttlWindowFree(ps, blocks, 2, 10)).toBe(false);
-  });
-
-  test("restructures batched into the expiry window carry no suffix bill", () => {
-    const ps = paramSetV1("mock");
-    const blocks = [
-      { position: 1, mass: 100, writeTurn: 1 },
-      { position: 2, mass: 400, writeTurn: 1 },
-    ];
-    // turn 8: both blocks TTL-expired (written turn 1, ttl 6) → the whole
-    // suffix is cold; restructuring anything this turn costs own-write only.
-    expect(ttlWindowFree(ps, blocks, 1, 8)).toBe(true);
-    expect(ttlWindowFree(ps, blocks, 2, 8)).toBe(true);
-  });
 });

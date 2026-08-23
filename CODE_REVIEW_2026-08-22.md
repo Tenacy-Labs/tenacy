@@ -86,21 +86,34 @@ digest-identical keeps.
 - ~~**B-5** noteLiveDelta no production caller~~ **FIXED (2026-08-23):** turn-boundary drain feeds noteLiveDelta (v1 coarse: affected lines = range union; snapshot defaults to live substrate slice). Lattice arms in live flow.
   arms in live flow (test-only machinery). Largest live-path gap.
 
-## MINORS (documented, backlog)
+## MINORS — ALL RESOLVED (2026-08-23, PR batch)
 
-A: m1 purge counted as eviction in Gauge 2; m2 dead code (zoneOf, estTokens
-import, hCache test-only); m3 relief tombFV inconsistencies vs §1. B: B-6
-split-fragment duplicate-add (fixed + pinned this session —
-`test/fragment-crash.test.ts`); B-7 error-evidence degrades to notice across
-save/restore; B-8 watcher.deltas unbounded growth, zero readers; B-10
-transient-retry matcher false positives ("rate" substring); B-11 /resume
-with same lens throws; B-12 code: prefix stripping inconsistent. C: C-m1
-battery wholesale-replace vacuous assertion — REPAIRED this session into a
-falsifying test that caught the NS dangling-prefix defect (fixed with
-root-walk fallback); C-m2 review-fixes.test.ts M5/B12/B20 prefix-stable
-only; C-m9 suite lacks hazardBasis coverage. First-A adds: ttlWindowFree
-now also dead-export (only own-file tests consume); m2's H-floor leak is
-the T*=0 case of A-M2.
+- ~~A-m1 purge counted as eviction in Gauge 2~~ **FIXED:** Gauge 2 counts
+  accepted drops only; purge is deliberate policy (re-expansion after purge
+  is recall, not wrong-drop).
+- ~~A-m2 dead code~~ **REMOVED:** zoneOf (static), estTokens import in
+  solver, ttlWindowFree (export + own-file tests). hCache retained —
+  structurally consumed by capHorizons and pinned in horizon tests.
+- ~~A-m3 relief tombFV vs §1~~ **FIXED:** relief prices tombFV off
+  effectiveDeltaT (churn-credit clock), same as §1 — a purged item is
+  churn-renewed by definition.
+- ~~B-6 split-fragment duplicate-add~~ fixed earlier (fragment-crash pin).
+- ~~B-7 error-evidence degrades to notice across save/restore~~ fixed with
+  A-M5 batch (notice rows round-trip kind + resolvedTurn).
+- ~~B-8 watcher.deltas unbounded, zero readers~~ **FIXED:** ring-capped at
+  1000 (most recent kept).
+- ~~B-10 transient-retry "rate" substring~~ **FIXED:** word-boundary
+  matcher — "generate"/"moderate" no longer retry; genuine 429/"rate limit"
+  still does (pinned both ways).
+- ~~B-11 /resume same lens throws~~ **FIXED:** restore clears the prior
+  lens row before re-attach (idempotent).
+- ~~B-12 code: prefix stripping inconsistent~~ **FIXED:** codeLens
+  canonicalizes — bare and code:-prefixed targets mint ONE lens id.
+- ~~C-m1 vacuous battery assertion~~ repaired earlier (falsifying test).
+- ~~C-m2 prefix-stable-only asserts~~ **HARDENED:** full-value equality
+  pins (range + honest stamps).
+- ~~C-m9 no hazardBasis coverage~~ **PINNED:** observed override →
+  hazardBasis:observed; prior default → prior.
 
 ## Security
 

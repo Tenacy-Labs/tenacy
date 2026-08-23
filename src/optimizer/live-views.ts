@@ -93,6 +93,10 @@ export class TurnBoundaryWatcher {
     }
     this.pending.clear();
     this.deltas.push(...out);
+    // Review B-8 fix (2026-08-23): the delta journal had zero readers and no
+    // bound — a long-lived watcher grew it without limit. Ring-cap at 1000:
+    // keep the MOST RECENT deltas (diagnostic tail), drop the oldest.
+    if (this.deltas.length > 1000) this.deltas.splice(0, this.deltas.length - 1000);
     return out;
   }
 

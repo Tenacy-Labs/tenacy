@@ -9,7 +9,6 @@
  *    provider charges ONE cache discontinuity per position (the leftmost
  *    changed block); per-item suffix summation overcounts when several
  *    items restructure in one turn, and this credit corrects it;
- *  - ttlWindowFree: blocks whose cached age already exceeds ttlTurns are
  *    cold — suffix terms after them collapse to zero, so restructures
  *    batched into an expiry window are free (§4's free-restructure moment).
  */
@@ -52,14 +51,3 @@ export function sharedBillSurcharge(
   return -(overcount / 1000) * (ps.cache.pricePer1kUncached - ps.cache.pricePer1kCached);
 }
 
-/** True when the suffix after `position` is TTL-expired (cold) at `turn`. */
-export function ttlWindowFree(
-  ps: ParamSet,
-  blocks: { position: number; mass: number; writeTurn: number }[],
-  position: number,
-  turn: number,
-): boolean {
-  const b = blocks.find((x) => x.position === position);
-  if (b === undefined) return false;
-  return turn - b.writeTurn > ps.cache.ttlTurns;
-}
