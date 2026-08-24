@@ -79,6 +79,10 @@ export interface LensHandle {
 ```
 
 - `LensHandle` methods are envelope ops. `watch()` is the 0002d §7 toggle surface. `digest()` feeds the CacheModel digest chain.
+- **Uniform manipulation protocol (owner ruling 2026-08-24, "debugger pattern for all lenses").** The LensHandle protocol above is MANDATORY for every lens family — kernel substrates and plugin families alike. One manipulation vocabulary for all lenses, present and future; registration rejects a family whose `.d.ts` omits it; the model learns the debugger idiom once.
+- **Two-tier op doctrine (reconciles 0002d structural algebra with 0002g signals-not-overrides).** Structural ops (`expand`/`focus`/`release`) are direct, deterministic, idempotent — the agent authors its own selections; the solver then prices the render. Economic ops (`watch`, and promote/demote via ctx.*) are signals the solver may overrule — churn revocation applies uniformly; a lens cannot hold the store hostage. ("Shrink" as discussed = `release`, the ruled 0002d name.)
+- **Graceful degradation contract.** A family that cannot support a mode must still expose the method and answer honestly — `watch("live")` on a static-snapshot lens records `frozen-only` — uniform shape, honest semantics. Omitting the surface is a registration error.
+- **DAP payoff.** Uniform protocol means the debugger facade (§4) generalizes for free: every lens browses as a variable tree with identical lazy-expand and watch semantics in any front-end. No per-lens adapter logic.
 - Handles are **non-deletable from the cell side**: `delete` is not in the protocol. Release/purge goes through solver-priced ops (`release()`, solver liquidation of oversized lenses) — economics, not deletion.
 
 ### 2c. Lens family registration (ADR-0001 plugin surface #7)
@@ -173,20 +177,21 @@ Sections:
 - Every tool call materializes a typed object — line 23
 - The namespace layout (curated) — line 41
 - Handle protocol — line 67
-- Lens family registration — line 84
-- Persistent handle objects across turns — line 99
-- RLM purity: the complete chain — line 103
-- Debugger facade: DAP over the ns lens — line 107
-- Sequencing — line 141
-- Consequences — line 148
-- Rejected alternatives — line 156
+- Lens family registration — line 88
+- Persistent handle objects across turns — line 103
+- RLM purity: the complete chain — line 107
+- Debugger facade: DAP over the ns lens — line 111
+- Sequencing — line 145
+- Consequences — line 152
+- Rejected alternatives — line 160
 
 Key points:
 
 - Every tool call materializes a typed object — handles, registries, lenses; two channels per call; the object is the handle — §1 — line 23
 - The namespace layout: lenses/ctx/ops/rlm top-level, curated; `lenses.ns` non-deletable (safety, not economics) — §2 — line 41
-- Lens family registration via `lenses()` on Plugin; declarations review-gated; registry non-configurable — §2c — line 84
-- Handles persist as records; revival re-attaches (state revival under persistence invariants) — §2d — line 99
-- RLM purity chain: tool call → typed object → namespace entry → priced ContextItem — §3 — line 103
-- Debugger facade: DAP as one consumer of the ns lens deltas; facade never raw attach; reads operator-privileged, writes ride the intent pipeline; breakpoints rejected — §4 — line 107
-- Freeze the namespace charter after two real consumers — Sequencing — line 141
+- Uniform LensHandle protocol mandatory for ALL lens families (debugger pattern: explicit expand/shrink, watch modes live/polled/frozen); two-tier doctrine — structural ops direct+idempotent, economic ops solver-overruled signals; degradation contract (frozen-only answers honestly) — §2b — line 67
+- Lens family registration via `lenses()` on Plugin; declarations review-gated; registry non-configurable — §2c — line 88
+- Handles persist as records; revival re-attaches (state revival under persistence invariants) — §2d — line 103
+- RLM purity chain: tool call → typed object → namespace entry → priced ContextItem — §3 — line 107
+- Debugger facade: DAP as one consumer of the ns lens deltas; facade never raw attach; reads operator-privileged, writes ride the intent pipeline; breakpoints rejected — §4 — line 111
+- Freeze the namespace charter after two real consumers — Sequencing — line 145
