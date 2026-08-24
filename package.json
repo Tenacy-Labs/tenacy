@@ -4,7 +4,6 @@
     "@ai-sdk/openai": "^4.0.45",
     "@ai-sdk/openai-compatible": "^3.0.34",
     "@ai-sdk/xai": "^4.0.42",
-    "@connectotron/knapsack": "file:vendor/knapsack",
     "@opentui/core": "^0.5.6",
     "@opentui/react": "^0.5.6",
     "ai": "^7.0.74",

@@ -8,7 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import { solve } from "../src/solve.ts";
 import { solveDpSoa } from "../src/dp-soa.ts";
-import { solveDpNative, nativeAvailable, _resetNativeCache } from "../src/native.ts";
+import { solveDpNative, nativeAvailable, _resetNativeCache, tripleFor } from "../src/native.ts";
 import type { ReducedGroup } from "../src/types.ts";
 
 function xorshift32(seed: number) {
@@ -245,5 +245,30 @@ describe("default dpKernel policy (PR #5)", () => {
         throw new Error(`mismatch at ${i}: ${d.value} vs ${r.value}`);
       }
     }
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// tripleFor: the filename contract for the wide prebuilt matrix (PR #6,
+// owner ruling 2026-08-24). Every matrix triple must map; the extension
+// follows the platform convention (.dylib/.so/.dll); unknown -> null.
+describe("tripleFor: prebuilt filename contract", () => {
+  test("all five matrix triples map with platform-correct extensions", () => {
+    expect(tripleFor("darwin", "arm64")).toEqual({ t: "aarch64-apple-darwin", ext: ".dylib" });
+    expect(tripleFor("darwin", "x64")).toEqual({ t: "x86_64-apple-darwin", ext: ".dylib" });
+    expect(tripleFor("linux", "x64")).toEqual({ t: "x86_64-unknown-linux-gnu", ext: ".so" });
+    expect(tripleFor("linux", "arm64")).toEqual({ t: "aarch64-unknown-linux-gnu", ext: ".so" });
+    expect(tripleFor("win32", "x64")).toEqual({ t: "x86_64-pc-windows-msvc", ext: ".dll" });
+  });
+
+  test("the committed artifact keeps its exact filename (aarch64-apple-darwin.dylib)", () => {
+    const t = tripleFor("darwin", "arm64")!;
+    expect(`${t.t}${t.ext}`).toBe("aarch64-apple-darwin.dylib");
+  });
+
+  test("unsupported hosts map to null (fallback path)", () => {
+    expect(tripleFor("freebsd", "x64")).toBeNull();
+    expect(tripleFor("linux", "ia32")).toBeNull();
   });
 });
