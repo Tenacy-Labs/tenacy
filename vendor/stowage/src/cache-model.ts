@@ -34,6 +34,19 @@ interface BelievedBlock {
   digest: string;
   tokens: number;
   turn: number;
+  wallTimeMs?: number | undefined;
+}
+
+/** Number of provider billing quanta touched by a token mass. */
+export function billingQuanta(tokens: number, granularity: number): number {
+  if (!Number.isFinite(tokens) || tokens <= 0) return 0;
+  if (!Number.isFinite(granularity) || granularity <= 0) throw new RangeError("granularity must be positive");
+  return Math.ceil(tokens / granularity);
+}
+
+/** Price at the next explicit provider billing breakpoint. */
+export function breakpointPrice(tokens: number, pricePer1k: number, granularity: number): number {
+  return (billingQuanta(tokens, granularity) * granularity / 1000) * pricePer1k;
 }
 
 export interface UsageReport {
@@ -51,12 +64,17 @@ export class CacheModel {
   constructor(private params: CacheModelParams) {}
 
   /** Expected cached prefix for a candidate render chain. */
-  expectedHit(blocks: Block[]): { hitTokens: number; price: number } {
+  expectedHit(blocks: Block[], wallTimeMs?: number): { hitTokens: number; price: number } {
     let hit = 0;
     for (let i = 0; i < blocks.length && i < this.chain.length; i++) {
       const b = blocks[i]!;
       const believed = this.chain[i]!;
-      const fresh = this.turn - believed.turn <= this.params.ttlTurns;
+      const hasWallClock = this.params.ttlMs !== undefined
+        && wallTimeMs !== undefined
+        && believed.wallTimeMs !== undefined;
+      const fresh = hasWallClock
+        ? wallTimeMs - believed.wallTimeMs! <= this.params.ttlMs!
+        : this.turn - believed.turn <= this.params.ttlTurns;
       if (b.digest === believed.digest && fresh) hit += b.tokens;
       else break; // prefix property: first mismatch ends the cached run
     }
@@ -113,9 +131,14 @@ export class CacheModel {
   }
 
   /** Commit the new chain as belief (call after each model call). */
-  update(blocks: Block[]): void {
+  update(blocks: Block[], wallTimeMs?: number): void {
     this.turn += 1;
-    this.chain = blocks.map((b) => ({ digest: b.digest, tokens: b.tokens, turn: this.turn }));
+    this.chain = blocks.map((b) => ({
+      digest: b.digest,
+      tokens: b.tokens,
+      turn: this.turn,
+      ...(wallTimeMs === undefined ? {} : { wallTimeMs }),
+    }));
   }
 
   believedChain(): readonly string[] {

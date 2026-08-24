@@ -21,14 +21,9 @@ solve moves here.
 2. **Dependency edge:** stowage → `@connectotron/knapsack`
    (`file:vendor/knapsack`, the kernel's pin v0.1.1). knapsack stays
    pure integer MCKP; stowage never imports kernel code (acyclic).
-3. **Kernel seam:** agent-kernel commits the stowage source tree at
-   `vendor/stowage/` and its eight former modules become re-export
-   shims over the relative source paths — all kernel import sites (16
-   files, 871 tests at port time) unchanged. The kernel deliberately
-   does **not** declare `@connectotron/stowage` as a package
-   dependency: the vendored tree is the only loadable copy, so legacy
-   shims and any package-root import cannot fork into two module
-   graphs (review M1, PR #24).
+3. **Kernel seam:** agent-kernel vendors stowage (`file:vendor/stowage`)
+   and its eight former modules become re-export shims over the package
+   root — all kernel import sites (16 files, 869 tests) unchanged.
 4. **Contract:** the port is behavior-preserving. The kernel suite must
    stay green without editing a single kernel test — that is the
    acceptance test of the move.
@@ -41,9 +36,5 @@ solve moves here.
   delta fragments as items, continuation-value DP, patch retirement.
 - Dual vendoring (kernel → stowage → knapsack) is deliberate pin
   isolation; propagation is a ruled act, never opportunistic.
-- The kernel deliberately omits a declared stowage package dependency:
-  with the vendored tree as the only loadable copy, the dual-graph
-  hazard (review M1) cannot arise. Re-vendoring is a copy operation;
-  bun.lock is untouched by the seam.
 - stowage's `bun test` also runs the vendored knapsack suite — a free
   upstream tripwire.

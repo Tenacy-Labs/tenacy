@@ -3,3 +3,4 @@ node_modules/
 .DS_Store
 .env
 .agent-kernel/
+vendor/knapsack/native/target/

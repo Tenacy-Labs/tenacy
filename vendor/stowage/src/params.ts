@@ -36,6 +36,8 @@ export interface CacheModelParams {
   granularity: number;
   /** Believed TTL in turns (Anthropic 5-min; we model turns). */
   ttlTurns: number;
+  /** Optional wall-clock TTL. Used only when both sides carry wall time. */
+  ttlMs?: number | undefined;
   /** Per-1k-token prices (USD) — uncached input. */
   pricePer1kUncached: number;
   pricePer1kCached: number;

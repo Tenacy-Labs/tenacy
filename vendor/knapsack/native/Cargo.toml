@@ -1,0 +1,24 @@
+[package]
+name = "knapsack-native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "knapsack_native"
+crate-type = ["cdylib"]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+# panic strategy left at default (unwind): the FFI edge wraps the body in
+# catch_unwind (see lib.rs) so residual panics become rc -4 instead of
+# aborting the host process (PR4 review C1 belt-and-braces).
+
+# Max-compat policy (2026-08-24 ruling): one source, no nightly, no
+# -C target-cpu overrides. aarch64: NEON is baseline (guaranteed by the
+# base ABI), gather loop carries #[target_feature(enable = "neon")].
+# x86_64: baseline SSE2 (guaranteed since 2003 x86-64), the interchanged
+# max-plus scan auto-vectorizes on it with NO AVX assumption. Other
+# arches compile the same scalar loop and stay correct (slow) rather
+# than failing to build. RUSTFLAGS must not add target-features.

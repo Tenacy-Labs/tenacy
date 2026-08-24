@@ -25,6 +25,25 @@ export type LensState = "FULL" | "BASE+DELTA" | "CONSOLIDATED" | "SPLIT" | "PURG
 /** Conversation representations — ADR-0002f §2. */
 export type ConvoRep = "VERBATIM" | "SUMMARY" | "MERGED";
 
+/**
+ * Optional sequence-position contract for independently rendered base/delta
+ * blocks.  Producers own the accumulated migration credit; the solver spends
+ * it only when a requested fuse move covers the intervening suffix bill.
+ */
+export interface SequencePosition {
+  /** Stable file/object lineage. Members with the same parent form a chain. */
+  parentId: string;
+  /** Arrival order inside the lineage (base is normally zero). */
+  ordinal: number;
+  role: "base" | "delta";
+  /** Explicit arrival-precedence edge; normally the prior delta/base item id. */
+  predecessorId?: string | undefined;
+  /** Tail is the backwards-compatible/default delta policy; fuse co-locates. */
+  placement?: "tail" | "fuse" | undefined;
+  /** Accumulated file-migration credit, denominated in token mass. */
+  migrationCreditTokens?: number | undefined;
+}
+
 /** Render option presented by an item — ADR-0004 §5–6 (option surface). */
 export interface RenderOption {
   /** Stable option id (item-scoped). */
@@ -40,6 +59,8 @@ export interface RenderOption {
   text: string;
   /** Renders no content — scores zero value (purge/compact-head/range-drop): you cannot derive utility from bytes you do not render. */
   zeroValue?: boolean | undefined;
+  /** Option-specific sequence semantics; overrides the item's metadata. */
+  sequence?: SequencePosition | undefined;
 }
 
 /** The stored record — never rendered directly (ADR-0002 §2). */
@@ -52,6 +73,8 @@ export interface ContextItem {
   serialize(): string;
   /** Render options presented to the solver (ADR-0004: ≥1 purely-additive where possible). */
   options(): RenderOption[];
+  /** Base/delta lineage metadata. Absent preserves the pre-ADR-0001 path. */
+  sequence?: SequencePosition | undefined;
   /** Upstream item ids (DAG — ADR-0002c §5); leaf validation covers the subtree. */
   upstreams?: readonly string[] | undefined;
   lastRender?: { position: number; digest: string } | undefined;  // render memory
@@ -162,6 +185,19 @@ export interface ItemLedger {
   optionChosen?: string | undefined;
   /** Coupled-cost reason (0005): fragment forced by parent's aggregated choice. */
   coupledReason?: "parent-carries-bytes" | "budget-tombstone" | "budget-tombstone-exact" | "group-purged-verbatim-fallback" | "family-flip-header" | undefined;
+  /** Position-regret row for an accepted or rejected deterministic move. */
+  positionRegret?: {
+    fromPosition: number;
+    toPosition: number;
+    suffixBillTokens: number;
+    migrationCreditTokens: number;
+    regretTokens: number;
+    accepted: boolean;
+    reversal: boolean;
+    reason: "credit-covered" | "insufficient-credit";
+  } | undefined;
+  /** Defect signal: an accepted move exactly reverses the prior solve's move. */
+  moveThrash?: boolean | undefined;
 }
 
 export interface CacheLedger {
