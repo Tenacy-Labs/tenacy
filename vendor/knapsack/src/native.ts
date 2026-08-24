@@ -23,14 +23,26 @@ interface NativeLib {
 
 let cached: NativeLib | null | undefined;
 
-function triple(): string | null {
-  const os = process.platform;
-  const arch = process.arch;
-  if (os === "darwin" && arch === "arm64") return "aarch64-apple-darwin";
-  if (os === "darwin" && arch === "x64") return "x86_64-apple-darwin";
-  if (os === "linux" && arch === "arm64") return "aarch64-unknown-linux-gnu";
-  if (os === "linux" && arch === "x64") return "x86_64-unknown-linux-gnu";
+export interface TripleExt {
+  readonly t: string;
+  readonly ext: string;
+}
+
+/** Host (platform, arch) -> artifact triple + library extension.
+ *  Pure and exported for unit tests; the committed filename contract is
+ *  `native/prebuilt/{t}{ext}` (e.g. aarch64-apple-darwin.dylib,
+ *  x86_64-unknown-linux-gnu.so, x86_64-pc-windows-msvc.dll). */
+export function tripleFor(os: string, arch: string): TripleExt | null {
+  if (os === "darwin" && arch === "arm64") return { t: "aarch64-apple-darwin", ext: ".dylib" };
+  if (os === "darwin" && arch === "x64") return { t: "x86_64-apple-darwin", ext: ".dylib" };
+  if (os === "linux" && arch === "arm64") return { t: "aarch64-unknown-linux-gnu", ext: ".so" };
+  if (os === "linux" && arch === "x64") return { t: "x86_64-unknown-linux-gnu", ext: ".so" };
+  if (os === "win32" && arch === "x64") return { t: "x86_64-pc-windows-msvc", ext: ".dll" };
   return null;
+}
+
+function triple(): TripleExt | null {
+  return tripleFor(process.platform, process.arch);
 }
 
 function tryLoad(): NativeLib | null {
@@ -43,7 +55,7 @@ function tryLoad(): NativeLib | null {
       ? override
       : t === null
         ? null
-        : `${import.meta.dir}/../native/prebuilt/${t}.dylib`;
+        : `${import.meta.dir}/../native/prebuilt/${t.t}${t.ext}`;
     if (path === null) return cached;
     const lib = dlopen(path, {
       knapsack_dp: {

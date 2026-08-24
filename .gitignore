@@ -8,3 +8,4 @@ test/tmp-cw/
 .agent-kernel/
 bench/corpus/dumps/
 bench/corpus/fixtures/thrash.log
+vendor/knapsack/native/target/
