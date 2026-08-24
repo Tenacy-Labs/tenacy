@@ -2,7 +2,7 @@
   "name": "@connectotron/stowage",
   "version": "0.1.0",
   "private": true,
-  "description": "Context-layout solver — joint representation × position × timing optimization for LLM context windows (price-coupled decomposition over @connectotron/knapsack)",
+  "description": "Context-layout solver \u2014 joint representation \u00d7 position \u00d7 timing optimization for LLM context windows (price-coupled decomposition over @connectotron/knapsack)",
   "license": "UNLICENSED",
   "type": "module",
   "repository": {
@@ -17,7 +17,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@connectotron/knapsack": "file:../knapsack"
+    "@connectotron/knapsack": "workspace:*"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",
