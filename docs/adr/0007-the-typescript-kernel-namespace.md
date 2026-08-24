@@ -104,6 +104,38 @@ Plugins register lens families through `lenses()`; the loader validates the `.d.
 
 Handles persist across turns via snapshots (Bun: closures do not serialize — but handles are frozen records of (family, id, coordinator-state pointer), so snapshot serializes the record, and the coordinator re-materializes the handle at boot). This is "state revival" under the persistence invariants: the *record* persists; the *referent* is coordinator-side; revival re-attaches.
 
+### 2e. Writable handles: the mutation surface (owner ruling 2026-08-24)
+
+Lens handles may expose substrate mutation helpers when the substrate is
+writable and the holder is granted. The file lens is the type specimen:
+`patch(structuredPatch)`, `replace(anchor, newText)`, `append(text)` —
+with `replace` anchored to symbols where the substrate is code, so line
+shifts rebase instead of invalidating.
+
+- **Writability is a type-level capability.** `open(path)` returns a
+  read-only handle whose declaration carries no mutation methods;
+  granted `open(path, { mode: "rw" })` returns
+  `WritableFileHandle extends LensHandle`. The cell gate rejects
+  mutation calls on read-only handles statically. Default is read-only;
+  write surfaces exist only where a grant admits them (ADR-0001 grants).
+- **Writes are commits.** A write through a handle emits the same
+  versioned commit an external substrate change produces — subscribers
+  (code lens re-parse, live views, ns deltas) update coherently through
+  the one event system (0002d). Symbol anchors remap; receipts carry
+  `digest`, `changedRanges`, and where applicable a `symbolDiff`.
+- **Mutation ops are a third op class.** The two-tier doctrine of 2b
+  governs the view (structural vs economic); mutations are capability
+  actions — journaled, grant-mediated, world-affecting (§1). Receipts
+  are typed values in cell scope AND priced ContextItems (two-channel).
+- **Conflict policy is honest failure.** If the substrate changed since
+  the lens snapshot (mtime/digest mismatch), the write fails with
+  "substrate changed; re-expand" — never a silent fuzzy patch.
+  Deterministic exact-match-or-fail for `replace`; no heuristic matching
+  on the write path.
+- **Debugger facade stays read-only.** DAP setVariable remains the
+  intent-mapped path (§4); front-ends consume deltas and never invoke
+  mutation helpers.
+
 ### 3. RLM purity: the complete chain
 
 Code holds the results; the store holds only solver-priced projections. The transcript is a projection of the render, not the context (ADR-0002). An RLM working this way never needs to re-read a transcript to know what it holds: it looks at `lenses.ns`, or its own variables. "Tool call → typed object → namespace entry → priced ContextItem" is the complete chain, and every link is typed, journaled, and snapshot-recoverable.
@@ -174,17 +206,17 @@ Sections:
 
 - Context — line 13
 - Decision — line 21
-- Every tool call materializes a typed object — line 23
-- The namespace layout (curated) — line 41
-- Handle protocol — line 67
-- Lens family registration — line 88
-- Persistent handle objects across turns — line 103
-- RLM purity: the complete chain — line 107
-- Debugger facade: DAP over the ns lens — line 111
-- Sequencing — line 145
-- Consequences — line 152
-- Rejected alternatives — line 160
-
+- 1. Every tool call materializes a typed object — line 23
+- 2. The namespace layout (curated) — line 41
+- 2b. Handle protocol (the RLM's manipulation surface) — line 67
+- 2c. Lens family registration (ADR-0001 plugin surface #7) — line 88
+- 2d. Persistent handle objects across turns (RLM-pure persistence) — line 103
+- 2e. Writable handles: the mutation surface (owner ruling 2026-08-24) — line 107
+- 3. RLM purity: the complete chain — line 139
+- 4. Debugger facade: DAP over the ns lens (owner ruling 2026-08-24) — line 143
+- Sequencing — line 177
+- Consequences — line 184
+- Rejected alternatives — line 192
 Key points:
 
 - Every tool call materializes a typed object — handles, registries, lenses; two channels per call; the object is the handle — §1 — line 23
@@ -192,6 +224,7 @@ Key points:
 - Uniform LensHandle protocol mandatory for ALL lens families (debugger pattern: explicit expand/shrink, watch modes live/polled/frozen); two-tier doctrine — structural ops direct+idempotent, economic ops solver-overruled signals; degradation contract (frozen-only answers honestly) — §2b — line 67
 - Lens family registration via `lenses()` on Plugin; declarations review-gated; registry non-configurable — §2c — line 88
 - Handles persist as records; revival re-attaches (state revival under persistence invariants) — §2d — line 103
-- RLM purity chain: tool call → typed object → namespace entry → priced ContextItem — §3 — line 107
-- Debugger facade: DAP as one consumer of the ns lens deltas; facade never raw attach; reads operator-privileged, writes ride the intent pipeline; breakpoints rejected — §4 — line 111
-- Freeze the namespace charter after two real consumers — Sequencing — line 145
+- Writable handles: patch/replace/append on granted rw handles; type-level capability (cell gate rejects statically); writes emit commits (one event system); honest conflict failure; receipts two-channel — §2e — line 107
+- RLM purity chain: tool call → typed object → namespace entry → priced ContextItem — §3 — line 139
+- Debugger facade: DAP as one consumer of the ns lens deltas; facade never raw attach; reads operator-privileged, writes ride the intent pipeline; breakpoints rejected — §4 — line 143
+- Freeze the namespace charter after two real consumers — Sequencing — line 177
