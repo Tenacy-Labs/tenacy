@@ -52,9 +52,11 @@ harnesses. Founding rulings: [ADR-0000](docs/adr/0000-charter.md).
 **v0.1.0 — solver ported.** The full ex-agent-kernel solve core
 (selection, suffix pricing, horizons, evidence, cache model, params,
 contract types — ~1,500 lines) runs here, byte-identical, over the
-vendored `@connectotron/knapsack`. agent-kernel consumes it via
-`file:vendor/stowage` re-export shims; its 869-test suite is the port's
-acceptance test. [ADR-0002](docs/adr/0002-solver-port.md) records the
+vendored `@connectotron/knapsack`. agent-kernel consumes the vendored
+source tree via relative re-export shims (no declared package
+dependency — single module graph, PR #24 review M1); its 871-test
+suite (869 original + 2 port pins) is the port's
+acceptance test. [ADR-0002](docs/adr/0002-solver-port) records the
 move; [ADR-0001](docs/adr/0001-sequence-position-semantics.md) (the
 phase-3 sequence axis) lands next. License: pending owner ruling.
 
