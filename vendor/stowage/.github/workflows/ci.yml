@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+    branches: [main, uat]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          # Pinned to match @connectotron/knapsack measurements (see that
+          # repo's CI note); unpinned drift changes numbers silently.
+          bun-version: 1.3.14
+      # Frozen means frozen: a mismatched lockfile is an error, not a
+      # silent regeneration.
+      - run: bun install --frozen-lockfile
+      - run: bunx tsc --noEmit
+      - run: bun test
