@@ -18,6 +18,7 @@ import { suffixMassAfter } from "./suffix.ts";
 import { sharedBillSurcharge } from "./suffix.ts";
 import { blockDigest } from "./cache-model.ts";
 import { solve as solveMckp } from "@connectotron/knapsack";
+import { normalizeSequenceOrder, planSequenceMoves } from "./sequence-position.ts";
 
 export interface Incumbent {
   /** Previous render's per-item state; empty map on first render. */
@@ -34,6 +35,15 @@ export interface Incumbent {
   /** ADR-0006 §4: write turn per block (1-based position) — TTL-expiry
    *  windows collapse suffix terms to zero (free restructures). */
   blockWriteTurns?: readonly number[] | undefined;
+  /** Optional per-block wall-clock write stamps (milliseconds). Stamps may
+   *  be individually absent — partial wall evidence (review MAJOR-4): a
+   *  missing stamp must fall back to turn TTL for that block, never
+   *  globally suppress the turn axis. */
+  blockWriteWallTimeMs?: readonly (number | undefined)[] | undefined;
+  /** Wall time of the cache snapshot when per-block stamps are unavailable. */
+  cacheSnapshotWallTimeMs?: number | undefined;
+  /** Prior accepted move by item, used for reversal/thrash diagnostics. */
+  previousMoves?: ReadonlyMap<string, { fromPosition: number; toPosition: number }> | undefined;
 }
 
 export interface SolverResult {
@@ -44,6 +54,13 @@ export interface SolverResult {
    *  multiple restructures were each billed their full suffix. Journaled,
    *  not a selection input. */
   sharedBillCredit: number;
+  /** Selection executes once; exact MCKP is called at most once for exact over-budget relief. */
+  selectionPasses: number;
+  movePasses: number;
+  capped: boolean;
+  acceptedMoves: number;
+  reversals: number;
+  moveThrash: boolean;
 }
 
 /** Positional rot weight — lost-in-the-middle shape (head/tail best). */
@@ -84,7 +101,7 @@ export function futureValue(mu0: number, alpha: number, deltaT: number, tokens: 
   return fv;
 }
 
-export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps: ParamSet, turn: number): SolverResult {
+export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps: ParamSet, turn: number, wallTimeMs?: number): SolverResult {
   const itemLedgers: ItemLedger[] = [];
   const chosen: { item: ContextItem; option: RenderOption; utility: number }[] = [];
   // Incumbent order (by position) — the prefix the provider already holds in KV.
@@ -180,7 +197,7 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       const fv = futureValue(item.valueMass !== undefined && item.valueMass > 0
         ? mass
         : mass * profile.mu0, profile.alpha, fvDeltaT, o.tokens, q, ps, caps.hValue);
-      const cacheCost = transactionCost(item, o, prev === null ? undefined : prev, incumbent, ps, turn);
+      const cacheCost = transactionCost(item, o, prev === null ? undefined : prev, incumbent, ps, turn, wallTimeMs);
       // ADR-0006 §3 (fidelity half): the summary-confidence prior prices
       // information LOSS; a recoverable consolidation loses none — the
       // re-expansion writeback is priced where it occurs (transactionCost).
@@ -428,6 +445,13 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     });
   }
 
+  // ── 3b. Sequence-position normalization and priced moves ─────────────────
+  // Metadata-free items retain the canonical legacy order. Sequence families
+  // gain explicit precedence and zone-tail/radix branch points; requested
+  // fuse moves spend accumulated migration credit against intervening mass.
+  normalizeSequenceOrder(chosen, (entry) => zoneOfDyn(entry, incumbent.rendered.get(entry.item.id)));
+  const moveDiagnostics = planSequenceMoves(chosen, itemLedgers, turn, incumbent.previousMoves);
+
   // ── 4. Positions, digests, rot shares from the final layout ────────────────
   // ADR-0006 §4 shared-bill accounting: the per-item suffix terms each
   // charged the full re-bill after their own position; the provider bills
@@ -453,15 +477,31 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
       // TTL-expired (free restructure), but the credit was computed from
       // the UNDISCOUNTED suffix masses — fabricating a credit in cold
       // windows where nobody paid the suffix bill in the first place.
-      const wts = incumbent.blockWriteTurns;
-      const bm = (incumbent as unknown as { blockMass?: readonly number[] }).blockMass;
-      if (wts !== undefined && bm !== undefined) {
-        for (let i = prev.position; i < bm.length && i < wts.length; i++) {
-          const wt = wts[i];
-          if (wt === undefined) continue;
-          if (turn - wt > ps.cache.ttlTurns) mass -= bm[i]!;
+      const bm = incumbent.blockMass;
+      if (bm !== undefined) {
+        const snapshotWallExpired = ps.cache.ttlMs !== undefined && wallTimeMs !== undefined
+          && incumbent.cacheSnapshotWallTimeMs !== undefined
+          && wallTimeMs - incumbent.cacheSnapshotWallTimeMs > ps.cache.ttlMs;
+        if (snapshotWallExpired) {
+          mass = 0;
+        } else {
+          for (let i = prev.position; i < bm.length; i++) {
+            const wallWrite = incumbent.blockWriteWallTimeMs?.[i];
+            const hasBlockWall = ps.cache.ttlMs !== undefined && wallTimeMs !== undefined && wallWrite !== undefined;
+            const wallExpired = hasBlockWall && wallTimeMs - wallWrite > ps.cache.ttlMs!;
+            const turnWrite = incumbent.blockWriteTurns?.[i];
+            // Follow-up #4 (2026-08-24): per-block evidence, harmonized with
+            // the MAJOR-4 transactionCost semantics. A fresh snapshot no
+            // longer suppresses turn expiry for blocks without wall stamps —
+            // a snapshot only acts when EXPIRED (whole-cache cold), same as
+            // transactionCost. The old !hasSnapshotWall guard fabricated
+            // shared-bill credit in cold windows.
+            const turnExpired = !hasBlockWall && turnWrite !== undefined
+              && turn - turnWrite > ps.cache.ttlTurns;
+            if (wallExpired || turnExpired) mass -= bm[i]!;
+          }
+          mass = Math.max(0, mass);
         }
-        mass = Math.max(0, mass);
       }
     }
     return { position: prev.position, mass };
@@ -503,7 +543,11 @@ export function solve(items: Map<string, ContextItem>, incumbent: Incumbent, ps:
     c.item.lastRender = { position, digest };
   }
 
-  return { placements, itemLedgers, totalTokens, sharedBillCredit };
+  return {
+    placements, itemLedgers, totalTokens, sharedBillCredit,
+    selectionPasses: 1,
+    ...moveDiagnostics,
+  };
 }
 
 /**
@@ -659,8 +703,18 @@ function exactMckpRelief(
     return { id: c.item.id, options: opts };
   });
 
-  const res = solveMckp({ groups, capacity });
-  if (res.status !== "optimal" || res.choices === null) return; // density loop is the fallback below
+  // Bounded relief (2026-08-24, perf item 1): below the vendor's 50 MiB DP
+  // budget this is byte-identical to exact (the bounded branch never
+  // engages). Above it — genuinely over-budget full windows, measured
+  // 7.6-15.2B DP cells / 37-42s in divide-and-conquer mode — the vendor
+  // returns the certified integral greedy incumbent with honest
+  // [greedyLower, lpUpper] bounds (status "bounded"), never "optimal".
+  const res = solveMckp({ groups, capacity }, { reliefMode: "bounded" });
+  if ((res.status !== "optimal" && res.status !== "bounded") || res.choices === null) {
+    return; // density loop is the fallback below
+  }
+  const reliefBounded = res.status === "bounded";
+  const reliefGap = reliefBounded && res.bounds !== null ? res.bounds.lpUpper - res.bounds.greedyLower : 0;
 
   const choiceById = new Map(res.choices.map((ch) => [ch.groupId, ch.optionId] as const));
   for (let i = chosen.length - 1; i >= 0; i--) {
@@ -696,7 +750,7 @@ function exactMckpRelief(
 
 /** Transaction cost: additive append is cheap; a rewrite re-prices the suffix (0004 §5–6). */
 interface PrevRender { position: number; zone: Zone; digest: string; representation: string; optionId: string }
-function transactionCost(item: ContextItem, o: RenderOption, prev: PrevRender | undefined, incumbent: Incumbent, ps: ParamSet, turn?: number): number {
+function transactionCost(item: ContextItem, o: RenderOption, prev: PrevRender | undefined, incumbent: Incumbent, ps: ParamSet, turn?: number, wallTimeMs?: number): number {
   const cache = ps.cache;
   if (prev !== undefined && prev.digest === blockDigest(o.text)) {
     // KEEP (Daniel, 2026-08-22): bytes identical to the incumbent render —
@@ -719,10 +773,48 @@ function transactionCost(item: ContextItem, o: RenderOption, prev: PrevRender | 
   // exact per-block mass replaces the proportional share; a suffix whose
   // blocks are already TTL-expired (cold) collapses to zero.
   const own = (o.tokens / 1000) * cache.pricePer1kUncached;
-  const expired = incumbent.blockWriteTurns !== undefined
-    && incumbent.blockWriteTurns.length > 0
-    && turn !== undefined
-    && incumbent.blockWriteTurns.slice(prev.position).every((wt) => wt !== undefined && turn - wt > cache.ttlTurns);
+  // Per-block freshness evidence (review MAJOR-4, 2026-08-24): decide
+  // wall-vs-turn per suffix block, never globally. A block with a usable
+  // wall stamp is judged by wall time; a block whose wall stamp is absent
+  // falls back to its turn stamp. The suffix is cold (free restructure)
+  // only when EVERY suffix block is expired under its own best evidence.
+  // The prior global hasWallEvidence let one partial wall array suppress
+  // the turn fallback for stamps it did not cover.
+  // Follow-up #6 (2026-08-24): evidence arrays may run past the REAL block
+  // count (malformed incumbent). Clamp the suffix scan to blockCount so
+  // phantom stamps cannot warm — or chill — blocks that do not exist.
+  const suffixCount = Math.min(
+    Math.max(
+      (incumbent.blockWriteWallTimeMs?.length ?? 0),
+      (incumbent.blockWriteTurns?.length ?? 0),
+      incumbent.blockMass?.length ?? 0,
+    ),
+    incumbent.blockCount,
+  ) - prev.position;
+  let expired = true;
+  if (cache.ttlMs !== undefined && wallTimeMs !== undefined
+      && incumbent.cacheSnapshotWallTimeMs !== undefined
+      && wallTimeMs - incumbent.cacheSnapshotWallTimeMs > cache.ttlMs) {
+    return own; // whole-cache snapshot older than TTL: everything is cold
+  }
+  if (suffixCount <= 0) expired = false;
+  for (let i = prev.position; i < prev.position + suffixCount; i++) {
+    const wallStamp = incumbent.blockWriteWallTimeMs?.[i];
+    if (cache.ttlMs !== undefined && wallTimeMs !== undefined && wallStamp !== undefined) {
+      if (wallTimeMs - wallStamp > cache.ttlMs!) { continue; }
+      expired = false;
+      break;
+    }
+    const turnStamp = incumbent.blockWriteTurns?.[i];
+    if (turnStamp !== undefined && turn !== undefined) {
+      if (turn - turnStamp > cache.ttlTurns) { continue; }
+      expired = false;
+      break;
+    }
+    // No usable evidence for this block: treat as warm (charge the suffix).
+    expired = false;
+    break;
+  }
   if (expired) return own;   // free restructure: the suffix is already cold
   const tokensAfter = suffixMassAfter(incumbent, prev.position);
   const suffixCost = (tokensAfter / 1000) * (cache.pricePer1kUncached - cache.pricePer1kCached);

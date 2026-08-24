@@ -45,7 +45,7 @@ result.status;        // "optimal" | "infeasible"
 result.value;         // optimal total profit
 result.choices;       // [{ groupId, optionId }, ...] — one per group
 result.bounds;        // { lpUpper, greedyLower } — LP/Dantzig bracket
-result.stats;         // reduction counts, dpRequired, dpCellsVisited
+result.stats;         // reduction counts, dpRequired, dpCellsVisited, dpKernelUsed
 ```
 
 `weight` and `profit` are non-negative integers (validated; throws
@@ -108,6 +108,23 @@ Correctness gate: every release is cross-checked against exhaustive
 brute force on randomized instances (300 seeds in CI plus an adversarial
 fuzz corpus: strongly-correlated, coarse-weight, and profit-cliff styles,
 tight and roomy capacities — 600 seeds, zero divergence).
+
+## Native kernel
+
+`solve()` prefers a compiled SIMD kernel (Rust cdylib, `native/`) when a
+prebuilt dylib for the host triple exists — `aarch64-apple-darwin` ships
+in-tree under `native/prebuilt/`; other triples build from source with
+`cargo build --release` (baseline vector widths: NEON on aarch64,
+SSE2-class on x86_64 — no AVX assumptions). If the dylib is absent or
+fails to load, the TypeScript SoA kernel serves the answer with
+identical outputs (differential-proven: 500 problems, value/weight/
+choices/cellsVisited). `stats.dpKernelUsed` reports which path ran
+("native" | "soa" | "reference" | "none"). `dpKernel: "reference"`
+opts out; `dpKernel: "soa"` pins the TypeScript path explicitly.
+`KNAPSACK_NATIVE_DYLIB` overrides the dylib path (testing).
+
+Provenance for prebuilt dylibs (toolchain, sha256, rebuild recipe):
+`native/prebuilt/PROVENANCE.md`.
 
 ## Development
 

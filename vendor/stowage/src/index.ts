@@ -20,7 +20,7 @@ export {
   evidenceVariance,
 } from "./evidence.ts";
 export type { AccessClass, RefEvidence } from "./evidence.ts";
-export { blockDigest, CacheModel, DIVERGENCE_THRESHOLDS } from "./cache-model.ts";
+export { blockDigest, CacheModel, DIVERGENCE_THRESHOLDS, billingQuanta, breakpointPrice } from "./cache-model.ts";
 export type { UsageReport } from "./cache-model.ts";
 export { paramSetV1, PROFILES_V1, HAZARD_PRIORS_V1 } from "./params.ts";
 export type { ParamSet, ValueProfile, CacheModelParams, Horizon } from "./params.ts";
@@ -31,6 +31,7 @@ export {
   type LensState,
   type ConvoRep,
   type RenderOption,
+  type SequencePosition,
   type ContextItem,
   type Placement,
   type Block,
@@ -41,3 +42,4 @@ export {
   type DivergenceClass,
   type ItemSource,
 } from "./types.ts";
+export { interveningMoveMass, MAX_MOVE_PASSES } from "./sequence-position.ts";
