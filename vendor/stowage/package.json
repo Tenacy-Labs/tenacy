@@ -17,7 +17,7 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@connectotron/knapsack": "file:vendor/knapsack"
+    "@connectotron/knapsack": "file:../knapsack"
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",
