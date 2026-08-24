@@ -104,6 +104,40 @@ Handles persist across turns via snapshots (Bun: closures do not serialize — b
 
 Code holds the results; the store holds only solver-priced projections. The transcript is a projection of the render, not the context (ADR-0002). An RLM working this way never needs to re-read a transcript to know what it holds: it looks at `lenses.ns`, or its own variables. "Tool call → typed object → namespace entry → priced ContextItem" is the complete chain, and every link is typed, journaled, and snapshot-recoverable.
 
+### 4. Debugger facade: DAP over the ns lens (owner ruling 2026-08-24)
+
+Users may attach their favorite debugger front-end to peruse the agent ns.
+The facade is a *protocol adapter over the single engine* — the ns lens
+emits identity-stable structured deltas (0002d); DAP is one consumer of
+that stream, alongside the REPL, TUI, ACP, and OpenCode front-ends. No
+front-end ever parses rendered text back into state (the gdb-MI lesson).
+
+**Facade, never raw attach.** Bun's own `--inspect` exposes the host
+coordinator runtime — closures, plugin state, un-gated memory — and is a
+dev-only escape hatch for debugging the kernel itself. The facade exposes
+exactly the curated ns (this ADR's layout), projected through the lens.
+
+**DAP first.** Pure JSON-lines protocol (zero runtime magic on Bun);
+designed for the adapter-facade pattern; lazy variables match the expand
+algebra. CDP facade (Chrome DevTools) is a possible later adapter; it is
+not the v1.
+
+| DAP facet | Kernel mapping |
+|---|---|
+| threads | one per swarm member (v1: the single agent) |
+| stopped/continued events | turn boundaries — the refresh tick IS the stop-the-world; always attached, never paused mid-cell |
+| scopes | top-level namespaces: Namespace / Lenses / Store (priced) |
+| variables tree, lazy children | the expand algebra; identity-stable refs (0002d) -> DAP variablesReference stability |
+| watch | lens watch modes live/polled/frozen — subject to churn pricing; debugger clients do not bypass economics |
+| evaluate (console) | ctx.search — read-only query, never free eval |
+| setVariable | an intent — journaled and priced, same mediation as every write |
+| breakpoints / stepping | NOT exposed — the turn is atomic (rejected: mid-cell pausing) |
+
+**Security posture.** Reads are operator-privileged (the attaching user owns
+the machine). Writes are agent-protocol-privileged: they ride the intent
+pipeline and grant machinery. A debugger front-end is a consumer like any
+plugin — "mediation bypass is theater" (ADR-0001 §4) applies to it too.
+
 ## Sequencing
 
 1. Substrate PR: plugin loader + grant registry + event bus + this namespace curation (mount `lenses`/`ctx`/`ops`/`rlm` as non-configurable, non-enumerable top-level bindings; namespace lens non-deletion enforcement).
@@ -136,16 +170,23 @@ Sections:
 
 - Context — line 13
 - Decision — line 21
+- Every tool call materializes a typed object — line 23
 - The namespace layout (curated) — line 41
-- Sequencing — line 107
-- Consequences — line 114
-- Rejected alternatives — line 122
+- Handle protocol — line 67
+- Lens family registration — line 84
+- Persistent handle objects across turns — line 99
+- RLM purity: the complete chain — line 103
+- Debugger facade: DAP over the ns lens — line 107
+- Sequencing — line 141
+- Consequences — line 148
+- Rejected alternatives — line 156
 
 Key points:
 
 - Every tool call materializes a typed object — handles, registries, lenses; two channels per call; the object is the handle — §1 — line 23
 - The namespace layout: lenses/ctx/ops/rlm top-level, curated; `lenses.ns` non-deletable (safety, not economics) — §2 — line 41
-- Lens family registration via `lenses()` on Plugin; declaration review-gated; registry non-configurable — §2c — line 84
+- Lens family registration via `lenses()` on Plugin; declarations review-gated; registry non-configurable — §2c — line 84
 - Handles persist as records; revival re-attaches (state revival under persistence invariants) — §2d — line 99
 - RLM purity chain: tool call → typed object → namespace entry → priced ContextItem — §3 — line 103
-- Freeze the namespace charter after two real consumers — Sequencing — line 107
+- Debugger facade: DAP as one consumer of the ns lens deltas; facade never raw attach; reads operator-privileged, writes ride the intent pipeline; breakpoints rejected — §4 — line 107
+- Freeze the namespace charter after two real consumers — Sequencing — line 141
