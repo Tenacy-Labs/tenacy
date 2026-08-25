@@ -129,8 +129,11 @@ export class AgentLoop {
   ): { ok: boolean; detail: string } {
     const r = this.fileWrite(target, kind, body);
     if (r === null) return { ok: false, detail: `write unsupported: ${kind}` };
-    // The file lens sees the change through its normal refresh/commit flow.
-    this.bus.emit({ kind: "lens.delta", turn: this.turn, lensId: `lens:${target}`, changedLines: [] });
+    if (r.ok) {
+      // The file lens sees the change through its normal refresh/commit flow;
+      // lens.delta fires only on committed writes (M4).
+      this.bus.emit({ kind: "lens.delta", turn: this.turn, lensId: `lens:${target}`, changedLines: [] });
+    }
     return r;
   }
 
@@ -145,6 +148,15 @@ export class AgentLoop {
 
   async run(userMessage: string): Promise<TurnOutcome> {
     const steering = this.interrupts.splice(0);
+    try {
+      return await this.#runInner(userMessage, steering);
+    } catch (e) {
+      this.bus.emit({ kind: "error.thrown", turn: this.turn, where: "run", message: String(e) });
+      throw e;
+    }
+  }
+
+  async #runInner(userMessage: string, steering: SteeringIntent[]): Promise<TurnOutcome> {
     const toolResults: TurnOutcome["toolResults"] = [];
     for (const s of steering) {
       let r: { op: string; ok: boolean; result: string };
@@ -262,7 +274,9 @@ export class AgentLoop {
     this.hooks.onRender?.(rr, this.ps);
 
     const expected = this.cacheModel.expectedHit(rr.blocks);
+    const modelStart = performance.now();
     const response = await this.callWithRetry(rr.blocks, userMessage);
+    const modelLatencyMs = performance.now() - modelStart;
 
     const modelItem = makeTurnItem(`turn-${this.turn}-model`, "model", response.text, this.turn);
     this.turnRegistry.set(modelItem.id, modelItem as unknown as TurnItem);
@@ -349,7 +363,7 @@ export class AgentLoop {
     };
 
     this.bus.emit({ kind: "render.decided", turn: this.turn, itemsRendered: rr.placements.length, lambda: this.ps.lambda });
-    this.bus.emit({ kind: "model.called", turn: this.turn, provider: this.providerId, model: this.providerId, inputTokens: response.usage.inputTokens, outputTokens: response.usage.outputTokens, latencyMs: 0 });
+    this.bus.emit({ kind: "model.called", turn: this.turn, provider: this.providerId, model: this.provider.modelId, inputTokens: response.usage.inputTokens, outputTokens: response.usage.outputTokens, latencyMs: modelLatencyMs });
     const outcome: TurnOutcome = {
       turn: this.turn,
       modelText: response.text,

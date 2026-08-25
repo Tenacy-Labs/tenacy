@@ -21,6 +21,9 @@ export interface NsMountOptions {
 
 /** The mounted namespace. `lenses` is non-deletable by construction. */
 export interface MountedNamespace {
+  ctx: Readonly<{ watch(id: string, mode?: "live" | "polled" | "frozen"): unknown; demote(id: string): unknown; reexpand(id: string): unknown }>;
+  ops: Readonly<{ memory: Readonly<{ remember(text: string, kind?: "fact" | "task" | "pref"): unknown; search(query: string, limit?: number): unknown }> }>;
+  rlm: Readonly<{ spawn(goal: string): unknown; turn(id: string, message: string): unknown; stop(id: string, reason?: string): unknown; status(id?: string): unknown; final(id: string): unknown }>;
   lenses: {
     files: {
       /** Read-only open (default): the returned handle's type carries NO
@@ -34,6 +37,10 @@ export interface MountedNamespace {
 }
 
 export function mountNamespace(opts: NsMountOptions): MountedNamespace {
+  // M5 fix: a second mount is a programming error, not a silent divergence.
+  if ((globalThis as Record<string, unknown>)["lenses"] !== undefined) {
+    throw new Error("namespace already mounted (ADR-0007 §2: one mount per process)");
+  }
   const registry = new HandleRegistry();
   const writable = opts.writableRoots ?? [];
 
@@ -81,13 +88,36 @@ export function mountNamespace(opts: NsMountOptions): MountedNamespace {
     files: filesNs as unknown as MountedNamespace["lenses"]["files"],
   };
 
+  // M6 fix: all four curated top-level bindings (ADR-0007 §2). ctx/ops/rlm
+  // are intent emitters — namespaces of sinks, not coordinator internals.
+  const ctx = Object.freeze({
+    watch: (id: string, mode: "live" | "polled" | "frozen" = "polled") => opts.sink({ op: "ctx.watch", id, mode }),
+    demote: (id: string) => opts.sink({ op: "ctx.demote", id }),
+    reexpand: (id: string) => opts.sink({ op: "ctx.reexpand", id }),
+  });
+  const ops = Object.freeze({
+    // §1 two-channel rule: every op returns a typed value AND materializes
+    // a typed object in the namespace (receipts here; families mount under ops.*).
+    memory: Object.freeze({
+      remember: (text: string, kind?: "fact" | "task" | "pref") => opts.sink({ op: "memory.remember", text, kind }),
+      search: (query: string, limit?: number) => opts.sink({ op: "memory.search", query, limit }),
+    }),
+  });
+  const rlm = Object.freeze({
+    spawn: (goal: string) => opts.sink({ op: "rlm.spawn", goal }),
+    turn: (id: string, message: string) => opts.sink({ op: "rlm.turn", id, message }),
+    stop: (id: string, reason?: string) => opts.sink({ op: "rlm.stop", id, reason }),
+    status: (id?: string) => opts.sink({ op: "rlm.status", id }),
+    final: (id: string) => opts.sink({ op: "rlm.final", id }),
+  });
+
   // Non-configurable + non-enumerable: no delete, no redefinition.
   const g = globalThis as unknown as Record<string, unknown>;
-  for (const [k, v] of Object.entries({ lenses })) {
+  for (const [k, v] of Object.entries({ lenses, ctx, ops, rlm })) {
     if (!(k in g)) {
       Object.defineProperty(g, k, { value: v, configurable: false, enumerable: false, writable: false });
     }
   }
 
-  return { lenses, registry };
+  return { lenses, ctx, ops, rlm, registry };
 }

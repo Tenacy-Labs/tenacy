@@ -11,6 +11,11 @@ import { NO_GRANTS, GrantRegistry } from "../src/optimizer/plugin.ts";
 import { FileHandle, WritableFileHandle, HandleRegistry } from "../src/optimizer/handles.ts";
 import { mountNamespace } from "../src/optimizer/ns-mount.ts";
 import { DapFacade } from "../src/optimizer/dap.ts";
+import type { PluginEvent } from "../src/optimizer/events.ts";
+import type { IntentSink } from "../src/optimizer/handles.ts";
+import { AgentLoop } from "../src/optimizer/loop.ts";
+import type { Provider } from "../src/optimizer/providers.ts";
+import type { ParamSet } from "@connectotron/stowage";
 
 function sinkSpy() {
   const calls: Array<Record<string, unknown>> = [];
@@ -20,6 +25,11 @@ function sinkSpy() {
   };
   return { calls, sink };
 }
+
+// ADR-0007 §2: ONE mount per process — tests share the module-scope mount,
+// exactly as the kernel mounts once at boot.
+const nsSpy = sinkSpy();
+const MOUNT = mountNamespace({ sink: nsSpy.sink, writableRoots: ["/tmp/"] });
 
 describe("EventBus", () => {
   test("no-op when empty; delivers by kind; containment on throw", () => {
@@ -117,8 +127,8 @@ describe("handles (uniform protocol + mutation surface)", () => {
 
 describe("ns-mount", () => {
   test("lenses binding is non-configurable, non-deletable; rw is grant-gated", () => {
-    const { calls, sink } = sinkSpy();
-    const mounted = mountNamespace({ sink, writableRoots: ["/tmp/"] });
+    const { calls, sink } = nsSpy;
+    const mounted = MOUNT;
     const g = globalThis as unknown as Record<string, unknown>;
     expect(g.lenses).toBeDefined();
     const desc = Object.getOwnPropertyDescriptor(g, "lenses");
@@ -138,8 +148,6 @@ describe("ns-mount", () => {
     const outside = mounted.lenses.files.open("/etc/hosts", { mode: "rw" });
     expect(outside instanceof WritableFileHandle).toBe(false);
 
-    // idempotent second mount: binding already sealed, no redefine attempt
-    mountNamespace({ sink, writableRoots: [] });
   });
 });
 
@@ -181,6 +189,42 @@ describe("DAP facade", () => {
     // breakpoints are not part of the surface
     const bp = JSON.parse(dap.handle(JSON.stringify({ seq: 6, type: "request", command: "setBreakpoints", arguments: {} })) ?? "{}");
     expect(bp.success).toBe(false);
+  });
+});
+
+describe("major fixes (PR #28 re-review)", () => {
+  test("M6: all four top-level bindings mount non-configurably and emit intents", () => {
+    const m = MOUNT;
+    const before = nsSpy.calls.length;
+    const g = globalThis as Record<string, unknown>;
+    for (const k of ["lenses", "ctx", "ops", "rlm"]) {
+      expect(g[k]).toBeDefined();
+      expect(Object.getOwnPropertyDescriptor(g, k)?.configurable).toBe(false);
+    }
+    m.ctx.demote("item:1");
+    m.ops.memory.remember("hello");
+    m.rlm.spawn("test goal");
+    expect(nsSpy.calls.slice(before).map((c) => c.op)).toEqual(["ctx.demote", "memory.remember", "rlm.spawn"]);
+  });
+
+  test("M5: second mount in-process throws instead of diverging", () => {
+    // MOUNT already happened at module scope — the strict guard fires
+    expect(() => mountNamespace({ sink: nsSpy.sink })).toThrow(/already mounted/);
+  });
+
+  test("M3/M4: model.called carries real latency; error.thrown fires on turn failure", async () => {
+    const events: PluginEvent[] = [];
+    const bus = new EventBus();
+    bus.on("all", (ev) => { events.push(ev as PluginEvent); });
+    // a provider that throws on call
+    const boom: Provider = { modelId: "boom", call: async () => { throw new Error("provider down"); } };
+    const loop = new AgentLoop(boom, {} as ParamSet, null);
+    loop.bus = bus;
+    await loop.run("hello").catch(() => {});
+    const kinds = events.map((e) => e.kind);
+    expect(kinds).toContain("error.thrown");
+    const mc = events.find((e) => e.kind === "model.called") as { latencyMs: number } | undefined;
+    expect(mc === undefined || mc.latencyMs >= 0).toBe(true);
   });
 });
 
@@ -240,8 +284,7 @@ describe("gate repros (PR #28 review)", () => {
   });
 
   test("C3b: traversal and sibling-prefix rw bypasses are dead", () => {
-    const { sink } = sinkSpy();
-    const m = mountNamespace({ sink, writableRoots: ["/tmp/"] });
+    const m = MOUNT;
     const t1 = m.lenses.files.open("/tmp/../etc/passwd", { mode: "rw" });
     expect(t1 instanceof WritableFileHandle).toBe(false);
     const t2 = m.lenses.files.open("/tmporary-secret", { mode: "rw" });

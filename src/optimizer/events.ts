@@ -15,6 +15,7 @@ export type PluginEvent =
   | { kind: "model.called"; turn: number; provider: string; model: string; inputTokens: number; outputTokens: number; latencyMs: number }
   | { kind: "render.decided"; turn: number; itemsRendered: number; lambda: number }
   | { kind: "lens.delta"; turn: number; lensId: string; changedLines: number[] }
+  /** M4: emitted by the §2e write seam after a committed file mutation. */
   | { kind: "solver.ran"; turn: number; chosen: number; candidates: number; mode: "native" | "soa" | "ref" }
   | { kind: "error.thrown"; turn: number; where: string; message: string };
 
