@@ -69,6 +69,3 @@ export interface ReadOnlyBus {
   on(kind: PluginEvent["kind"] | "all", fn: Listener): () => void;
 }
 
-/** N1 fix: `on` is grant-gated — plugins without the events grant subscribe to
- *  nothing (the unsubscribe function is a no-op). */
-

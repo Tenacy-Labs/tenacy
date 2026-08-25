@@ -12,6 +12,8 @@ import { FileHandle, WritableFileHandle, HandleRegistry } from "../src/optimizer
 import { mountNamespace } from "../src/optimizer/ns-mount.ts";
 import { DapFacade } from "../src/optimizer/dap.ts";
 import { executeIntent } from "../src/optimizer/intents.ts";
+import { paramSetV1 } from "../src/optimizer/params.ts";
+import { MockProvider } from "../src/optimizer/providers.ts";
 import type { PluginEvent } from "../src/optimizer/events.ts";
 import type { IntentSink } from "../src/optimizer/handles.ts";
 import { AgentLoop } from "../src/optimizer/loop.ts";
@@ -378,6 +380,50 @@ describe("final-gate repros (deleg_0f3328ba)", () => {
     expect(seen).toEqual([]);                     // sealed: no zombie subscription
     expect(steer).toHaveProperty("error");        // sealed: steering refused
   }, 8000);
+});
+
+describe("minor residue fixes (F4 set)", () => {
+  test("render.decided fires before model.called (decision precedes outcome)", async () => {
+    const order: string[] = [];
+    const bus = new EventBus();
+    bus.on("render.decided", () => order.push("render"));
+    bus.on("model.called", () => order.push("model"));
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("f4a"), null, {}, {});
+    loop.bus = bus;
+    await loop.run("hello");
+    expect(order.indexOf("render")).toBeLessThan(order.indexOf("model"));
+  });
+
+  test("solver.ran fires per turn with honest counts", async () => {
+    const events: PluginEvent[] = [];
+    const bus = new EventBus();
+    bus.on("solver.ran", (ev) => events.push(ev as PluginEvent));
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("f4b"), null, {}, {});
+    loop.bus = bus;
+    await loop.run("hello");
+    expect(events.length).toBeGreaterThanOrEqual(1);
+    expect((events[0] as { chosen: number }).chosen).toBeGreaterThanOrEqual(0);
+  });
+
+  test("changedLines carries honest line numbers", async () => {
+    const files = new Map<string, string>([["/tmp/cl.txt", "a\nb\nc\n"]]);
+    const deltas: PluginEvent[] = [];
+    const bus = new EventBus();
+    bus.on("lens.delta", (ev) => deltas.push(ev as PluginEvent));
+    const loop = new AgentLoop(new MockProvider(), paramSetV1("f4c"), null, {}, { writableRoots: ["/tmp/"] });
+    loop.bus = bus;
+    loop.fileContent = (t) => files.get(t) ?? "";
+    loop.fileWrite = (t, kind, body) => {
+      if (kind !== "append") return { ok: false, detail: "no" };
+      files.set(t, (files.get(t) ?? "") + String((body as { text: string }).text));
+      return { ok: true, detail: "ok" };
+    };
+    loop.fileLens("/tmp/cl.txt");   // lens exists pre-write
+    const r = executeIntent({ op: "files.append", target: "/tmp/cl.txt", text: "x\ny\n" }, loop["store"], null);
+    expect(r.ok).toBe(true);
+    expect(deltas.length).toBe(1);
+    expect((deltas[0] as { changedLines: number[] }).changedLines).toEqual([4, 5]);   // the two new lines
+  });
 });
 
 describe("events guard", () => {

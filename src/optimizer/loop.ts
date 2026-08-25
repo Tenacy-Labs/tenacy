@@ -39,6 +39,24 @@ export interface AgentHooks {
   onTurn?(o: TurnOutcome): void;
 }
 
+/** F4: honest changed-line numbers — lines differing between old and new content (1-indexed).
+ *  A trailing newline's empty artifact is not a line: strip one final "" from both. */
+function diffLineNumbers(oldS: string, newS: string): number[] {
+  const split = (str: string): string[] => {
+    const parts = str.split("\n");
+    if (parts.length > 1 && parts[parts.length - 1] === "") parts.pop();
+    return parts;
+  };
+  const a = split(oldS);
+  const b = split(newS);
+  const out: number[] = [];
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    if (a[i] !== b[i]) out.push(i + 1);
+  }
+  return out;
+}
+
 export class AgentLoop {
   readonly store = new ContextStore();
   readonly cacheModel: CacheModel;
@@ -127,16 +145,18 @@ export class AgentLoop {
     kind: "patch" | "replace" | "append",
     body: unknown,
   ): { ok: boolean; detail: string } {
+    const before = this.fileContent(target);
     const r = this.fileWrite(target, kind, body);
     if (r === null) return { ok: false, detail: `write unsupported: ${kind}` };
     if (r.ok) {
       // N5: committed writes REFRESH the lens from substrate (real re-parse,
       // symbol remap, live-view coalescing) before the receipt returns;
-      // lens.delta fires only on committed writes (M4).
+      // lens.delta fires only on committed writes (M4) with honest
+      // changedLines (F4: before/after content line diff).
       try {
         this.fileLens(target);                       // create-or-return (id = `lens:${target}`)
         this.refreshLensFromSubstrate(`lens:${target}`);  // N5: real re-parse from substrate
-        this.bus.emit({ kind: "lens.delta", turn: this.turn, lensId: `lens:${target}`, changedLines: [] });
+        this.bus.emit({ kind: "lens.delta", turn: this.turn, lensId: `lens:${target}`, changedLines: diffLineNumbers(before, this.fileContent(target)) });
       } catch {
         // content provider not yet serving the new file — receipt notes it (N4);
         // no lens.delta: the event is only honest for a lens that exists (F2).
@@ -261,6 +281,7 @@ export class AgentLoop {
 
     const snap = this.store.snapshot();
     const solved = solve(snap, this.incumbent, this.ps, this.turn);
+    this.bus.emit({ kind: "solver.ran", turn: this.turn, chosen: solved.placements.length, candidates: snap.size, mode: this.ps.reliefMode === "exact-mckp" ? "soa" : "ref" });  // mode = configured relief path (native dp not wired in this loop)
     const rr = render(solved.placements, snap, this.ps, tailNotices);
     this.lastRender = rr;
 
@@ -280,6 +301,7 @@ export class AgentLoop {
     }
 
     this.hooks.onRender?.(rr, this.ps);
+    this.bus.emit({ kind: "render.decided", turn: this.turn, itemsRendered: rr.placements.length, lambda: this.ps.lambda });
 
     const expected = this.cacheModel.expectedHit(rr.blocks);
     const modelStart = performance.now();
@@ -370,7 +392,6 @@ export class AgentLoop {
       blockWriteTurns: rr.blocks.map((b) => prevChain.get(b.digest) ?? this.turn),
     };
 
-    this.bus.emit({ kind: "render.decided", turn: this.turn, itemsRendered: rr.placements.length, lambda: this.ps.lambda });
     this.bus.emit({ kind: "model.called", turn: this.turn, provider: this.providerId, model: this.provider.modelId, inputTokens: response.usage.inputTokens, outputTokens: response.usage.outputTokens, latencyMs: modelLatencyMs });
     const outcome: TurnOutcome = {
       turn: this.turn,
