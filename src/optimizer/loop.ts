@@ -13,6 +13,8 @@ import { solve } from "./solver.ts";
 import { CacheModel } from "./cache-model.ts";
 import { Ledger } from "./ledger.ts";
 import type { Provider } from "./providers.ts";
+import { EventBus } from "./bus.ts";
+import type { PluginEvent } from "./events.ts";
 import { GoalItem, FileLensItem, DirectoryLensItem, NoticeItem, TurnItem, Lens } from "./items.ts";
 import { CodeLensItem } from "./code-lens.ts";
 import { NSLensItem, type NamespaceProducer } from "./ns-lens.ts";
@@ -68,10 +70,16 @@ export class AgentLoop {
     private ps: ParamSet,
     private ledger: Ledger | null = null,
     private hooks: AgentHooks = {},
+    private opts: { writableRoots?: string[] } = {},
   ) {
     this.cacheModel = new CacheModel(ps.cache);
+    this.#writeRoots = opts.writableRoots ?? [];
     bindHost({
       fileLens: (t) => this.fileLens(t),
+      isWritable: (t) => this.#isWritablePath(t),
+      writePatch: (t, patch) => this.#writeFile(t, "patch", patch),
+      writeReplace: (t, from, to) => this.#writeFile(t, "replace", { from, to }),
+      writeAppend: (t, text) => this.#writeFile(t, "append", { text }),
       dirLens: (t) => this.dirLens(t),
       codeLens: (t) => this.codeLens(t),
       nsLens: (t) => this.nsLens(t),
@@ -80,6 +88,61 @@ export class AgentLoop {
       goal: (id) => this.goalRegistry.get(id),
       setGoal: (g) => this.registerGoal(g),
     });
+  }
+
+  /** ADR-0007 substrate: kernel event bus. Zero subscribers = zero cost. */
+  bus = new EventBus();
+
+  /** ADR-0007 §2e: granted write roots + the mutation seam (host-side gate). */
+  #writeRoots: string[] = [];
+
+  #isWritablePath(path: string): boolean {
+    const resolve = (pp: string): string[] => {
+      const parts: string[] = [];
+      for (const seg of pp.split("/")) {
+        if (seg === "" || seg === ".") continue;
+        if (seg === "..") {
+          if (parts.length === 0) return [];  // escapes root -> never writable
+          parts.pop();
+          continue;
+        }
+        parts.push(seg);
+      }
+      return parts;
+    };
+    const pc = resolve(path);
+    if (pc.length === 0) return false;
+    return this.#writeRoots.some((r) => {
+      const rc = resolve(r);
+      return rc.length > 0 && rc.length <= pc.length && rc.every((seg, i) => pc[i] === seg);
+    });
+  }
+
+  /** Exact-match-or-fail file mutation through the versioned-commit path:
+   *  the content provider is the single writer; the file lens's commit
+   *  machinery (re-parse, symbol remap, live views) runs as for external
+   *  changes. The receipt is the honest result string. */
+  #writeFile(
+    target: string,
+    kind: "patch" | "replace" | "append",
+    body: unknown,
+  ): { ok: boolean; detail: string } {
+    const r = this.fileWrite(target, kind, body);
+    if (r === null) return { ok: false, detail: `write unsupported: ${kind}` };
+    if (r.ok) {
+      // N5: committed writes REFRESH the lens from substrate (real re-parse,
+      // symbol remap, live-view coalescing) before the receipt returns;
+      // lens.delta fires only on committed writes (M4).
+      try {
+        this.fileLens(target);                       // create-or-return (id = `lens:${target}`)
+        this.refreshLensFromSubstrate(`lens:${target}`);  // N5: real re-parse from substrate
+        this.bus.emit({ kind: "lens.delta", turn: this.turn, lensId: `lens:${target}`, changedLines: [] });
+      } catch {
+        // content provider not yet serving the new file — receipt notes it (N4);
+        // no lens.delta: the event is only honest for a lens that exists (F2).
+      }
+    }
+    return r;
   }
 
   steer(intent: SteeringIntent): void {
@@ -93,6 +156,15 @@ export class AgentLoop {
 
   async run(userMessage: string): Promise<TurnOutcome> {
     const steering = this.interrupts.splice(0);
+    try {
+      return await this.#runInner(userMessage, steering);
+    } catch (e) {
+      this.bus.emit({ kind: "error.thrown", turn: this.turn, where: "run", message: String(e) });
+      throw e;
+    }
+  }
+
+  async #runInner(userMessage: string, steering: SteeringIntent[]): Promise<TurnOutcome> {
     const toolResults: TurnOutcome["toolResults"] = [];
     for (const s of steering) {
       let r: { op: string; ok: boolean; result: string };
@@ -102,6 +174,7 @@ export class AgentLoop {
         r = { op: s.op, ok: false, result: String(e) };
       }
       toolResults.push(r);
+      this.bus.emit({ kind: "steering.executed", turn: this.turn, op: s.op, ok: r.ok, result: r.result });
       if (!r.ok) {
         // A1 (0004 §2): failures classed as error evidence at journal time —
         // estimators always need them as calibration labels, not console noise.
@@ -116,6 +189,7 @@ export class AgentLoop {
 
     this.store.nextTurn();
     this.turn = this.store.turn;
+    this.bus.emit({ kind: "turn.started", turn: this.turn });
     const userItem = makeTurnItem(`turn-${this.turn}-user`, "user", userMessage, this.turn);
     this.turnRegistry.set(userItem.id, userItem as unknown as TurnItem);
     this.store.add(userItem);
@@ -208,7 +282,9 @@ export class AgentLoop {
     this.hooks.onRender?.(rr, this.ps);
 
     const expected = this.cacheModel.expectedHit(rr.blocks);
+    const modelStart = performance.now();
     const response = await this.callWithRetry(rr.blocks, userMessage);
+    const modelLatencyMs = performance.now() - modelStart;
 
     const modelItem = makeTurnItem(`turn-${this.turn}-model`, "model", response.text, this.turn);
     this.turnRegistry.set(modelItem.id, modelItem as unknown as TurnItem);
@@ -294,6 +370,8 @@ export class AgentLoop {
       blockWriteTurns: rr.blocks.map((b) => prevChain.get(b.digest) ?? this.turn),
     };
 
+    this.bus.emit({ kind: "render.decided", turn: this.turn, itemsRendered: rr.placements.length, lambda: this.ps.lambda });
+    this.bus.emit({ kind: "model.called", turn: this.turn, provider: this.providerId, model: this.provider.modelId, inputTokens: response.usage.inputTokens, outputTokens: response.usage.outputTokens, latencyMs: modelLatencyMs });
     const outcome: TurnOutcome = {
       turn: this.turn,
       modelText: response.text,
@@ -304,6 +382,7 @@ export class AgentLoop {
       placements: rr.placements,
     };
     this.hooks.onTurn?.(outcome);
+    this.bus.emit({ kind: "turn.completed", turn: this.turn, tokensIn: response.usage.inputTokens, tokensOut: response.usage.outputTokens });
     return outcome;
   }
 
@@ -602,6 +681,11 @@ export class AgentLoop {
   lastTailNotices: string[] = [];
   /** Content provider — injectable; default reads nothing. */
   fileContent: (target: string) => string = () => "";
+
+  /** ADR-0007 §2e: injectable write seam (host-side). Boot binds a fs writer;
+   *  tests bind in-memory writers. Exact-match-or-fail contract. */
+  fileWrite: (target: string, kind: "patch" | "replace" | "append", body: unknown) => { ok: boolean; detail: string } | null
+    = () => null;
 }
 
 export function makeTurnItem(id: string, role: "user" | "model", text: string, turn: number): ContextItem {
