@@ -67,12 +67,25 @@ export class DapFacade {
         return this.#resp(req, { body: { variables: children } });
       }
       case "evaluate":
-        // Read-only query surface (ctx.search class); never free eval.
-        return this.#resp(req, { body: { result: "use ctx.search through the agent loop", variablesReference: 0 } });
+        // Read-only query surface (ctx.search class). Free evaluation is
+        // refused, not canned-successed (M7): a front-end console must not
+        // display a fabricated result.
+        return this.#resp(req, { success: false, message: "evaluate is not free; use ctx.search through the agent loop" });
       case "setVariable": {
-        // Writes ride the intent pipeline (ADR-0007 §4 security posture).
-        const r = this.#opts.sink({ op: "ctx.demote", id: String(req.arguments?.name ?? "") });
-        return this.#resp(req, { body: { value: r.ok ? "intent queued" : r.result } });
+        // Writes ride the intent pipeline (ADR-0007 §4). The value is mapped
+        // honestly: frozen->demote, live/polled->watch, anything else is
+        // rejected as an unmapped value (never silently the opposite).
+        const name = String(req.arguments?.name ?? "");
+        const value = String(req.arguments?.value ?? "");
+        if (value === "frozen") {
+          const r = this.#opts.sink({ op: "ctx.demote", id: name });
+          return this.#resp(req, { body: { value: r.ok ? "demote intent queued" : r.result } });
+        }
+        if (value === "live" || value === "polled") {
+          const r = this.#opts.sink({ op: "ctx.watch", id: name, mode: value });
+          return this.#resp(req, { body: { value: r.ok ? "watch intent queued" : r.result } });
+        }
+        return this.#resp(req, { success: false, message: `unmapped value: ${value} (frozen|live|polled)` });
       }
       case "disconnect":
         return this.#resp(req, {});

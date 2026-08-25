@@ -63,3 +63,12 @@ export class EventBus {
 
 /** Singleton-free wiring: the loop owns its bus; plugins receive it via ctx. */
 export function makeEventBus(): EventBus { return new EventBus(); }
+
+/** M2 gate fix: the subscribe-only facade handed to plugins. No emit. */
+export interface ReadOnlyBus {
+  on(kind: PluginEvent["kind"] | "all", fn: Listener): () => void;
+}
+
+export function asReadOnlyBus(bus: EventBus): ReadOnlyBus {
+  return Object.freeze({ on: (k: PluginEvent["kind"] | "all", f: Listener) => bus.on(k, f) });
+}

@@ -16,6 +16,9 @@ export type SteeringIntent =
   | { op: "say"; text: string }
   | { op: "files.expand"; target: string; from: number; to: number }
   | { op: "files.release"; target: string; from: number; to: number }
+  | { op: "files.patch"; target: string; patch: Array<{ from: string; to: string }> }
+  | { op: "files.replace"; target: string; from: string; to: string }
+  | { op: "files.append"; target: string; text: string }
   | { op: "goals.set"; id: string; text: string; horizon?: "session" | "task" | "standing" }
   | { op: "goals.update"; id: string; text?: string; status?: "active" | "completed" }
   | { op: "ctx.inspect"; filter?: "rendered" | "invisible" | "all" }
@@ -50,6 +53,14 @@ export type IntentResult = { op: string; ok: boolean; result: string };
 // Module-level registries wired by the loop (single-writer coordinator side).
 export interface IntentHost {
   fileLens(target: string): FileLensItem;
+  /** ADR-0007 §2e mutation surface — exact-match-or-fail, versioned-commit
+   *  path (the loop routes through the file lens, so re-parse/symbol-remap/
+   *  live-view coalescing happen as for any external change). */
+  writePatch(target: string, patch: Array<{ from: string; to: string }>): { ok: boolean; detail: string };
+  writeReplace(target: string, from: string, to: string): { ok: boolean; detail: string };
+  writeAppend(target: string, text: string): { ok: boolean; detail: string };
+  /** Normalized-writable check (the C3b gate, enforced again host-side). */
+  isWritable(target: string): boolean;
   dirLens(target: string): DirectoryLensItem;
   codeLens(target: string): CodeLensItem;
   nsLens(target: string): NSLensItem;
@@ -81,6 +92,33 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
       store.touch(lens.id);
       ledger?.recordSignal({ type: "files-release", itemId: lens.id, from: s.from, to: s.to, turn });
       return { op: s.op, ok: true, result: `released ${s.target}:${s.from}-${s.to} (${lens.ranges.length} remain)` };
+    }
+    case "files.patch": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      if (!host.isWritable(s.target)) return { op: s.op, ok: false, result: `not writable: ${s.target}` };
+      const r = host.writePatch(s.target, s.patch);
+      const lens = host.fileLens(s.target);
+      store.touch(lens.id);
+      ledger?.recordSignal({ type: "files-mutation", itemId: lens.id, turn });
+      return { op: s.op, ok: r.ok, result: r.detail };
+    }
+    case "files.replace": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      if (!host.isWritable(s.target)) return { op: s.op, ok: false, result: `not writable: ${s.target}` };
+      const r = host.writeReplace(s.target, s.from, s.to);
+      const lens = host.fileLens(s.target);
+      store.touch(lens.id);
+      ledger?.recordSignal({ type: "files-mutation", itemId: lens.id, turn });
+      return { op: s.op, ok: r.ok, result: r.detail };
+    }
+    case "files.append": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      if (!host.isWritable(s.target)) return { op: s.op, ok: false, result: `not writable: ${s.target}` };
+      const r = host.writeAppend(s.target, s.text);
+      const lens = host.fileLens(s.target);
+      store.touch(lens.id);
+      ledger?.recordSignal({ type: "files-mutation", itemId: lens.id, turn });
+      return { op: s.op, ok: r.ok, result: r.detail };
     }
     case "dirs.expand": {
       if (host === null) return { op: s.op, ok: false, result: "no host bound" };

@@ -15,6 +15,7 @@
  */
 import type { PluginEvent, PluginEmitted } from "./events.ts";
 import type { EventBus } from "./bus.ts";
+import type { ReadOnlyBus } from "./bus.ts";
 
 /** Capability grants. Everything not granted is denied. */
 export interface PluginGrants {
@@ -28,7 +29,8 @@ export interface PluginGrants {
   register: boolean;
 }
 
-export const NO_GRANTS: PluginGrants = { events: false, steer: false, drive: false, register: false };
+/** Frozen shared default. grantsFor() NEVER returns this instance — copy-on-read. */
+export const NO_GRANTS: Readonly<PluginGrants> = Object.freeze({ events: false, steer: false, drive: false, register: false });
 
 export interface CommandSpec {
   name: string;               // "goal" → /goal
@@ -53,8 +55,8 @@ export interface Plugin {
 /** The sealed inbound surface. Handle-shaped, never kernel-shaped. */
 export interface PluginCtx {
   readonly pluginName: string;
-  readonly bus: EventBus;
-  readonly grants: PluginGrants;
+  readonly bus: ReadOnlyBus;
+  readonly grants: Readonly<PluginGrants>;
   /** Inbound: queue steering text for the next turn drain. Requires `steer`. */
   submitSteering(text: string, note?: string): PluginEmitted | { error: string };
   /** Inbound: spawn a turn (protocol adapters). Requires `drive`. */
@@ -65,9 +67,11 @@ export interface PluginCtx {
 export class GrantRegistry {
   #grants = new Map<string, PluginGrants>();
   grant(name: string, g: Partial<PluginGrants>): void {
-    this.#grants.set(name, { ...NO_GRANTS, ...g });
+    this.#grants.set(name, Object.freeze({ ...NO_GRANTS, ...g }));
   }
-  grantsFor(name: string): PluginGrants {
-    return this.#grants.get(name) ?? NO_GRANTS;
+  /** Copy-on-read frozen grants (gate C1: the live object must never reach a plugin). */
+  grantsFor(name: string): Readonly<PluginGrants> {
+    const g = this.#grants.get(name);
+    return g === undefined ? NO_GRANTS : Object.freeze({ ...g });
   }
 }

@@ -70,10 +70,16 @@ export class AgentLoop {
     private ps: ParamSet,
     private ledger: Ledger | null = null,
     private hooks: AgentHooks = {},
+    private opts: { writableRoots?: string[] } = {},
   ) {
     this.cacheModel = new CacheModel(ps.cache);
+    this.#writeRoots = opts.writableRoots ?? [];
     bindHost({
       fileLens: (t) => this.fileLens(t),
+      isWritable: (t) => this.#isWritablePath(t),
+      writePatch: (t, patch) => this.#writeFile(t, "patch", patch),
+      writeReplace: (t, from, to) => this.#writeFile(t, "replace", { from, to }),
+      writeAppend: (t, text) => this.#writeFile(t, "append", { text }),
       dirLens: (t) => this.dirLens(t),
       codeLens: (t) => this.codeLens(t),
       nsLens: (t) => this.nsLens(t),
@@ -86,6 +92,47 @@ export class AgentLoop {
 
   /** ADR-0007 substrate: kernel event bus. Zero subscribers = zero cost. */
   bus = new EventBus();
+
+  /** ADR-0007 §2e: granted write roots + the mutation seam (host-side gate). */
+  #writeRoots: string[] = [];
+
+  #isWritablePath(path: string): boolean {
+    const resolve = (pp: string): string[] => {
+      const parts: string[] = [];
+      for (const seg of pp.split("/")) {
+        if (seg === "" || seg === ".") continue;
+        if (seg === "..") {
+          if (parts.length === 0) return [];  // escapes root -> never writable
+          parts.pop();
+          continue;
+        }
+        parts.push(seg);
+      }
+      return parts;
+    };
+    const pc = resolve(path);
+    if (pc.length === 0) return false;
+    return this.#writeRoots.some((r) => {
+      const rc = resolve(r);
+      return rc.length > 0 && rc.length <= pc.length && rc.every((seg, i) => pc[i] === seg);
+    });
+  }
+
+  /** Exact-match-or-fail file mutation through the versioned-commit path:
+   *  the content provider is the single writer; the file lens's commit
+   *  machinery (re-parse, symbol remap, live views) runs as for external
+   *  changes. The receipt is the honest result string. */
+  #writeFile(
+    target: string,
+    kind: "patch" | "replace" | "append",
+    body: unknown,
+  ): { ok: boolean; detail: string } {
+    const r = this.fileWrite(target, kind, body);
+    if (r === null) return { ok: false, detail: `write unsupported: ${kind}` };
+    // The file lens sees the change through its normal refresh/commit flow.
+    this.bus.emit({ kind: "lens.delta", turn: this.turn, lensId: `lens:${target}`, changedLines: [] });
+    return r;
+  }
 
   steer(intent: SteeringIntent): void {
     this.interrupts.push(intent);
@@ -612,6 +659,11 @@ export class AgentLoop {
   lastTailNotices: string[] = [];
   /** Content provider — injectable; default reads nothing. */
   fileContent: (target: string) => string = () => "";
+
+  /** ADR-0007 §2e: injectable write seam (host-side). Boot binds a fs writer;
+   *  tests bind in-memory writers. Exact-match-or-fail contract. */
+  fileWrite: (target: string, kind: "patch" | "replace" | "append", body: unknown) => { ok: boolean; detail: string } | null
+    = () => null;
 }
 
 export function makeTurnItem(id: string, role: "user" | "model", text: string, turn: number): ContextItem {

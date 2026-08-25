@@ -79,6 +79,7 @@ The ruling's immediate consequence. Current relief drops the lowest-absolute-uti
 - ADR-0002b's title and body stand unchanged; documents that reference "mean-variance placement" should be read through this amendment (selection = knapsack; mean-variance = value-layer risk pricing, pending calibration).
 - Refit (ADR-0003 §4) fits the *values* in the knapsack; it never restructures selection.
 - Goal step-budgeting (max turns per goal) was discussed alongside this amendment and remains **open** — not ruled here; nothing ships until the Decider decides.
+- **RESOLVED 2026-08-24 (Daniel ruling):** goals carry NO turn limit. Rationale: the solver already prices each turn's value; rot demotes dead ends; a hard cap would be an override in a signals-not-overrides architecture (ADR-0002g doctrine). A degenerate goal dies of unprofitability, not execution.
 
 ---
 

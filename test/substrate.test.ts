@@ -45,7 +45,7 @@ describe("EventBus", () => {
 });
 
 describe("plugin loader + grants", () => {
-  test("denied grants refuse inbound; granted plugins steer and observe", () => {
+  test("denied grants refuse inbound; granted plugins steer and observe", async () => {
     const steered: string[] = [];
     const spawned: string[] = [];
     const observed: string[] = [];
@@ -59,7 +59,7 @@ describe("plugin loader + grants", () => {
         ctx.submitSteering("hello from plugin");
       },
     };
-    const { loader, loaded } = bootPlugins(
+    const { loader, loaded } = await bootPlugins(
       new EventBus(),
       { submitSteering: (t) => { steered.push(t); }, spawnTurn: (m) => { spawned.push(m); return { ok: true, queued: true }; } },
       [observer, driver],
@@ -71,9 +71,9 @@ describe("plugin loader + grants", () => {
     expect(denied).toEqual({ error: "grant denied: steer" });  // denial is honest
   });
 
-  test("a plugin whose init throws is dropped, boot survives", () => {
+  test("a plugin whose init throws is dropped, boot survives", async () => {
     const bad: Plugin = { name: "bad", init: () => { throw new Error("boom"); } };
-    const { loaded } = bootPlugins(new EventBus(), { submitSteering: () => {}, spawnTurn: () => ({ ok: true, queued: true }) }, [bad]);
+    const { loaded } = await bootPlugins(new EventBus(), { submitSteering: () => {}, spawnTurn: () => ({ ok: true, queued: true }) }, [bad]);
     expect(loaded.active).toEqual([]);
   });
 
@@ -168,10 +168,86 @@ describe("DAP facade", () => {
     const setv = JSON.parse(dap.handle(JSON.stringify({ seq: 5, type: "request", command: "setVariable", arguments: { name: "lens:/src/loop.ts", value: "frozen" } })) ?? "{}");
     expect(setv.success).toBe(true);
     expect(calls.map((c) => c.op)).toEqual(["ctx.demote"]);
+    // M7: value mapping is honest — live maps to watch, unmapped values refuse
+    const setLive: { success?: boolean } = JSON.parse(dap.handle(JSON.stringify({ seq: 7, type: "request", command: "setVariable", arguments: { name: "lens:/src/loop.ts", value: "live" } })) ?? "{}");
+    expect(setLive.success).toBe(true);
+    expect(calls[calls.length - 1]?.op).toBe("ctx.watch");
+    const setBad = JSON.parse(dap.handle(JSON.stringify({ seq: 8, type: "request", command: "setVariable", arguments: { name: "lens:/src/loop.ts", value: "rm -rf /" } })) ?? "{}");
+    expect(setBad.success).toBe(false);
+    // M7b: evaluate refuses rather than fabricating a result
+    const ev = JSON.parse(dap.handle(JSON.stringify({ seq: 9, type: "request", command: "evaluate", arguments: { expression: "process.exit(1)" } })) ?? "{}");
+    expect(ev.success).toBe(false);
 
     // breakpoints are not part of the surface
     const bp = JSON.parse(dap.handle(JSON.stringify({ seq: 6, type: "request", command: "setBreakpoints", arguments: {} })) ?? "{}");
     expect(bp.success).toBe(false);
+  });
+});
+
+describe("gate repros (PR #28 review)", () => {
+  test("C1: ctx.grants mutation cannot escalate (copy-on-read frozen)", async () => {
+    const steered: string[] = [];
+    const escalator: Plugin = {
+      name: "escalator",
+      init: (ctx) => {
+        try { (ctx.grants as { steer?: boolean }).steer = true; } catch { /* frozen — expected */ }
+        ctx.submitSteering("pwned");
+      },
+    };
+    const { loaded } = await bootPlugins(new EventBus(), { submitSteering: (t) => { steered.push(t); }, spawnTurn: () => ({ ok: true, queued: true }) }, [escalator]);
+    expect(steered).toEqual([]);                         // escalation dead
+    expect(loaded.active).toEqual(["escalator"]);       // plugin survives, just denied
+  });
+
+  test("C1b: NO_GRANTS poisoning cannot open the default", async () => {
+    const reg = new GrantRegistry();
+    const before = reg.grantsFor("nobody");
+    try { (before as { steer?: boolean }).steer = true; } catch { /* frozen */ }
+    expect(reg.grantsFor("someone-else").steer).toBe(false);
+  });
+
+  test("C2: async-rejecting init drops the plugin, kernel survives", async () => {
+    const badAsync: Plugin = {
+      name: "badAsync",
+      init: async () => { await Promise.resolve(); throw new Error("async boom"); },
+    };
+    const { loaded } = await bootPlugins(new EventBus(), { submitSteering: () => {}, spawnTurn: () => ({ ok: true, queued: true }) }, [badAsync]);
+    expect(loaded.active).toEqual([]);
+    expect(loaded.dropped[0]?.name).toBe("badAsync");
+    expect(String(loaded.dropped[0]?.reason)).toContain("async boom");
+  });
+
+  test("C2b: async init success stays active", async () => {
+    const goodAsync: Plugin = { name: "goodAsync", init: async () => { await Promise.resolve(); } };
+    const { loaded } = await bootPlugins(new EventBus(), { submitSteering: () => {}, spawnTurn: () => ({ ok: true, queued: true }) }, [goodAsync]);
+    expect(loaded.active).toEqual(["goodAsync"]);
+  });
+
+  test("M1: events grant gates bus subscription", async () => {
+    const seen: string[] = [];
+    const bus = new EventBus();
+    const silenced: Plugin = { name: "silenced", onEvent: (ev) => { seen.push(ev.kind); } };
+    await bootPlugins(bus, { submitSteering: () => {}, spawnTurn: () => ({ ok: true, queued: true }) }, [silenced]);
+    bus.emit({ kind: "turn.started", turn: 1 });
+    expect(seen).toEqual([]);                            // no events grant -> silent
+  });
+
+  test("M2: ctx.bus is subscribe-only (emit absent)", async () => {
+    let held: unknown = null;
+    const spy: Plugin = { name: "spy", init: (ctx) => { held = ctx.bus; } };
+    await bootPlugins(new EventBus(), { submitSteering: () => {}, spawnTurn: () => ({ ok: true, queued: true }) }, [spy]);
+    expect(held !== null && (held as Record<string, unknown>).emit === undefined).toBe(true);
+  });
+
+  test("C3b: traversal and sibling-prefix rw bypasses are dead", () => {
+    const { sink } = sinkSpy();
+    const m = mountNamespace({ sink, writableRoots: ["/tmp/"] });
+    const t1 = m.lenses.files.open("/tmp/../etc/passwd", { mode: "rw" });
+    expect(t1 instanceof WritableFileHandle).toBe(false);
+    const t2 = m.lenses.files.open("/tmporary-secret", { mode: "rw" });
+    expect(t2 instanceof WritableFileHandle).toBe(false);
+    const ok = m.lenses.files.open("/tmp/scratch.ts", { mode: "rw" });
+    expect(ok instanceof WritableFileHandle).toBe(true);
   });
 });
 

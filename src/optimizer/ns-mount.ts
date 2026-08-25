@@ -21,7 +21,15 @@ export interface NsMountOptions {
 
 /** The mounted namespace. `lenses` is non-deletable by construction. */
 export interface MountedNamespace {
-  lenses: { files: { open(path: string, opts?: { mode?: "ro" | "rw" }): LensHandle } };
+  lenses: {
+    files: {
+      /** Read-only open (default): the returned handle's type carries NO
+       *  mutation methods — the cell gate rejects them statically (C3c). */
+      open(path: string, opts?: { mode?: "ro" }): FileHandle;
+      /** Granted writable open: returns the mutation-bearing subtype. */
+      open(path: string, opts: { mode: "rw" }): WritableFileHandle;
+    };
+  };
   registry: HandleRegistry;
 }
 
@@ -29,17 +37,48 @@ export function mountNamespace(opts: NsMountOptions): MountedNamespace {
   const registry = new HandleRegistry();
   const writable = opts.writableRoots ?? [];
 
-  const isWritable = (path: string) => writable.some((r) => path.startsWith(r));
+  // C3b fix: lexical path normalization — resolve '.', '..', and redundant
+  // separators, then compare resolved component lists. Rejects traversal
+  // ('/tmp/../etc') and sibling prefixes ('/tmporary') outright.
+  const resolvePath = (p: string): string[] => {
+    const parts = p.split("/");
+    const out: string[] = [];
+    for (const part of parts) {
+      if (part === "" || part === ".") continue;
+      if (part === "..") {
+        if (out.length === 0) throw new Error(`path escapes root: ${p}`);
+        out.pop();
+        continue;
+      }
+      out.push(part);
+    }
+    return out;
+  };
+  const isWritable = (path: string): boolean => {
+    try {
+      const pc = resolvePath(path);
+      if (pc.length === 0) return false;
+      return writable.some((r) => {
+        const rc = resolvePath(r);
+        if (rc.length === 0 || rc.length > pc.length) return false;
+        return rc.every((seg, i) => pc[i] === seg);
+      });
+    } catch {
+      return false;
+    }
+  };
 
-  const lenses = {
-    files: {
-      open(path: string, o?: { mode?: "ro" | "rw" }): LensHandle {
-        const h = (o?.mode === "rw" && isWritable(path))
-          ? new WritableFileHandle(path, opts.sink)
-          : new FileHandle(path, opts.sink);
-        return registry.materialize(h);
-      },
+  const filesNs = {
+    open(path: string, o?: { mode?: "ro" | "rw" }): FileHandle | WritableFileHandle {
+      const h: FileHandle = (o?.mode === "rw" && isWritable(path))
+        ? new WritableFileHandle(path, opts.sink)
+        : new FileHandle(path, opts.sink);
+      registry.materialize(h);
+      return h;
     },
+  };
+  const lenses: MountedNamespace["lenses"] = {
+    files: filesNs as unknown as MountedNamespace["lenses"]["files"],
   };
 
   // Non-configurable + non-enumerable: no delete, no redefinition.

@@ -13,6 +13,7 @@ export type { Plugin, PluginCtx, CommandSpec, LensFamilySpec } from "./plugin.ts
 import { GrantRegistry, NO_GRANTS } from "./plugin.ts";
 import type { PluginEmitted } from "./events.ts";
 import type { EventBus } from "./bus.ts";
+import { asReadOnlyBus } from "./bus.ts";
 
 export interface LoopHooks {
   /** Queue steering text for the next turn drain (the loop owns the queue). */
@@ -40,10 +41,10 @@ export class PluginLoader {
 
   /** Register one plugin (boot only). Failure drops the plugin, not boot. */
   register(plugin: Plugin): void {
-    const g = this.grants.grantsFor(plugin.name);
+    const g = this.grants.grantsFor(plugin.name);  // frozen copy (C1)
     const ctx: PluginCtx = Object.freeze({
       pluginName: plugin.name,
-      bus: this.bus,
+      bus: asReadOnlyBus(this.bus),
       grants: g,
       submitSteering: (text: string, note?: string) => {
         if (!g.steer) return { error: "grant denied: steer" };
@@ -56,33 +57,54 @@ export class PluginLoader {
       },
     });
     this.#ctxs.set(plugin.name, ctx);
-    try {
-      void plugin.init?.(ctx);
-    } catch (e) {
-      this.#ctxs.delete(plugin.name);
-      return; // dropped — surfaced via collect()
-    }
-    this.#plugins.push(plugin);
-    if (plugin.onEvent !== undefined) {
+    // C2 fix: the tracked promise NEVER rejects (no unhandled rejection can
+    // crash the kernel); failure is captured in state and read at collect().
+    const state = { failed: false, reason: undefined as unknown };
+    const initPromise = (async () => {
+      try {
+        await plugin.init?.(ctx);
+      } catch (e) {
+        state.failed = true;
+        state.reason = e;
+      }
+    })();
+    this.#pending.push({ plugin, ctx, initPromise, state });
+  }
+
+  #pending: Array<{ plugin: Plugin; ctx: PluginCtx; initPromise: Promise<void>; state: { failed: boolean; reason: unknown } }> = [];
+
+  /** Post-init wiring: bus subscription (M1: only when events granted). */
+  #wire(plugin: Plugin): void {
+    if (plugin.onEvent !== undefined && this.grants.grantsFor(plugin.name).events) {
       const fn = plugin.onEvent.bind(plugin);
       (fn as unknown as { pluginName?: string }).pluginName = plugin.name;
       this.bus.on("all", fn);
     }
   }
 
-  /** Collect registration surfaces (call once after all register() calls). */
-  collect(): LoadedPlugins {
+  /** Await all inits; failure drops the plugin (contained), never the kernel. */
+  async collect(): Promise<LoadedPlugins> {
+    const pending = this.#pending;
+    this.#pending = [];
+    await Promise.all(pending.map((p) => p.initPromise));
     const commands: CommandSpec[] = [];
     const lensFamilies: LensFamilySpec[] = [];
     const dropped: Array<{ name: string; reason: string }> = [];
     const active: string[] = [];
-    for (const p of this.#plugins) {
+    for (const p of pending) {
+      if (p.state.failed) {
+        this.#ctxs.delete(p.plugin.name);
+        dropped.push({ name: p.plugin.name, reason: `init failed: ${String(p.state.reason)}` });
+        continue;
+      }
+      this.#wire(p.plugin);
+      this.#plugins.push(p.plugin);
       try {
-        if (p.commands !== undefined) commands.push(...p.commands());
-        if (p.lenses !== undefined) lensFamilies.push(...p.lenses());
-        active.push(p.name);
+        if (p.plugin.commands !== undefined) commands.push(...p.plugin.commands());
+        if (p.plugin.lenses !== undefined) lensFamilies.push(...p.plugin.lenses());
+        active.push(p.plugin.name);
       } catch (e) {
-        dropped.push({ name: p.name, reason: String(e) });
+        dropped.push({ name: p.plugin.name, reason: String(e) });
       }
     }
     return { commands, lensFamilies, dropped, active };
@@ -93,17 +115,18 @@ export class PluginLoader {
 }
 
 /** Boot helper: grants + loader over a bus and loop hooks. */
-export function bootPlugins(
+export async function bootPlugins(
   bus: EventBus,
   hooks: LoopHooks,
   plugins: Plugin[],
   grants?: (r: GrantRegistry) => void,
-): { loader: PluginLoader; loaded: LoadedPlugins } {
+): Promise<{ loader: PluginLoader; loaded: LoadedPlugins }> {
   const registry = new GrantRegistry();
   grants?.(registry);
   const loader = new PluginLoader(bus, registry, hooks);
   for (const p of plugins) loader.register(p);
-  return { loader, loaded: loader.collect() };
+  const loaded = await loader.collect();
+  return { loader, loaded };
 }
 
 export { NO_GRANTS };
