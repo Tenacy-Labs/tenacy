@@ -359,6 +359,27 @@ describe("re-review repros (deleg_c1fa1a7f)", () => {
   });
 });
 
+describe("final-gate repros (deleg_0f3328ba)", () => {
+  test("F1: late-settling init cannot resurrect a dropped plugin", async () => {
+    const seen: string[] = [];
+    const bus = new EventBus();
+    let captured: PluginCtx | undefined;
+    const slow: Plugin = {
+      name: "slow",
+      // init never resolves from the loader's view (hung) — but holds the ctx
+      init: (ctx) => { captured = ctx; return new Promise<void>(() => {}); },
+    };
+    const { loaded } = await bootPlugins(bus, { submitSteering: () => {}, spawnTurn: () => ({ ok: true, queued: true }) }, [slow], (r) => { r.grant("slow", { events: true, steer: true }); });
+    expect(loaded.active).toEqual([]);            // dropped at the 5s timeout
+    expect(captured).toBeDefined();
+    captured!.bus.on("all", (ev) => { seen.push((ev as PluginEvent).kind); });   // post-drop subscribe attempt
+    const steer = captured!.submitSteering("late text");                          // post-drop steering attempt
+    bus.emit({ kind: "turn.started", turn: 1 });
+    expect(seen).toEqual([]);                     // sealed: no zombie subscription
+    expect(steer).toHaveProperty("error");        // sealed: steering refused
+  }, 8000);
+});
+
 describe("events guard", () => {
   test("isPluginEmitted discriminates", () => {
     expect(isPluginEmitted({ kind: "steer.request", text: "t", note: "n" })).toBe(true);

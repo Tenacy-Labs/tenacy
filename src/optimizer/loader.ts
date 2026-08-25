@@ -13,9 +13,12 @@ export type { Plugin, PluginCtx, CommandSpec, LensFamilySpec } from "./plugin.ts
 import { GrantRegistry, NO_GRANTS } from "./plugin.ts";
 import type { PluginEmitted } from "./events.ts";
 import type { EventBus } from "./bus.ts";
-import { asReadOnlyBus, type ReadOnlyBus } from "./bus.ts";
+import type { ReadOnlyBus } from "./bus.ts";
 import type { PluginEvent } from "./events.ts";
 type Listener = (ev: PluginEvent) => void;
+
+/** Loader-side init state; `dropped` seals the ctx against late-settling inits (F1). */
+interface LoaderState { failed: boolean; dropped: boolean; reason: unknown }
 
 export interface LoopHooks {
   /** Queue steering text for the next turn drain (the loop owns the queue). */
@@ -46,10 +49,14 @@ export class PluginLoader {
     const g = this.grants.grantsFor(plugin.name);  // frozen copy (C1)
     // N1 fix: the bus facade honors the events grant (ungranted -> no-op unsub).
     // N2 fix: subscriptions are tracked so a dropped plugin is unsubscribed wholesale.
+    // F1 fix: a shared `dropped` flag — once collect() drops the plugin, every
+    // ctx capability (bus.on / submitSteering / spawnTurn) refuses, so a
+    // late-settling init cannot resurrect zombie subscriptions post-drop.
+    const state: LoaderState = { failed: false, dropped: false, reason: undefined as unknown };
     const eventsGranted = () => this.grants.grantsFor(plugin.name).events;
     const unsubs: Array<() => void> = [];
     const trackingOn = (k: PluginEvent["kind"] | "all", f: Listener): (() => void) => {
-      if (!eventsGranted()) return () => {};
+      if (!eventsGranted() || state.dropped) return () => {};
       const off = this.bus.on(k, f);
       unsubs.push(off);
       return off;
@@ -59,11 +66,13 @@ export class PluginLoader {
       bus: Object.freeze({ on: trackingOn }) as ReadOnlyBus,
       grants: g,
       submitSteering: (text: string, note?: string) => {
+        if (state.dropped) return { error: "plugin dropped" };
         if (!g.steer) return { error: "grant denied: steer" };
         this.hooks.submitSteering(text, note ?? plugin.name);
         return { kind: "steer.request", text, note: note ?? plugin.name } satisfies PluginEmitted;
       },
       spawnTurn: (userMessage: string) => {
+        if (state.dropped) return { error: "plugin dropped" };
         if (!g.drive) return { error: "grant denied: drive" };
         return this.hooks.spawnTurn(userMessage);
       },
@@ -76,7 +85,6 @@ export class PluginLoader {
     // top level is swallowed — so the done promise RESOLVES on either outcome
     // (init settled or timeout fired) and the failure lives in `state`.
     const INIT_TIMEOUT_MS = 5_000;
-    const state = { failed: false, reason: undefined as unknown };
     const initPromise = new Promise<void>((resolve) => {
       let settled = false;
       const finish = () => { if (!settled) { settled = true; clearTimeout(timer); resolve(); } };
@@ -109,7 +117,7 @@ export class PluginLoader {
     this.#pending.push({ plugin, ctx, unsubs, initPromise, state });
   }
 
-  #pending: Array<{ plugin: Plugin; ctx: PluginCtx; unsubs: Array<() => void>; initPromise: Promise<void>; state: { failed: boolean; reason: unknown } }> = [];
+  #pending: Array<{ plugin: Plugin; ctx: PluginCtx; unsubs: Array<() => void>; initPromise: Promise<void>; state: LoaderState }> = [];
 
   /** Post-init wiring: bus subscription (M1: only when events granted). */
   #wire(plugin: Plugin): void {
@@ -131,6 +139,7 @@ export class PluginLoader {
     const active: string[] = [];
     for (const p of pending) {
       if (p.state.failed) {
+        p.state.dropped = true;              // F1: seal ctx before unsubscribing
         this.#ctxs.delete(p.plugin.name);
         for (const off of p.unsubs) off();   // N2: dropped plugin loses its subscriptions
         dropped.push({ name: p.plugin.name, reason: `init failed: ${String(p.state.reason)}` });
@@ -141,6 +150,7 @@ export class PluginLoader {
         if (p.plugin.lenses !== undefined) lensFamilies.push(...p.plugin.lenses());
         active.push(p.plugin.name);
       } catch (e) {
+        p.state.dropped = true;              // F1: seal ctx before unsubscribing
         for (const off of p.unsubs) off();   // N2: surface-throw = dropped = unsubscribed
         this.#ctxs.delete(p.plugin.name);
         dropped.push({ name: p.plugin.name, reason: String(e) });

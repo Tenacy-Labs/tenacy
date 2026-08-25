@@ -71,11 +71,4 @@ export interface ReadOnlyBus {
 
 /** N1 fix: `on` is grant-gated — plugins without the events grant subscribe to
  *  nothing (the unsubscribe function is a no-op). */
-export function asReadOnlyBus(bus: EventBus, eventsGranted: () => boolean): ReadOnlyBus {
-  return Object.freeze({
-    on: (k: PluginEvent["kind"] | "all", f: Listener) => {
-      if (!eventsGranted()) return () => {};
-      return bus.on(k, f);
-    },
-  });
-}
+

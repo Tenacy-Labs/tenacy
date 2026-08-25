@@ -136,10 +136,11 @@ export class AgentLoop {
       try {
         this.fileLens(target);                       // create-or-return (id = `lens:${target}`)
         this.refreshLensFromSubstrate(`lens:${target}`);  // N5: real re-parse from substrate
+        this.bus.emit({ kind: "lens.delta", turn: this.turn, lensId: `lens:${target}`, changedLines: [] });
       } catch {
-        // content provider not yet serving the new file — receipt notes it (N4)
+        // content provider not yet serving the new file — receipt notes it (N4);
+        // no lens.delta: the event is only honest for a lens that exists (F2).
       }
-      this.bus.emit({ kind: "lens.delta", turn: this.turn, lensId: `lens:${target}`, changedLines: [] });
     }
     return r;
   }

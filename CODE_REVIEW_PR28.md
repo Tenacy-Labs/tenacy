@@ -326,3 +326,117 @@ New, execution-proven:
 - **MAJOR N5** loop.ts:125–135 — no lens refresh after committed writes (claim of re-parse/symbol-remap is untrue); lens serves stale content post-write; §2e receipts absent.
 - **MINOR** rw-denied type-lie via cast (ns-mount.ts:88); render.decided still post-model (loop.ts:365); solver.ran dead; no real-pipeline host-gate test.
 **VERDICT: REQUEST_CHANGES** — prior blockers are fixed, but the fix seams carry four execution-proven majors (grant bypass via bus facade, zombie listeners, boot hang, dishonest/incoherent write receipts). All are localized: gate the facade's `on` by events grant, unsubscribe on drop, timeout init, refresh-or-create the lens before returning the write receipt (or fail before committing).
+
+---
+
+## Final gate (70a0379)
+
+Reviewer: third-pass merge gate, fresh probes written independently (not the gate-2 scripts). Repo at HEAD 70a0379, base 7af9011.
+
+### Verification (actually observed)
+
+| Check | Result |
+|---|---|
+| `bun x --bun tsc --noEmit` | exit 0, no errors |
+| `bun test` (full repo) | **941 pass / 0 fail**, 9808 expect() calls, 41 files, 18.10s |
+| Probe A (N1/N2/N3 + trackingOn) | all 9 checks pass |
+| Probe B (new-seam hunt) | **seam CONFIRMED** (F1 below) |
+| Probe C (rw refusal + N4/N5) | all 15 checks pass |
+| Probe D (timer leak) | process exits in 0.014s after fast-init collect — no timer leak |
+
+### N1–N5 re-verified fixed (own repros, executed)
+
+- **N1** — ungranted `ctx.bus.on("all"|"turn.started",…)` hears nothing; granted plugin
+  delivers (grant honored, not globally suppressed). loader.ts:49–57.
+- **N2** — subscribe-then-throw init (events granted): dropped AND unsubscribed;
+  surface-throw (`commands()` throws after subscribing): dropped AND unsubscribed.
+  loader.ts:135, loader.ts:144.
+- **N3** — never-settling init: `collect()` resolves at **5004ms**, reason
+  `init failed: Error: init timeout`; fast init resolves in ~0ms (timer cleared).
+- **N4** — commit-then-lens-fail (provider serves nothing): receipt
+  `ok:true` with caveat `appended /tmp/n4.txt (lens refresh deferred: Error: no such file: …)`,
+  file actually committed, `lens.delta` emitted. intents.ts:107–121.
+- **N5** — pre-existing lens refreshed after append (`one\n` → `one\ntwo\n`); new-file
+  write creates the lens fresh (`born\n`). loop.ts:152–160.
+- **N4 inverse** — failed write (`ok:false` from the writer) and non-writable target both
+  return `ok:false`, no `lens.delta`. No path found where a failed write returns `ok:true`.
+
+### Adversarial checks on the new seams (all clean except F1)
+
+- Resolve-only done-promise: plugin cannot settle it early (never handed out);
+  `clearTimeout` runs on every settle path; Bun exits 0.014s after a fast-init collect —
+  the 5s timer does not hold the process open.
+- `trackingOn` off(): actually removes from the bus; double/triple-unsub safe;
+  ungranted `on` returns an inert unsub. (off() correctness verified, see F1 for the
+  post-drop hole.)
+- rw hard refusal: throws before any handle is constructed — registry size and
+  `lens:/etc/hosts` both untouched after refusal; traversal (`/tmp/../etc/passwd`) and
+  sibling (`/tmporary`) refused; normalized-inside (`/tmp/../tmp/ok.ts`) still opens.
+  ns-mount.ts:83–93.
+- Commit-then-lens ordering: failed writes never `ok:true` (above); host gate
+  (`isWritable`) still enforced before any commit (intents.ts:103).
+
+### Findings
+
+**F1. MAJOR (merge blocker) — the N3 timeout window resurrects the N2 zombie: a
+late-settling init keeps a fully-live ctx after the plugin was dropped.**
+loader.ts:49–70 + loader.ts:130–137. The drop at collect() unsubscribes `unsubs` and
+deletes the ctx from `#ctxs`, but the init continuation is still running and holds the
+frozen ctx object — whose `trackingOn` still subscribes (grant check only, no
+dropped-check) and whose `submitSteering`/`spawnTurn` still pass their grant gates
+forever. Reproduced (probe B, executed): plugin with `{events,steer,drive}` grants,
+`init` resolves at 6.3s (past the 5s timeout):
+
+```
+collect resolved at 5003ms; dropped=[{"name":"late","reason":"init failed: Error: init timeout"}]
+post-drop submitSteering returned: {"kind":"steer.request","text":"post-drop steer","note":"late"}
+post-drop spawnTurn returned: {"ok":true,"queued":true}
+post-drop listener saw: ["turn.started"]        ← permanent untracked bus subscription
+```
+
+Three failures in one: (a) the post-drop `bus.on` lands on the real bus **after** the
+`unsubs` array was drained — no code path can ever remove it (the returned `off()` is
+held only by the dropped plugin); this is N2 again, one window later; (b) the operator
+sees "init timeout" and believes the plugin is dead, yet it can queue steering and spawn
+turns at any future moment — the containment contract ("dropped with a diagnostic")
+is false for slow inits; (c) no malice is required: any plugin doing a >5s network fetch
+at boot hits this on a slow day. Note this does **not** bypass grants (post-drop actions
+are still grant-checked), so it is MAJOR not CRITICAL by this review's scale — same
+class as N2/N3, which gate 2 treated as blockers. The suite misses it because the N2
+test throws synchronously (pre-timeout) and the N3 test never settles.
+Fix is ~5 lines: a shared `dropped` flag flipped at collect(), checked in `trackingOn`
+(return inert unsub), `submitSteering`, and `spawnTurn` (return `{error:"plugin dropped"}`);
+plus one settle-after-timeout test.
+
+**F2. MINOR — `lens.delta` can fire for a lens that was never created/refreshed, and the
+N4 comment lies about which layer notes the caveat.** loop.ts:161–172: the inner catch is
+empty ("receipt notes it (N4)") but this layer adds nothing to the receipt — the caveat
+the caller sees is minted by intents.ts:120. When the provider serves nothing,
+`#writeFile` still emits `lens.delta` (loop.ts:170) for `lens:<target>` which may not
+exist in the registry; and `changedLines` is always `[]`. Consumers key on lens ids
+(events.ts: "stable public API") — emitting deltas for nonexistent lenses trains them to
+ignore the kind. Move the caveat-annotating into `#writeFile` (one place), and emit
+`lens.delta` only when the lens exists post-refresh.
+
+**F3. MINOR — `asReadOnlyBus` is dead code duplicating the N1 gate.** bus.ts:74–80
+exports a grant-gated facade that nothing calls (loader.ts:16 imports it, but the loader
+builds its own `trackingOn` closure at loader.ts:51–57). Two divergent copies of a
+security gate is a liability: the next edit fixes one and not the other. Delete one
+(prefer keeping the bus-side helper and have `trackingOn` delegate to it, so the
+tracking wrapper is the only addition).
+
+**F4. MINOR (carried, still open from gate 2, non-blocking)** — `solver.ran` remains
+dead vocabulary (events.ts:19, zero emit sites); `render.decided` still fires after the
+model call (loop.ts:372). Both were noted as minors in gate 2; unchanged here.
+
+### VERDICT: REQUEST_CHANGES
+
+One blocker, execution-proven: **F1** — the timeout-fix seam re-opens the exact zombie
+containment failure (N2) this commit claims to close, plus permanent post-drop inbound
+capability, and it triggers on any legitimately slow (>5s) init with no malice. The
+N1–N5 fixes themselves are genuine (all five re-verified by independent repros), the rw
+hard-refusal path is clean end-to-end, the done-promise/timer machinery leaks nothing,
+and the build is green (tsc clean; 941/941). The fix is a five-line ctx-revocation flag
+plus one settle-after-timeout test — small, local, and it makes "dropped means dead"
+true at every settle time, which is the whole point of the loader's containment
+contract. Everything else in this PR is merge-ready.
