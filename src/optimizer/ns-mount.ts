@@ -77,7 +77,12 @@ export function mountNamespace(opts: NsMountOptions): MountedNamespace {
 
   const filesNs = {
     open(path: string, o?: { mode?: "ro" | "rw" }): FileHandle | WritableFileHandle {
-      const h: FileHandle = (o?.mode === "rw" && isWritable(path))
+      // A requested rw open outside granted roots is a HARD error (type and
+      // runtime agree — no silent degrade behind a WritableFileHandle type).
+      if (o?.mode === "rw" && !isWritable(path)) {
+        throw new Error(`rw denied: ${path} is outside granted writable roots`);
+      }
+      const h: FileHandle = (o?.mode === "rw")
         ? new WritableFileHandle(path, opts.sink)
         : new FileHandle(path, opts.sink);
       registry.materialize(h);

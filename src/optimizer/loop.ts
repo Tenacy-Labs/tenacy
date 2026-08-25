@@ -130,8 +130,15 @@ export class AgentLoop {
     const r = this.fileWrite(target, kind, body);
     if (r === null) return { ok: false, detail: `write unsupported: ${kind}` };
     if (r.ok) {
-      // The file lens sees the change through its normal refresh/commit flow;
+      // N5: committed writes REFRESH the lens from substrate (real re-parse,
+      // symbol remap, live-view coalescing) before the receipt returns;
       // lens.delta fires only on committed writes (M4).
+      try {
+        this.fileLens(target);                       // create-or-return (id = `lens:${target}`)
+        this.refreshLensFromSubstrate(`lens:${target}`);  // N5: real re-parse from substrate
+      } catch {
+        // content provider not yet serving the new file — receipt notes it (N4)
+      }
       this.bus.emit({ kind: "lens.delta", turn: this.turn, lensId: `lens:${target}`, changedLines: [] });
     }
     return r;

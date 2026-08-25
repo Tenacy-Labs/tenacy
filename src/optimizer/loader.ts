@@ -13,7 +13,9 @@ export type { Plugin, PluginCtx, CommandSpec, LensFamilySpec } from "./plugin.ts
 import { GrantRegistry, NO_GRANTS } from "./plugin.ts";
 import type { PluginEmitted } from "./events.ts";
 import type { EventBus } from "./bus.ts";
-import { asReadOnlyBus } from "./bus.ts";
+import { asReadOnlyBus, type ReadOnlyBus } from "./bus.ts";
+import type { PluginEvent } from "./events.ts";
+type Listener = (ev: PluginEvent) => void;
 
 export interface LoopHooks {
   /** Queue steering text for the next turn drain (the loop owns the queue). */
@@ -42,9 +44,19 @@ export class PluginLoader {
   /** Register one plugin (boot only). Failure drops the plugin, not boot. */
   register(plugin: Plugin): void {
     const g = this.grants.grantsFor(plugin.name);  // frozen copy (C1)
+    // N1 fix: the bus facade honors the events grant (ungranted -> no-op unsub).
+    // N2 fix: subscriptions are tracked so a dropped plugin is unsubscribed wholesale.
+    const eventsGranted = () => this.grants.grantsFor(plugin.name).events;
+    const unsubs: Array<() => void> = [];
+    const trackingOn = (k: PluginEvent["kind"] | "all", f: Listener): (() => void) => {
+      if (!eventsGranted()) return () => {};
+      const off = this.bus.on(k, f);
+      unsubs.push(off);
+      return off;
+    };
     const ctx: PluginCtx = Object.freeze({
       pluginName: plugin.name,
-      bus: asReadOnlyBus(this.bus),
+      bus: Object.freeze({ on: trackingOn }) as ReadOnlyBus,
       grants: g,
       submitSteering: (text: string, note?: string) => {
         if (!g.steer) return { error: "grant denied: steer" };
@@ -59,19 +71,45 @@ export class PluginLoader {
     this.#ctxs.set(plugin.name, ctx);
     // C2 fix: the tracked promise NEVER rejects (no unhandled rejection can
     // crash the kernel); failure is captured in state and read at collect().
+    // N3 fix: a never-settling init times out and drops the plugin.
+    // Bun 1.3.14 quirk: rejection propagated through an async-IIFE awaited at
+    // top level is swallowed — so the done promise RESOLVES on either outcome
+    // (init settled or timeout fired) and the failure lives in `state`.
+    const INIT_TIMEOUT_MS = 5_000;
     const state = { failed: false, reason: undefined as unknown };
-    const initPromise = (async () => {
+    const initPromise = new Promise<void>((resolve) => {
+      let settled = false;
+      const finish = () => { if (!settled) { settled = true; clearTimeout(timer); resolve(); } };
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        state.failed = true;
+        state.reason = new Error("init timeout");
+        resolve();
+      }, INIT_TIMEOUT_MS);
+      let initCall: Promise<unknown>;
       try {
-        await plugin.init?.(ctx);
+        initCall = Promise.resolve(plugin.init?.(ctx));
       } catch (e) {
         state.failed = true;
         state.reason = e;
+        clearTimeout(timer);
+        resolve();
+        return;
       }
-    })();
-    this.#pending.push({ plugin, ctx, initPromise, state });
+      initCall.then(finish, (e: unknown) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        state.failed = true;
+        state.reason = e;
+        resolve();
+      });
+    });
+    this.#pending.push({ plugin, ctx, unsubs, initPromise, state });
   }
 
-  #pending: Array<{ plugin: Plugin; ctx: PluginCtx; initPromise: Promise<void>; state: { failed: boolean; reason: unknown } }> = [];
+  #pending: Array<{ plugin: Plugin; ctx: PluginCtx; unsubs: Array<() => void>; initPromise: Promise<void>; state: { failed: boolean; reason: unknown } }> = [];
 
   /** Post-init wiring: bus subscription (M1: only when events granted). */
   #wire(plugin: Plugin): void {
@@ -94,18 +132,22 @@ export class PluginLoader {
     for (const p of pending) {
       if (p.state.failed) {
         this.#ctxs.delete(p.plugin.name);
+        for (const off of p.unsubs) off();   // N2: dropped plugin loses its subscriptions
         dropped.push({ name: p.plugin.name, reason: `init failed: ${String(p.state.reason)}` });
         continue;
       }
-      this.#wire(p.plugin);
-      this.#plugins.push(p.plugin);
       try {
         if (p.plugin.commands !== undefined) commands.push(...p.plugin.commands());
         if (p.plugin.lenses !== undefined) lensFamilies.push(...p.plugin.lenses());
         active.push(p.plugin.name);
       } catch (e) {
+        for (const off of p.unsubs) off();   // N2: surface-throw = dropped = unsubscribed
+        this.#ctxs.delete(p.plugin.name);
         dropped.push({ name: p.plugin.name, reason: String(e) });
+        continue;
       }
+      this.#wire(p.plugin);                  // N2: wire only survivors
+      this.#plugins.push(p.plugin);
     }
     return { commands, lensFamilies, dropped, active };
   }

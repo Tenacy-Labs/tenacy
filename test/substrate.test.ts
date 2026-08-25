@@ -11,6 +11,7 @@ import { NO_GRANTS, GrantRegistry } from "../src/optimizer/plugin.ts";
 import { FileHandle, WritableFileHandle, HandleRegistry } from "../src/optimizer/handles.ts";
 import { mountNamespace } from "../src/optimizer/ns-mount.ts";
 import { DapFacade } from "../src/optimizer/dap.ts";
+import { executeIntent } from "../src/optimizer/intents.ts";
 import type { PluginEvent } from "../src/optimizer/events.ts";
 import type { IntentSink } from "../src/optimizer/handles.ts";
 import { AgentLoop } from "../src/optimizer/loop.ts";
@@ -144,9 +145,8 @@ describe("ns-mount", () => {
     (rw as WritableFileHandle).append("x");
     expect(calls.map((c) => c.op)).toEqual(["files.append"]);
 
-    // rw requested OUTSIDE granted roots degrades to read-only
-    const outside = mounted.lenses.files.open("/etc/hosts", { mode: "rw" });
-    expect(outside instanceof WritableFileHandle).toBe(false);
+    // rw requested OUTSIDE granted roots is refused hard (type-runtime agreement)
+    expect(() => mounted.lenses.files.open("/etc/hosts", { mode: "rw" })).toThrow(/rw denied/);
 
   });
 });
@@ -283,14 +283,79 @@ describe("gate repros (PR #28 review)", () => {
     expect(held !== null && (held as Record<string, unknown>).emit === undefined).toBe(true);
   });
 
-  test("C3b: traversal and sibling-prefix rw bypasses are dead", () => {
+  test("C3b: traversal and sibling-prefix rw requests are refused hard", () => {
     const m = MOUNT;
-    const t1 = m.lenses.files.open("/tmp/../etc/passwd", { mode: "rw" });
-    expect(t1 instanceof WritableFileHandle).toBe(false);
-    const t2 = m.lenses.files.open("/tmporary-secret", { mode: "rw" });
-    expect(t2 instanceof WritableFileHandle).toBe(false);
+    expect(() => m.lenses.files.open("/tmp/../etc/passwd", { mode: "rw" })).toThrow(/rw denied/);
+    expect(() => m.lenses.files.open("/tmporary-secret", { mode: "rw" })).toThrow(/rw denied/);
     const ok = m.lenses.files.open("/tmp/scratch.ts", { mode: "rw" });
     expect(ok instanceof WritableFileHandle).toBe(true);
+  });
+});
+
+describe("re-review repros (deleg_c1fa1a7f)", () => {
+  test("N1: ctx.bus.on honors the events grant", async () => {
+    const seen: string[] = [];
+    const bus = new EventBus();
+    const spy: Plugin = { name: "bus-spy", init: (ctx) => { ctx.bus.on("all", (ev) => { seen.push((ev as PluginEvent).kind); }); } };
+    await bootPlugins(bus, { submitSteering: () => {}, spawnTurn: () => ({ ok: true, queued: true }) }, [spy]);  // NO events grant
+    bus.emit({ kind: "turn.started", turn: 1 });
+    expect(seen).toEqual([]);                                // ungranted = silent
+  });
+
+  test("N2: dropped plugin loses its bus subscriptions", async () => {
+    const seen: string[] = [];
+    const bus = new EventBus();
+    const zombie: Plugin = {
+      name: "zombie",
+      init: (ctx) => { ctx.bus.on("all", (ev) => { seen.push((ev as PluginEvent).kind); }); throw new Error("boom after subscribe"); },
+    };
+    const { loaded } = await bootPlugins(bus, { submitSteering: () => {}, spawnTurn: () => ({ ok: true, queued: true }) }, [zombie], (r) => { r.grant("zombie", { events: true }); });
+    expect(loaded.active).toEqual([]);
+    bus.emit({ kind: "turn.started", turn: 1 });
+    expect(seen).toEqual([]);                                // dropped = unsubscribed
+  });
+
+  test("N3: never-settling init times out and drops (kernel boots)", async () => {
+    const hung: Plugin = { name: "hung", init: () => new Promise<void>(() => {}) };
+    const { loaded } = await bootPlugins(new EventBus(), { submitSteering: () => {}, spawnTurn: () => ({ ok: true, queued: true }) }, [hung]);
+    expect(loaded.active).toEqual([]);
+    expect(String(loaded.dropped[0]?.reason)).toContain("init timeout");
+  }, 8000);  // the init timeout is 5s; give the runner headroom
+
+  test("N4: a write that commits is never reported failed", () => {
+    // Real executeIntent + loop host seam with an in-memory writer.
+    const files = new Map<string, string>([["/tmp/n4.txt", "original\n"]]);
+    const boom: Provider = { modelId: "boom", call: async () => { throw new Error("unused"); } };
+    const loop = new AgentLoop(boom, {} as ParamSet, null, {}, { writableRoots: ["/tmp/"] });
+    loop.fileContent = (t) => files.get(t) ?? "";
+    loop.fileWrite = (t, kind, body) => {
+      const cur = files.get(t);
+      if (cur === undefined) return { ok: false, detail: `no such file: ${t}` };
+      if (kind === "append") { files.set(t, cur + String((body as { text: string }).text)); return { ok: true, detail: `appended ${t}` }; }
+      return { ok: false, detail: `unsupported: ${kind}` };
+    };
+    const r = executeIntent({ op: "files.append", target: "/tmp/n4.txt", text: "APPENDED\n" }, loop["store"], null);
+    expect(r.ok).toBe(true);
+    expect(files.get("/tmp/n4.txt")).toContain("APPENDED");
+  });
+
+  test("N5: committed write refreshes the lens from substrate", () => {
+    const files = new Map<string, string>([["/tmp/n5.txt", "line1\n"]]);
+    const boom: Provider = { modelId: "boom", call: async () => { throw new Error("unused"); } };
+    const loop = new AgentLoop(boom, {} as ParamSet, null, {}, { writableRoots: ["/tmp/"] });
+    loop.fileContent = (t) => files.get(t) ?? "";
+    loop.fileWrite = (t, kind, body) => {
+      const cur = files.get(t);
+      if (cur === undefined) return { ok: false, detail: `no such file: ${t}` };
+      if (kind === "append") { files.set(t, cur + String((body as { text: string }).text)); return { ok: true, detail: `appended ${t}` }; }
+      return { ok: false, detail: `unsupported: ${kind}` };
+    };
+    const lens = loop.fileLens("/tmp/n5.txt");
+    expect(lens.content).toBe("line1\n");
+    const r = executeIntent({ op: "files.append", target: "/tmp/n5.txt", text: "line2\n" }, loop["store"], null);
+    expect(r.ok).toBe(true);
+    expect(files.get("/tmp/n5.txt")).toBe("line1\nline2\n");
+    expect(lens.content).toBe("line1\nline2\n");            // refreshed, not stale
   });
 });
 

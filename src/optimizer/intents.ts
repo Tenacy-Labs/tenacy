@@ -93,32 +93,29 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
       ledger?.recordSignal({ type: "files-release", itemId: lens.id, from: s.from, to: s.to, turn });
       return { op: s.op, ok: true, result: `released ${s.target}:${s.from}-${s.to} (${lens.ranges.length} remain)` };
     }
-    case "files.patch": {
-      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
-      if (!host.isWritable(s.target)) return { op: s.op, ok: false, result: `not writable: ${s.target}` };
-      const r = host.writePatch(s.target, s.patch);
-      const lens = host.fileLens(s.target);
-      store.touch(lens.id);
-      ledger?.recordSignal({ type: "files-mutation", itemId: lens.id, turn });
-      return { op: s.op, ok: r.ok, result: r.detail };
-    }
-    case "files.replace": {
-      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
-      if (!host.isWritable(s.target)) return { op: s.op, ok: false, result: `not writable: ${s.target}` };
-      const r = host.writeReplace(s.target, s.from, s.to);
-      const lens = host.fileLens(s.target);
-      store.touch(lens.id);
-      ledger?.recordSignal({ type: "files-mutation", itemId: lens.id, turn });
-      return { op: s.op, ok: r.ok, result: r.detail };
-    }
+    case "files.patch":
+    case "files.replace":
     case "files.append": {
       if (host === null) return { op: s.op, ok: false, result: "no host bound" };
       if (!host.isWritable(s.target)) return { op: s.op, ok: false, result: `not writable: ${s.target}` };
-      const r = host.writeAppend(s.target, s.text);
-      const lens = host.fileLens(s.target);
-      store.touch(lens.id);
-      ledger?.recordSignal({ type: "files-mutation", itemId: lens.id, turn });
-      return { op: s.op, ok: r.ok, result: r.detail };
+      // N4: commit FIRST; a failing lens resolution must not turn a committed
+      // write into a "failed" receipt (the model would retry and duplicate).
+      let r: { ok: boolean; detail: string };
+      if (s.op === "files.patch") r = host.writePatch(s.target, s.patch);
+      else if (s.op === "files.replace") r = host.writeReplace(s.target, s.from, s.to);
+      else r = host.writeAppend(s.target, s.text);
+      if (!r.ok) return { op: s.op, ok: false, result: r.detail };
+      let lensId: string;
+      try {
+        const lens = host.fileLens(s.target);
+        lensId = lens.id;
+        store.touch(lensId);
+        ledger?.recordSignal({ type: "files-mutation", itemId: lensId, turn });
+      } catch (e) {
+        // Committed write, stale lens bookkeeping: honest receipt with a caveat.
+        return { op: s.op, ok: true, result: `${r.detail} (lens refresh deferred: ${String(e)})` };
+      }
+      return { op: s.op, ok: true, result: r.detail };
     }
     case "dirs.expand": {
       if (host === null) return { op: s.op, ok: false, result: "no host bound" };
