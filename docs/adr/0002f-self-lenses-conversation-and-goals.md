@@ -122,6 +122,32 @@ stays pure and golden-testable.
   rendered per normal episodic economics; the exemption applies only
   while active.
 
+## Amendment (2026-08-25): the convo array interface
+
+Ruling this session: the conversation lens exposes an **array interface**
+in addition to its item/representation surface — each index is one turn:
+
+```ts
+agent.convo: ConvoTurnView[]   // [{ turn, prompt, reply, chain[] }]
+```
+
+- **Turn structure** — `prompt` (user message), `reply` (model message),
+  `chain` (the executed reasoning/tool steps, in order, as
+  `{ op, ok, result, id }`).
+- **The record is completed first** — executed intents (steering and
+  model-proposed alike) are minted as tool-result turn items
+  (`turn-N-tool-K`, immutable episodic, VERBATIM/SUMMARY/MERGED options,
+  save/restore round-trip). Previously they lived only in the transient
+  TurnOutcome and vanished from the session record.
+- **Projection, not storage** — the array is derived from the turn
+  registry on read; verbatim truth stays in the store. Lossy in render,
+  never in store applies unchanged: a summarized turn still exposes its
+  verbatim prompt/reply through the array.
+- **Surface placement** — host-side (REPL `/convo`, coordinator code) in
+  this amendment; a `ctx.convo` model-facing projection is a candidate,
+  not a ruling (0002g §4 gating would apply).
+- `convo.merge` enumerates chain members like any other turn item.
+
 ## Consequences
 
 - ADR-0002d's family table gains the self-lens category (two rows);
@@ -167,8 +193,9 @@ Sections:
 
 - Context — line 26
 - Decision — line 37
-- Consequences — line 125
-- Risks / research areas — line 144
+- Amendment (2026-08-25): the convo array interface — line 125
+- Consequences — line 151
+- Risks / research areas — line 170
 
 Key points:
 
@@ -177,3 +204,4 @@ Key points:
 - Lossy in render, never in store; re-expansion after summarization is journaled realized lossiness — §2 — line 51
 - Goals: hierarchical, horizon-stratified; mutation only via goals.* tool; foundational pinned placement — §3 — line 99
 - First per-kind value-profile override: active goals exempt from power-law decay — lifecycle-bounded; zombie-goal risk flagged — §3 — line 99
+- Amendment 2026-08-25: convo array interface — `agent.convo[i] = { turn, prompt, reply, chain[] }`; executed intents minted as tool-result turn items completing the record — Amendment — line 125
