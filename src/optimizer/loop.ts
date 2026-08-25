@@ -13,6 +13,8 @@ import { solve } from "./solver.ts";
 import { CacheModel } from "./cache-model.ts";
 import { Ledger } from "./ledger.ts";
 import type { Provider } from "./providers.ts";
+import { EventBus } from "./bus.ts";
+import type { PluginEvent } from "./events.ts";
 import { GoalItem, FileLensItem, DirectoryLensItem, NoticeItem, TurnItem, Lens } from "./items.ts";
 import { CodeLensItem } from "./code-lens.ts";
 import { NSLensItem, type NamespaceProducer } from "./ns-lens.ts";
@@ -82,6 +84,9 @@ export class AgentLoop {
     });
   }
 
+  /** ADR-0007 substrate: kernel event bus. Zero subscribers = zero cost. */
+  bus = new EventBus();
+
   steer(intent: SteeringIntent): void {
     this.interrupts.push(intent);
   }
@@ -102,6 +107,7 @@ export class AgentLoop {
         r = { op: s.op, ok: false, result: String(e) };
       }
       toolResults.push(r);
+      this.bus.emit({ kind: "steering.executed", turn: this.turn, op: s.op, ok: r.ok, result: r.result });
       if (!r.ok) {
         // A1 (0004 §2): failures classed as error evidence at journal time —
         // estimators always need them as calibration labels, not console noise.
@@ -116,6 +122,7 @@ export class AgentLoop {
 
     this.store.nextTurn();
     this.turn = this.store.turn;
+    this.bus.emit({ kind: "turn.started", turn: this.turn });
     const userItem = makeTurnItem(`turn-${this.turn}-user`, "user", userMessage, this.turn);
     this.turnRegistry.set(userItem.id, userItem as unknown as TurnItem);
     this.store.add(userItem);
@@ -294,6 +301,8 @@ export class AgentLoop {
       blockWriteTurns: rr.blocks.map((b) => prevChain.get(b.digest) ?? this.turn),
     };
 
+    this.bus.emit({ kind: "render.decided", turn: this.turn, itemsRendered: rr.placements.length, lambda: this.ps.lambda });
+    this.bus.emit({ kind: "model.called", turn: this.turn, provider: this.providerId, model: this.providerId, inputTokens: response.usage.inputTokens, outputTokens: response.usage.outputTokens, latencyMs: 0 });
     const outcome: TurnOutcome = {
       turn: this.turn,
       modelText: response.text,
@@ -304,6 +313,7 @@ export class AgentLoop {
       placements: rr.placements,
     };
     this.hooks.onTurn?.(outcome);
+    this.bus.emit({ kind: "turn.completed", turn: this.turn, tokensIn: response.usage.inputTokens, tokensOut: response.usage.outputTokens });
     return outcome;
   }
 
