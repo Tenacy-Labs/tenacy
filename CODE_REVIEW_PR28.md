@@ -440,3 +440,83 @@ and the build is green (tsc clean; 941/941). The fix is a five-line ctx-revocati
 plus one settle-after-timeout test — small, local, and it makes "dropped means dead"
 true at every settle time, which is the whole point of the loader's containment
 contract. Everything else in this PR is merge-ready.
+
+---
+
+## Confirmation gate (e21e272)
+
+Reviewer: final merge gate, fresh probes written independently of all prior gates.
+Repo at HEAD e21e272 (PR head confirmed via `gh pr view`), base 7af9011. Scope:
+F1 fix execution, new-seam hunt limited to e21e272's diff, build/tests/CI.
+
+### Verification (actually observed)
+
+| Check | Result |
+|---|---|
+| `bun x --bun tsc --noEmit` | exit 0, no errors |
+| `bun test` (full repo) | **942 pass / 0 fail**, 9812 expect() calls, 41 files, 23.11s |
+| `bun test test/substrate.test.ts` | 27 pass / 0 fail |
+| Own F1 probe (`/tmp` scratch, deleted after run) | **16/16 checks pass** |
+| Mutation check on the discriminating test | gate removed → test FAILS (0 pass / 1 fail); gate restored → passes; loader byte-identical after restore |
+| `gh pr checks 28` | `test` **pass** (1m6s), run 32799384696, head e21e2724… OPEN |
+
+### F1 fix verified by execution (own probe, not the shipped test)
+
+Init settling at **5510ms** (past the 5s timeout), holding its ctx:
+
+```
+collect resolved at 5003ms; dropped=[{"name":"late","reason":"init failed: Error: init timeout"}]
+post-drop bus.on refused (no zombie sub) — seen=[]
+post-drop submitSteering refused — {"error":"plugin dropped"}
+post-drop spawnTurn refused — {"error":"plugin dropped"}
+steer hook never invoked / spawn hook never invoked (0 calls each)
+```
+
+- **No path leaves `state.dropped` unset on a drop.** All four drop paths probed —
+  init timeout, sync throw, async rejection, surface throw (`commands()` throws) —
+  each drops AND seals: post-drop `bus.on` lands nothing, post-drop steer returns
+  `plugin dropped` (loader.ts:142, loader.ts:153 are the only two drop sites; both
+  set the flag, and the timeout path routes through `state.failed` → loader.ts:142).
+- **The shipped test discriminates.** Removing only the `state.dropped` clause from
+  `trackingOn` (loader.ts:59) makes "F1: late-settling init cannot resurrect a
+  dropped plugin" fail (seen=["turn.started",…] zombie sub observed); restoring it
+  passes. Not a vacuous test.
+
+### New-seam hunt (scoped to e21e272's diff) — clean
+
+- **`state` leak paths: none.** Enumerated every own-property reachable from the
+  frozen ctx (`pluginName, bus, grants, submitSteering, spawnTurn`) and the bus
+  facade (`on` only): the `LoaderState` object is closure-captured, never a ctx
+  property, never exported. A plugin can neither read nor flip `dropped`. The
+  only other holder is `#pending` (private, drained at collect()). Grants remain
+  frozen copy-on-read: mutation attempt throws and steering stays refused.
+- **LoaderState type change: contained.** Non-exported interface, two use sites
+  (loader.ts:55, loader.ts:120) updated consistently; tsc clean confirms no
+  dangling shapes.
+- **F2: correct.** `lens.delta` emit moved inside the try, after
+  `refreshLensFromSubstrate` (loop.ts:137–143) — a provider that serves nothing
+  now emits no delta for a nonexistent lens; committed+refreshed writes still emit.
+- **F3 removal: nothing dangling.** Zero references to `asReadOnlyBus` anywhere in
+  `src/` or `test/` (grep); the loader's `trackingOn` is the sole gate, so the
+  duplicated-security-gate liability is gone.
+
+### Findings
+
+- **MINOR — orphaned doc comment.** bus.ts:72–73: F3's removal deleted the
+  function but left its doc comment ("N1 fix: `on` is grant-gated — plugins
+  without the events grant subscribe to nothing…") dangling at EOF describing a
+  function that no longer exists. The gate now lives (correctly, per F3's own
+  recommendation) in loader.ts:59 — move or delete the stale comment. Cosmetic;
+  not merge-blocking.
+- **MINOR (carried, unchanged, non-blocking)** — F4 from the final gate:
+  `solver.ran` still dead vocabulary; `render.decided` still post-model; and
+  `lens.delta.changedLines` remains always `[]` (loop.ts:139). All previously
+  classed minor; no regression introduced by e21e272.
+
+### VERDICT: APPROVE
+
+F1 — the sole blocker from the final gate — is fixed and proven by independent
+execution on every drop path, the ctx-revocation flag is unreachable from plugin
+code, the F2/F3 fixes are clean with no new seams, the build is green (tsc clean;
+942/942 across 41 files), and CI passes on the exact PR head (e21e272). The two
+minors above are comment-hygiene and carried items — neither blocks merge.
