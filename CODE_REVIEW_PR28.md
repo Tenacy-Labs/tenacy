@@ -312,3 +312,17 @@ init with allSettled, real path normalization + intent handlers or an explicit
 scope cut, plus the M8 tests that would have caught each). Re-review after the
 criticals; M1/M2 (un enforced grants, writable bus in ctx) should ride the same
 fix since they're the same trust boundary.
+
+
+---
+
+## Re-review (after 176f50f + d6774c7)
+Verified: tsc clean; bun test 936/936 (41 files, 9797 expects). All prior criticals reproduced as fixed (C1/C1b frozen copy-on-read grants; C2 contained async init, dropped w/ diagnostic; C3a live gated mutation ops; C3b component-normalized gate both mount- and host-side — traversal/sibling/dot/relative dead through real executeIntent; C3c rw overloads) with discriminating tests per repro.
+New, execution-proven:
+- **MAJOR N1** bus.ts:66–73 + loader.ts:47 — `ctx.bus.on` ignores the events grant; ungranted plugins read the full kernel stream. M1's claim is false via the M2 seam.
+- **MAJOR N2** loader.ts:89–108 — zombie listeners: dropped plugins (init-throws-after-subscribe; or `#wire` at :100 before the commands() catch) keep bus subscriptions.
+- **MAJOR N3** loader.ts:89 — never-settling init hangs boot forever (no timeout); "kernel boots regardless" still violated.
+- **MAJOR N4** loop.ts:591 + intents.ts:96–122 — new-file write commits via fileWrite, then fileLens throws → receipt `ok:false` for a write that landed; invites duplicate writes.
+- **MAJOR N5** loop.ts:125–135 — no lens refresh after committed writes (claim of re-parse/symbol-remap is untrue); lens serves stale content post-write; §2e receipts absent.
+- **MINOR** rw-denied type-lie via cast (ns-mount.ts:88); render.decided still post-model (loop.ts:365); solver.ran dead; no real-pipeline host-gate test.
+**VERDICT: REQUEST_CHANGES** — prior blockers are fixed, but the fix seams carry four execution-proven majors (grant bypass via bus facade, zombie listeners, boot hang, dishonest/incoherent write receipts). All are localized: gate the facade's `on` by events grant, unsubscribe on drop, timeout init, refresh-or-create the lens before returning the write receipt (or fail before committing).
