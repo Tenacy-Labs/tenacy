@@ -155,8 +155,11 @@ exactly the curated ns (this ADR's layout), projected through the lens.
 
 **DAP first.** Pure JSON-lines protocol (zero runtime magic on Bun);
 designed for the adapter-facade pattern; lazy variables match the expand
-algebra. CDP facade (Chrome DevTools) is a possible later adapter; it is
-not the v1.
+algebra. ~~CDP facade (Chrome DevTools) is a possible later adapter~~ **Ruled out 2026-08-24**:
+probed on Bun 1.3.14 — `node:inspector.Session` connects, but `Runtime.evaluate`,
+`Runtime.queryObjects`, `Runtime.globalLexicalScopeNames`, and `HeapProfiler` domains all return
+"not supported". No in-process CDP introspection exists on this runtime; the DAP facade is the only
+debugger surface (and the correct one: curated namespace, never raw runtime).
 
 | DAP facet | Kernel mapping |
 |---|---|
