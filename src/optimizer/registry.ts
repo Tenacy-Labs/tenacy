@@ -8,13 +8,15 @@
  * input tokens read directly; cache counters passed as-is or unreported —
  * never fabricated.
  */
-import { generateText } from "ai";
+import { generateText, stepCountIs } from "ai";
 import type { LanguageModel } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createXai } from "@ai-sdk/xai";
+import { intentTools, intentsFromToolCalls } from "./tools.ts";
 import type { ModelResponse, Provider } from "./providers.ts";
+import type { SteeringIntent } from "./intents.ts";
 import { PrefixCacheSim } from "./providers.ts";
 import type { Block } from "./types.ts";
 import type { UsageReport } from "./cache-model.ts";
@@ -33,14 +35,25 @@ export interface WireResult {
   text: string;
   usage: { input?: number | undefined; output?: number | undefined; cacheRead?: number | undefined; cacheWrite?: number | undefined };
   stopReason: string;
+  /** Model-proposed intents from native tool calls (proposer/applier split:
+   *  the SDK proposes; the coordinator applies). */
+  toolCalls?: ReadonlyArray<{ toolName: string; input: unknown }>;
 }
 
 export type ProviderWire = (system: string, user: string) => Promise<WireResult>;
 
-/** One generic adapter: AI SDK LanguageModel → kernel Provider contract. */
+/** One generic adapter: AI SDK LanguageModel → kernel Provider contract.
+ *  Intent ops are exposed as native tools (2026-08-26 ruling — fenced blocks
+ *  retired). stopWhen: stepCountIs(1) keeps execution at the coordinator. */
 export function wireModel(modelId: string, m: LanguageModel): ProviderWire {
   return async (system, user) => {
-    const r = await generateText({ model: m, system, prompt: user });
+    const r = await generateText({
+      model: m,
+      system,
+      prompt: user,
+      tools: intentTools(),
+      stopWhen: stepCountIs(1),
+    });
     return {
       text: r.text,
       usage: {
@@ -50,6 +63,7 @@ export function wireModel(modelId: string, m: LanguageModel): ProviderWire {
         cacheWrite: r.usage.inputTokenDetails?.cacheWriteTokens,
       },
       stopReason: r.finishReason,
+      toolCalls: r.toolCalls.map((c) => ({ toolName: c.toolName, input: c.input })),
     };
   };
 }
@@ -82,7 +96,12 @@ export function providerFromWire(modelId: string, wire: ProviderWire): Provider 
         : "end_turn";
 
       sim.commit(blocks);
-      return { text: out.text, usage, stopReason: stop };
+      // Native tool calls become model-proposed intents (the coordinator
+      // applies them after the reply — proposer/applier split).
+      const intents = out.toolCalls !== undefined && out.toolCalls.length > 0
+        ? intentsFromToolCalls(out.toolCalls)
+        : undefined;
+      return { text: out.text, usage, stopReason: stop, intents };
     },
   };
 }

@@ -37,7 +37,7 @@ import { buildProvider, availableProviders, loadHarnessConfig, paramSetFor } fro
 import { Ledger } from "../optimizer/ledger.ts";
 import { StandingItem } from "../optimizer/items.ts";
 import { executeIntent } from "../optimizer/intents.ts";
-import { INTENT_PROTOCOL_DOC, withIntentParsing } from "../optimizer/live.ts";
+import { TOOL_PROTOCOL_DOC } from "../optimizer/tools.ts";
 import { ZONE_ORDER } from "../optimizer/types.ts";
 import type { Provider, ModelResponse } from "../optimizer/providers.ts";
 import type { Block } from "../optimizer/types.ts";
@@ -67,7 +67,7 @@ if (providerName !== undefined) {
     inner = new MockProvider();
   }
 }
-const model = withIntentParsing(inner.modelId, inner);
+const model = inner;
 
 const dir = mkdtempSync(join(tmpdir(), "agent-kernel-"));
 const ledgerPath = join(dir, "ledger.jsonl");
@@ -90,7 +90,7 @@ agent.watcher = liveEngine;
 const liveAdapters = new Map<string, LiveLensAdapter>();
 
 agent.store.add(new StandingItem("identity", "identity",
-  "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator. " + INTENT_PROTOCOL_DOC,
+  "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator. " + TOOL_PROTOCOL_DOC,
 ).toContextItem());
 agent.store.add(new StandingItem("directive", "directive",
   "Work in typed cells against the namespace. Use files./ctx./goals. tools to operate your context. Be precise.").toContextItem());
@@ -267,7 +267,7 @@ async function command(line: string): Promise<void> {
       }
       try {
         const p = buildProvider(name, parts[2] !== undefined ? { model: parts[2] } : {});
-        agent.swapProvider(withIntentParsing(p.modelId, p), paramSetFor(p.modelId, loadHarnessConfig()));
+        agent.swapProvider(p, paramSetFor(p.modelId, loadHarnessConfig()));
         console.log(`provider -> ${name} (${p.modelId})`);
       } catch (e) {
         console.log(String(e));

@@ -17,7 +17,7 @@ import { TurnBoundaryWatcher } from "../../src/optimizer/live-views.ts";
 import { executeIntent, type SteeringIntent } from "../../src/optimizer/intents.ts";
 import { paramSetV1, type ParamSet } from "../../src/optimizer/params.ts";
 import { StandingItem } from "../../src/optimizer/items.ts";
-import { INTENT_PROTOCOL_DOC } from "../../src/optimizer/live.ts";
+import { TOOL_PROTOCOL_DOC } from "../../src/optimizer/tools.ts";
 import type { RenderResult } from "../../src/optimizer/types.ts";
 import { readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
@@ -187,7 +187,7 @@ async function runScenario(name: string, spec: Scenario, ps: ParamSet, stress = 
   loop.fileContent = (t) => { try { return readFileSync(resolve(ROOT, t), "utf8"); } catch { return ""; } };
   loop.dirListing = (t) => { try { return readdirSync(resolve(ROOT, t)).join("\n"); } catch { return ""; } };
   loop.store.add(new StandingItem("identity", "identity",
-    "You are running the agent-kernel pressure corpus. " + INTENT_PROTOCOL_DOC +
+    "You are running the agent-kernel pressure corpus. " + TOOL_PROTOCOL_DOC +
     " Work under a tight token budget: expand only the ranges you need, distill what matters into your replies, release ranges when done.").toContextItem());
 
   const turns: TurnRecord[] = [];

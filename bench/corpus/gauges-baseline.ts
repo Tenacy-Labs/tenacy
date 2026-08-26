@@ -12,7 +12,7 @@ import { executeIntent, type SteeringIntent } from "../../src/optimizer/intents.
 import { paramSetV1 } from "../../src/optimizer/params.ts";
 import type { ParamSet } from "../../src/optimizer/params.ts";
 import { StandingItem } from "../../src/optimizer/items.ts";
-import { INTENT_PROTOCOL_DOC } from "../../src/optimizer/live.ts";
+import { TOOL_PROTOCOL_DOC } from "../../src/optimizer/tools.ts";
 import { Ledger } from "../../src/optimizer/ledger.ts";
 import { loadCorpus } from "../../src/optimizer/corpus.ts";
 import { reportGauges, type BeliefGapInput } from "../../src/optimizer/reports.ts";
@@ -46,7 +46,7 @@ async function main(): Promise<void> {
     loop.fileContent = (t) => { try { return readFileSync(resolve(ROOT, t), "utf8"); } catch { return ""; } };
     loop.dirListing = (t) => { try { return readFileSync(resolve(ROOT, t), "utf8"); } catch { return ""; } };
     loop.store.add(new StandingItem("identity", "identity",
-      "You are running the agent-kernel pressure corpus. " + INTENT_PROTOCOL_DOC +
+      "You are running the agent-kernel pressure corpus. " + TOOL_PROTOCOL_DOC +
       " Work under a tight token budget: expand only the ranges you need, distill what matters into your replies, release ranges when done.").toContextItem());
 
     const steps = spec.script ?? [];

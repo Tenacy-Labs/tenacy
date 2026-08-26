@@ -26,7 +26,7 @@ import { buildProvider, availableProviders, loadHarnessConfig, paramSetFor } fro
 import { Ledger } from "../optimizer/ledger.ts";
 import { StandingItem } from "../optimizer/items.ts";
 import { executeIntent } from "../optimizer/intents.ts";
-import { INTENT_PROTOCOL_DOC, withIntentParsing } from "../optimizer/live.ts";
+import { TOOL_PROTOCOL_DOC } from "../optimizer/tools.ts";
 import type { Provider } from "../optimizer/providers.ts";
 import type { SteeringIntent } from "../optimizer/intents.ts";
 import type { Placement, Block } from "../optimizer/types.ts";
@@ -44,7 +44,7 @@ if (providerName !== undefined) {
   const avail = availableProviders();
   inner = avail.length > 0 ? buildProvider(avail[0]!) : new MockProvider();
 }
-const model = withIntentParsing(inner.modelId, inner);
+const model = inner;
 const dir = mkdtempSync(join(tmpdir(), "agent-kernel-tui-"));
 const ledger = new Ledger(join(dir, "ledger.jsonl"));
 const agent = new AgentLoop(model, paramSetFor(inner.modelId, loadHarnessConfig()), ledger, {
@@ -53,7 +53,7 @@ const agent = new AgentLoop(model, paramSetFor(inner.modelId, loadHarnessConfig(
   onRender: (rr) => { state.blocks = rr.blocks; },
 });
 agent.store.add(new StandingItem("identity", "identity",
-  "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator. " + INTENT_PROTOCOL_DOC,
+  "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator. " + TOOL_PROTOCOL_DOC,
 ).toContextItem());
 agent.fileContent = (target) => {
   try { return readFileSync(target, "utf8"); } catch { return ""; }
