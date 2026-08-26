@@ -26,7 +26,8 @@ import { buildProvider, availableProviders, loadHarnessConfig, paramSetFor } fro
 import { Ledger } from "../optimizer/ledger.ts";
 import { StandingItem } from "../optimizer/items.ts";
 import { executeIntent } from "../optimizer/intents.ts";
-import { TOOL_PROTOCOL_DOC } from "../optimizer/tools.ts";
+import { TOOL_PROTOCOL_DOC, toolSummary } from "../optimizer/tools.ts";
+const TOOLS = toolSummary();
 import type { Provider } from "../optimizer/providers.ts";
 import type { SteeringIntent } from "../optimizer/intents.ts";
 import type { Placement, Block } from "../optimizer/types.ts";
@@ -67,6 +68,7 @@ const state = {
   placements: [] as Placement[],
   blocks: [] as Block[],
   expandedBlock: null as string | null,   // itemId of the expanded blurb
+  expandedTool: null as string | null,   // name of the expanded tool definition
   renderTokens: 0,
   hitTokens: 0,
   divergence: "",
@@ -150,7 +152,7 @@ function App() {
           {state.busy && <text fg="cyan">…</text>}
         </scrollbox>
         {/* sidebar */}
-        <box width={34} flexDirection="column" border borderStyle="rounded" title=" optimizer ">
+        <box width={51} flexDirection="column" border borderStyle="rounded" title=" context optimizer ">
           <text fg="cyan" >RENDER {state.renderTokens}t</text>
           {/* Last context window: every rendered block as a top-level bullet,
               click to expand the blurb it contributed to the context string. */}
@@ -193,6 +195,25 @@ function App() {
               <text fg="white">{g.text.slice(0, 28)}</text>
             </box>
           ))}
+          <text>{" "}</text>
+          {/* Tool definitions sent to the model this session (native tool calling). */}
+          <text fg="cyan">TOOLS ({TOOLS.length} sent)</text>
+          <scrollbox flexGrow={1} flexDirection="column">
+            {TOOLS.map((t) => (
+              <box key={t.name} flexDirection="column"
+                onMouseDown={() => { state.expandedTool = state.expandedTool === t.name ? null : t.name; notify(); }}>
+                <box flexDirection="row">
+                  <text fg="yellow">{state.expandedTool === t.name ? "▾" : "▸"}</text>
+                  <text fg="white">{t.name}</text>
+                </box>
+                {state.expandedTool === t.name && (
+                  <box flexDirection="row" paddingLeft={2}>
+                    <text fg="gray">{t.desc}{t.req.length > 0 ? ` (req: ${t.req.join(", ")})` : ""}</text>
+                  </box>
+                )}
+              </box>
+            ))}
+          </scrollbox>
         </box>
       </box>
       {/* input */}

@@ -71,6 +71,11 @@ const SPECS: ToolSpec[] = [
 
 const KNOWN_OPS = new Set(SPECS.map((s) => s.op));
 
+/** Display summary of the tool definitions sent to the model (TUI). */
+export function toolSummary(): Array<{ name: string; desc: string; req: string[] }> {
+  return SPECS.map((s) => ({ name: opToToolName(s.op), desc: s.desc, req: [...s.req] }));
+}
+
 /** Build the SDK ToolSet for all intent ops. Tools carry no execute. */
 export function intentTools(): ToolSet {
   const out: ToolSet = {};
