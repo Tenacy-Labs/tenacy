@@ -68,7 +68,8 @@ const state = {
   placements: [] as Placement[],
   blocks: [] as Block[],
   expandedBlock: null as string | null,   // itemId of the expanded blurb
-  expandedTool: null as string | null,   // name of the expanded tool definition
+  expandedTools: false,                  // tools entry expanded in CONTEXT list
+  cachePrice: 0,
   renderTokens: 0,
   hitTokens: 0,
   divergence: "",
@@ -113,6 +114,7 @@ function App() {
       state.renderTokens = out.renderTokens;
       state.hitTokens = out.cacheLedger.expected.hitTokens;
       state.divergence = String(out.cacheLedger.divergence);
+      state.cachePrice = out.cacheLedger.expected.price;
       state.lines.push({ id: ++lineSeq, who: "model", text: out.modelText, meta: `${out.renderTokens}t render, ${out.cacheExpectedHit}t cache-hit, ${((Date.now()-t0)/1000).toFixed(1)}s` });
       for (const tr of out.toolResults) state.lines.push({ id: ++lineSeq, who: "intent", text: `[${tr.op}] ${tr.ok ? "ok" : "FAIL"}: ${tr.result}`, ok: tr.ok });
       refreshGoals();
@@ -153,7 +155,18 @@ function App() {
         </scrollbox>
         {/* sidebar */}
         <box width={51} flexDirection="column" border borderStyle="rounded" title=" context optimizer ">
-          <text fg="cyan" >RENDER {state.renderTokens}t</text>
+          {/* header bar: last turn's context size, cache hit rate, cost */}
+          <box height={1} flexDirection="row">
+            <text bg="cyan" fg="black"> ctx </text>
+            <text fg="white">{state.renderTokens}t</text>
+            <text fg="gray"> · </text>
+            <text bg="cyan" fg="black"> hit </text>
+            <text fg="green">{state.renderTokens > 0 ? Math.round(100 * state.hitTokens / state.renderTokens) : 0}%</text>
+            <text fg="gray"> · </text>
+            <text bg="cyan" fg="black"> cost </text>
+            <text fg="white">${state.cachePrice.toFixed(4)}</text>
+            {state.divergence !== "" && state.divergence !== "none" && <text fg="yellow"> ⚠{state.divergence}</text>}
+          </box>
           {/* Last context window: every rendered block as a top-level bullet,
               click to expand the blurb it contributed to the context string. */}
           <text fg="cyan">CONTEXT (last window)</text>
@@ -177,15 +190,21 @@ function App() {
                 )}
               </box>
             ))}
+            {/* Tool definitions — one entry in the context list (sent every turn). */}
+            <box flexDirection="column" onMouseDown={() => { state.expandedTools = !state.expandedTools; notify(); }}>
+              <box flexDirection="row">
+                <text fg="yellow">{state.expandedTools ? "▾" : "▸"}</text>
+                <text fg="white">tools({TOOLS.length})</text>
+                <text fg="gray"> · definitions sent to model</text>
+              </box>
+              {state.expandedTools && TOOLS.map((t) => (
+                <box key={t.name} flexDirection="row" paddingLeft={2}>
+                  <text fg="white">{t.name.padEnd(18)}</text>
+                  <text fg="gray">{t.desc}</text>
+                </box>
+              ))}
+            </box>
           </scrollbox>
-          <text>{" "}</text>
-          <text fg="cyan" >CACHE</text>
-          <box flexDirection="row">
-            <text fg="gray">expected hit </text><text fg="green">{state.hitTokens}t</text>
-          </box>
-          <box flexDirection="row">
-            <text fg="gray">divergence  </text><text fg={state.divergence === "none" ? "green" : "yellow"}>{state.divergence}</text>
-          </box>
           <text>{" "}</text>
           <text fg="cyan" >GOALS</text>
           {state.goals.length === 0 && <text fg="gray">none</text>}
@@ -195,25 +214,6 @@ function App() {
               <text fg="white">{g.text.slice(0, 28)}</text>
             </box>
           ))}
-          <text>{" "}</text>
-          {/* Tool definitions sent to the model this session (native tool calling). */}
-          <text fg="cyan">TOOLS ({TOOLS.length} sent)</text>
-          <scrollbox flexGrow={1} flexDirection="column">
-            {TOOLS.map((t) => (
-              <box key={t.name} flexDirection="column"
-                onMouseDown={() => { state.expandedTool = state.expandedTool === t.name ? null : t.name; notify(); }}>
-                <box flexDirection="row">
-                  <text fg="yellow">{state.expandedTool === t.name ? "▾" : "▸"}</text>
-                  <text fg="white">{t.name}</text>
-                </box>
-                {state.expandedTool === t.name && (
-                  <box flexDirection="row" paddingLeft={2}>
-                    <text fg="gray">{t.desc}{t.req.length > 0 ? ` (req: ${t.req.join(", ")})` : ""}</text>
-                  </box>
-                )}
-              </box>
-            ))}
-          </scrollbox>
         </box>
       </box>
       {/* input */}
