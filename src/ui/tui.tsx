@@ -206,7 +206,9 @@ function App() {
             {/* Tool definitions — one entry in the context list (sent every turn). */}
             <box flexDirection="column" onMouseDown={() => { state.expandedTools = !state.expandedTools; notify(); }}>
               <box flexDirection="row">
-                <text fg="yellow">{state.expandedTools ? "▾" : "▸"}</text>
+                {/* Not a block: tool definitions ride as the API tools param,
+                    outside per-block prefix accounting — neutral chevron. */}
+                <text fg="gray">{state.expandedTools ? "▾" : "▸"}</text>
                 <text fg="white">tools({TOOLS.length})</text>
                 <text fg="gray"> · definitions sent to model</text>
               </box>
