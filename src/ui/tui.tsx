@@ -71,6 +71,7 @@ const state = {
   expandedTools: false,                  // tools entry expanded in CONTEXT list
   cachePrice: 0,
   renderTokens: 0,
+  realizedHit: null as number | null,   // provider-reported cached tokens last request
   hitTokens: 0,
   divergence: "",
   turn: 0,
@@ -81,6 +82,16 @@ const state = {
 };
 type SessionState = typeof state;
 function notify(): void { state.emit(); }
+
+/** Green chevron = confirmed cached in the last request: the provider reported
+ *  cacheReadTokens and this block's cumulative prefix (render order) fits
+ *  within it. Yellow = not confirmed (not yet sent, or past the hit boundary). */
+function cachedPrefix(b: Block, i: number): boolean {
+  if (state.realizedHit === null) return false;
+  let cum = 0;
+  for (let j = 0; j <= i && j < state.blocks.length; j++) cum += state.blocks[j]?.tokens ?? 0;
+  return cum <= state.realizedHit;
+}
 
 function App() {
   const [, forceRender] = useState(0);
@@ -115,6 +126,7 @@ function App() {
       state.hitTokens = out.cacheLedger.expected.hitTokens;
       state.divergence = String(out.cacheLedger.divergence);
       state.cachePrice = out.cacheLedger.expected.price;
+      state.realizedHit = out.cacheLedger.realized?.hitTokens ?? null;
       state.lines.push({ id: ++lineSeq, who: "model", text: out.modelText, meta: `${out.renderTokens}t render, ${out.cacheExpectedHit}t cache-hit, ${((Date.now()-t0)/1000).toFixed(1)}s` });
       for (const tr of out.toolResults) state.lines.push({ id: ++lineSeq, who: "intent", text: `[${tr.op}] ${tr.ok ? "ok" : "FAIL"}: ${tr.result}`, ok: tr.ok });
       refreshGoals();
@@ -167,18 +179,19 @@ function App() {
             <text fg="white">${state.cachePrice.toFixed(4)}</text>
             {state.divergence !== "" && state.divergence !== "none" && <text fg="yellow"> ⚠{state.divergence}</text>}
           </box>
+          <box height={1} flexDirection="row"><text fg="gray"> </text></box>
           {/* Last context window: every rendered block as a top-level bullet,
               click to expand the blurb it contributed to the context string. */}
           <text fg="cyan">CONTEXT (last window)</text>
           <scrollbox flexGrow={1} flexDirection="column">
             {state.blocks.length === 0 && <text fg="gray">no turn rendered yet</text>}
-            {state.blocks.map((b) => (
+            {state.blocks.map((b, i) => (
               <box key={b.digest} flexDirection="column">
                 <box
                   flexDirection="row"
                   onMouseDown={() => { state.expandedBlock = state.expandedBlock === b.itemId ? null : b.itemId; notify(); }}
                 >
-                  <text fg="yellow">{state.expandedBlock === b.itemId ? "▾" : "▸"}</text>
+                  <text fg={cachedPrefix(b, i) ? "green" : "yellow"}>{state.expandedBlock === b.itemId ? "▾" : "▸"}</text>
                   <text fg="white">{b.itemId.slice(0, 16).padEnd(16)}</text>
                   <text fg="gray">{b.zone.slice(0, 7).padEnd(7)}</text>
                   <text fg="gray">{String(b.tokens).padStart(5)}t</text>
