@@ -22,11 +22,12 @@ import { createCliRenderer, type InputRenderable, type ScrollBoxRenderable } fro
 import { createRoot } from "@opentui/react";
 import { AgentLoop } from "../optimizer/loop.ts";
 import { MockProvider } from "../optimizer/providers.ts";
-import { buildProvider, availableProviders, loadHarnessConfig, paramSetFor } from "../optimizer/registry.ts";
+import { buildProvider, availableProviders, loadHarnessConfig, paramSetFor, REGISTRY } from "../optimizer/registry.ts";
+import { probeToolsCache, toolTokensEstimate, type CacheProbeResult } from "../optimizer/probe.ts";
 import { Ledger } from "../optimizer/ledger.ts";
 import { StandingItem } from "../optimizer/items.ts";
 import { executeIntent } from "../optimizer/intents.ts";
-import { TOOL_PROTOCOL_DOC, toolSummary } from "../optimizer/tools.ts";
+import { TOOL_PROTOCOL_DOC, toolSummary, intentTools } from "../optimizer/tools.ts";
 const TOOLS = toolSummary();
 import type { Provider } from "../optimizer/providers.ts";
 import type { SteeringIntent } from "../optimizer/intents.ts";
@@ -60,6 +61,29 @@ agent.fileContent = (target) => {
   try { return readFileSync(target, "utf8"); } catch { return ""; }
 };
 
+// ── startup cache probe (once per runtime) ──────────────────────────────
+// Measures whether this provider includes tool-definition tokens in the
+// cached prefix (4 tiny calls; inconclusive when counters unreported).
+const probeSpec = providerName !== undefined ? REGISTRY[providerName] : undefined;
+let probeLaunched = false;
+function launchProbe(): void {
+  if (probeLaunched || probeSpec === undefined || inner instanceof MockProvider) return;
+  probeLaunched = true;
+  const cfg = loadHarnessConfig();
+  const entry = providerName !== undefined ? cfg?.providers[providerName] : undefined;
+  const key = process.env[probeSpec.envKey] ?? entry?.apiKey ?? "";
+  if (key === "") return;
+  const model2 = process.argv[3] ?? entry?.model ?? probeSpec.defaultModel;
+  const c = { apiKey: key, model: model2, baseUrl: entry?.baseUrl };
+  const tools = intentTools();
+  const serialized = JSON.stringify(Object.entries(tools).map(([name, t]) => ({ name, ...(t as Record<string, unknown>) })));
+  const est = toolTokensEstimate(serialized.length);
+  void probeToolsCache(providerName!, probeSpec.build!(c), probeSpec.buildBare!(c), { toolTokens: est }).then((r) => {
+    state.probe = r;
+    notify();
+  }).catch(() => { /* probe stays null — neutral display */ });
+}
+
 // ── session state shared with React tree ─────────────────────────────────
 interface TurnLine { id: number; who: "user" | "model" | "intent"; text: string; ok?: boolean; meta?: string }
 let lineSeq = 0;
@@ -69,6 +93,7 @@ const state = {
   blocks: [] as Block[],
   expandedBlock: null as string | null,   // itemId of the expanded blurb
   expandedTools: false,                  // tools entry expanded in CONTEXT list
+  probe: null as CacheProbeResult | null,  // once-per-runtime cache probe
   cachePrice: 0,
   renderTokens: 0,
   realizedHit: null as number | null,   // provider-reported cached tokens last request
@@ -91,6 +116,18 @@ function cachedPrefix(b: Block, i: number): boolean {
   let cum = 0;
   for (let j = 0; j <= i && j < state.blocks.length; j++) cum += state.blocks[j]?.tokens ?? 0;
   return cum <= state.realizedHit;
+}
+
+/** Startup-probe verdict for the tools entry chevron. */
+function probeColor(): string {
+  if (state.probe === null) return "gray";
+  if (state.probe.toolsCached === null) return "gray";
+  return state.probe.toolsCached ? "green" : "yellow";
+}
+function probeSuffix(): string {
+  if (state.probe === null) return " · probe pending";
+  if (state.probe.toolsCached === null) return " · probe inconclusive";
+  return state.probe.toolsCached ? " · probe: cached" : " · probe: not cached";
 }
 
 function App() {
@@ -206,12 +243,18 @@ function App() {
             {/* Tool definitions — one entry in the context list (sent every turn). */}
             <box flexDirection="column" onMouseDown={() => { state.expandedTools = !state.expandedTools; notify(); }}>
               <box flexDirection="row">
-                {/* Not a block: tool definitions ride as the API tools param,
-                    outside per-block prefix accounting — neutral chevron. */}
-                <text fg="gray">{state.expandedTools ? "▾" : "▸"}</text>
+                {/* Probe-backed verdict: green = measured in cached prefix,
+                    yellow = measured NOT in cached prefix, gray = pending or
+                    inconclusive. Definitions ride as the API tools param. */}
+                <text fg={probeColor()}>{state.expandedTools ? "▾" : "▸"}</text>
                 <text fg="white">tools({TOOLS.length})</text>
-                <text fg="gray"> · definitions sent to model</text>
+                <text fg="gray"> · definitions sent to model{probeSuffix()}</text>
               </box>
+              {state.expandedTools && state.probe !== null && (
+                <box flexDirection="row" paddingLeft={2}>
+                  <text fg="gray">{state.probe.note}</text>
+                </box>
+              )}
               {state.expandedTools && TOOLS.map((t) => (
                 <box key={t.name} flexDirection="row" paddingLeft={2}>
                   <text fg="white">{t.name.padEnd(18)}</text>
@@ -290,3 +333,4 @@ export function shutdown(): void {
 }
 process.on("SIGINT", () => shutdown());
 process.on("SIGTERM", () => shutdown());
+launchProbe();

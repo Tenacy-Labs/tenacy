@@ -28,8 +28,13 @@ export interface ProviderSpec {
   name: string;
   defaultModel: string;
   envKey: string;
-  build: (cfg: { apiKey: string; model: string; baseUrl?: string | undefined }) => ProviderWire;
+  languageModel: (cfg: WireCfg) => LanguageModel;
+  /** attached post-hoc by the loop below the registry literal */
+  build?: (cfg: WireCfg) => ProviderWire;
+  buildBare?: (cfg: WireCfg) => ProviderWire;
 }
+
+export type WireCfg = { apiKey: string; model: string; baseUrl?: string | undefined };
 
 export interface WireResult {
   text: string;
@@ -45,14 +50,13 @@ export type ProviderWire = (system: string, user: string) => Promise<WireResult>
 /** One generic adapter: AI SDK LanguageModel → kernel Provider contract.
  *  Intent ops are exposed as native tools (2026-08-26 ruling — fenced blocks
  *  retired). stopWhen: stepCountIs(1) keeps execution at the coordinator. */
-export function wireModel(modelId: string, m: LanguageModel): ProviderWire {
+export function wireModel(modelId: string, m: LanguageModel, withTools = true): ProviderWire {
   return async (system, user) => {
     const r = await generateText({
       model: m,
       system,
       prompt: user,
-      tools: intentTools(),
-      stopWhen: stepCountIs(1),
+      ...(withTools ? { tools: intentTools(), stopWhen: stepCountIs(1) } : {}),
     });
     return {
       text: r.text,
@@ -111,86 +115,77 @@ export const REGISTRY: Record<string, ProviderSpec> = {
     name: "openai",
     defaultModel: "gpt-5.1",
     envKey: "OPENAI_API_KEY",
-    build: ({ apiKey, model }) => wireModel(model, createOpenAI({ apiKey })(model)),
+    languageModel: ({ apiKey, model }) => createOpenAI({ apiKey })(model),
   },
   zai: {
     name: "zai",
     defaultModel: "glm-4.7",
     envKey: "ZAI_API_KEY",
-    build: ({ apiKey, model, baseUrl }) => wireModel(
-      model,
-      createOpenAICompatible({
+    languageModel: ({ apiKey, model, baseUrl }) =>       createOpenAICompatible({
         name: "zai",
         baseURL: baseUrl ?? "https://api.z.ai/api/coding/paas/v4",
         apiKey,
       }).chatModel(model),
-    ),
   },
   grok: {
     name: "grok",
     defaultModel: "grok-4",
     envKey: "XAI_API_KEY",
-    build: ({ apiKey, model }) => wireModel(model, createXai({ apiKey })(model)),
+    languageModel: ({ apiKey, model }) => createXai({ apiKey })(model),
   },
   openrouter: {
     name: "openrouter",
     defaultModel: "anthropic/claude-sonnet-4.5",
     envKey: "OPENROUTER_API_KEY",
-    build: ({ apiKey, model, baseUrl }) => wireModel(
-      model,
-      createOpenAICompatible({
+    languageModel: ({ apiKey, model, baseUrl }) =>       createOpenAICompatible({
         name: "openrouter",
         baseURL: baseUrl ?? "https://openrouter.ai/api/v1",
         apiKey,
       }).chatModel(model),
-    ),
   },
   anthropic: {
     name: "anthropic",
     defaultModel: "claude-sonnet-4-5",
     envKey: "ANTHROPIC_API_KEY",
-    build: ({ apiKey, model }) => wireModel(model, createAnthropic({ apiKey })(model)),
+    languageModel: ({ apiKey, model }) => createAnthropic({ apiKey })(model),
   },
   deepseek: {
     name: "deepseek",
     defaultModel: "deepseek-chat",
     envKey: "DEEPSEEK_API_KEY",
-    build: ({ apiKey, model, baseUrl }) => wireModel(
-      model,
-      createOpenAICompatible({
+    languageModel: ({ apiKey, model, baseUrl }) =>       createOpenAICompatible({
         name: "deepseek",
         baseURL: baseUrl ?? "https://api.deepseek.com/v1",
         apiKey,
       }).chatModel(model),
-    ),
   },
   qwen: {
     name: "qwen",
     defaultModel: "qwen-max",
     envKey: "QWEN_API_KEY",
-    build: ({ apiKey, model, baseUrl }) => wireModel(
-      model,
-      createOpenAICompatible({
+    languageModel: ({ apiKey, model, baseUrl }) =>       createOpenAICompatible({
         name: "qwen",
         baseURL: baseUrl ?? "https://dashscope.aliyuncs.com/compatible-mode/v1",
         apiKey,
       }).chatModel(model),
-    ),
   },
   generic: {
     name: "generic",
     defaultModel: "custom",
     envKey: "GENERIC_API_KEY",
-    build: ({ apiKey, model, baseUrl }) => wireModel(
-      model,
-      createOpenAICompatible({
+    languageModel: ({ apiKey, model, baseUrl }) =>       createOpenAICompatible({
         name: "generic",
         baseURL: baseUrl ?? "http://localhost:8000/v1",
         apiKey,
       }).chatModel(model),
-    ),
   },
 };
+
+// Wire legs are attached uniformly so every spec carries both (probe support).
+for (const spec of Object.values(REGISTRY)) {
+  spec.build = (c) => wireModel(c.model, spec.languageModel(c), true);
+  spec.buildBare = (c) => wireModel(c.model, spec.languageModel(c), false);
+}
 
 /** Build a Provider by registry name; throws honestly when the key is absent. */
 export function buildProvider(
@@ -220,7 +215,7 @@ export function buildProvider(
     ?? (cfgProvider?.model !== undefined && cfgProvider?.model !== "" ? cfgProvider.model : undefined)
     ?? spec.defaultModel;
   const baseUrl = opts.baseUrl ?? cfgProvider?.baseUrl;
-  return providerFromWire(model, spec.build({ apiKey, model, baseUrl }));
+  return providerFromWire(model, spec.build!({ apiKey, model, baseUrl }));
 }
 
 /** Which providers have keys present (UI listing) — never returns keys. */
