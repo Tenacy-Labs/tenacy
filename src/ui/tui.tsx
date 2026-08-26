@@ -80,6 +80,14 @@ function launchProbe(): void {
   const est = toolTokensEstimate(serialized.length);
   void probeToolsCache(providerName!, probeSpec.build!(c), probeSpec.buildBare!(c), { toolTokens: est }).then((r) => {
     state.probe = r;
+    // Measured tool-prefix tokens join the cache belief chain as a virtual
+    // head block (providers render tools before system) — expected-hit stops
+    // under-reporting by the tool mass; believed-evicted-hit spurious fires
+    // on probed turns disappear.
+    if (r.toolsCached === true) {
+      agent.cacheModel.setHeadBlock({ digest: "tool-defs-v1", tokens: r.toolTokens });
+      state.headTokens = r.toolTokens;
+    }
     notify();
   }).catch(() => { /* probe stays null — neutral display */ });
 }
@@ -94,6 +102,7 @@ const state = {
   expandedBlock: null as string | null,   // itemId of the expanded blurb
   expandedTools: false,                  // tools entry expanded in CONTEXT list
   probe: null as CacheProbeResult | null,  // once-per-runtime cache probe
+  headTokens: 0,                          // measured tool-prefix tokens (virtual head)
   cachePrice: 0,
   renderTokens: 0,
   realizedHit: null as number | null,   // provider-reported cached tokens last request
@@ -113,7 +122,9 @@ function notify(): void { state.emit(); }
  *  within it. Yellow = not confirmed (not yet sent, or past the hit boundary). */
 function cachedPrefix(b: Block, i: number): boolean {
   if (state.realizedHit === null) return false;
-  let cum = 0;
+  // The measured tool head consumes cached tokens before any render block.
+  if (state.realizedHit <= state.headTokens) return false;
+  let cum = state.headTokens;
   for (let j = 0; j <= i && j < state.blocks.length; j++) cum += state.blocks[j]?.tokens ?? 0;
   return cum <= state.realizedHit;
 }
@@ -122,7 +133,10 @@ function cachedPrefix(b: Block, i: number): boolean {
 function probeColor(): string {
   if (state.probe === null) return "gray";
   if (state.probe.toolsCached === null) return "gray";
-  return state.probe.toolsCached ? "green" : "yellow";
+  if (!state.probe.toolsCached) return "yellow";
+  // Measured in the prefix; green this turn only when the provider's reported
+  // hit actually covered the head (else it expired since the probe).
+  return (state.realizedHit ?? 0) >= state.headTokens && state.headTokens > 0 ? "green" : "yellow";
 }
 function probeSuffix(): string {
   if (state.probe === null) return " · probe pending";

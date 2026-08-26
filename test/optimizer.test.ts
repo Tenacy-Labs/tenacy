@@ -296,6 +296,40 @@ describe("cache model", () => {
     expect(cl.divergence).toBe("provider-usage-semantics");
   });
 
+  test("virtual head block: tool tokens join the believed prefix", () => {
+    const cm = new CacheModel(ps.cache);
+    const blocks = [{ digest: "a", tokens: 100, text: "", itemId: "x", zone: "identity" as const }];
+    cm.setHeadBlock({ digest: "tool-defs-v1", tokens: 2100 });
+    // No prior turn: chain empty, but the head matches itself (re-sent every
+    // request) — expected hit includes it immediately.
+    const h0 = cm.expectedHit(blocks);
+    expect(h0.hitTokens).toBe(2100);
+    cm.update(blocks);
+    const h1 = cm.expectedHit(blocks);
+    expect(h1.hitTokens).toBe(2200); // head + matched block
+    // Head freshness advances with update(), so it survives later turns.
+    const h2 = cm.expectedHit([{ ...blocks[0]!, digest: "z" }]);
+    expect(h2.hitTokens).toBe(2100); // head still hit; block miss
+    // Removing the head restores plain block-prefix semantics: the same
+    // query now credits only the matched block (expectedHit is pure — the
+    // earlier z-query did not mutate the chain).
+    cm.setHeadBlock(null);
+    expect(cm.expectedHit(blocks).hitTokens).toBe(100);
+  });
+
+  test("believed-evicted-hit no longer fires spuriously when the head explains the hit", () => {
+    const cm = new CacheModel(ps.cache);
+    const blocks = [{ digest: "a", tokens: 100, text: "", itemId: "x", zone: "identity" as const }];
+    cm.setHeadBlock({ digest: "tool-defs-v1", tokens: 2100 });
+    cm.update(blocks);
+    // Provider reports exactly head+block — previously expected 0 + realized
+    // 2200 > 500 floor => spurious believed-evicted-hit. Now expected 2200.
+    const cl = cm.calibrate(blocks, {
+      inputTokens: 2200, cacheReadTokens: 2200, cacheWriteTokens: 0, outputTokens: 10, raw: {},
+    }, cm.expectedHit(blocks));
+    expect(cl.divergence).toBe("none");
+  });
+
   test("unreported usage is null, never fabricated", () => {
     const cm = new CacheModel(ps.cache);
     const cl = cm.calibrate([], null, { hitTokens: 0 });
