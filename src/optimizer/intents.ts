@@ -65,6 +65,7 @@ export interface IntentHost {
   codeLens(target: string): CodeLensItem;
   nsLens(target: string): NSLensItem;
   convoTurn(id: string): { id: string; summary?: string | undefined; mergedInto?: string | undefined; verbatim(): string; markReexpanded(): void } | undefined;
+  convoTurnIds(): string[];
   goal(id: string): GoalItem | undefined;
   setGoal(g: GoalItem): void;
   addStoreItem(item: { toContextItem(): ContextItem }): void;
@@ -182,11 +183,16 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
       // single turn returned ok:false with that member permanently stranded
       // inside a merge that never materialized.
       for (let t = s.from; t <= s.to; t++) {
-        for (const role of ["user", "model"] as const) {
-          const m = host.convoTurn(`turn-${t}-${role}`);
-          if (m !== undefined) {
-            members.push(m.id);
-            texts.push(firstSentence(m.verbatim()));
+        for (const role of ["user", "model", "tool-result"] as const) {
+          const ids = role === "tool-result"
+            ? [...host.convoTurnIds?.() ?? []].filter((x) => x.startsWith(`turn-${t}-tool-`))
+            : [`turn-${t}-${role}`];
+          for (const mid0 of ids) {
+            const m = host.convoTurn(mid0);
+            if (m !== undefined) {
+              members.push(m.id);
+              texts.push(firstSentence(m.verbatim()));
+            }
           }
         }
       }

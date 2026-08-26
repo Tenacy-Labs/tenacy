@@ -237,6 +237,19 @@ async function command(line: string): Promise<void> {
       }
       break;
     }
+    case "/convo": {
+      // Convo array interface (ADR-0002f §2 amendment): the session's own
+      // record as prompt + reply + executed chain per turn.
+      const convo = agent.convo;
+      if (convo.length === 0) { console.log("no turns yet"); break; }
+      for (const t of convo) {
+        console.log(`─ t${t.turn} ─`);
+        console.log(`  prompt: ${t.prompt === undefined ? "(none)" : t.prompt.slice(0, 120)}`);
+        for (const c of t.chain) console.log(`  chain: [${c.op}] ${c.ok ? "ok" : "FAIL"} — ${c.result.slice(0, 90)}`);
+        console.log(`  reply:  ${t.reply === undefined ? "(pending)" : t.reply.slice(0, 120)}`);
+      }
+      break;
+    }
     case "/ledger": {
       try {
         const n = readFileSync(ledgerPath, "utf8").split("\n").filter((l) => l !== "").length;

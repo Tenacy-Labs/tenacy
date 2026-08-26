@@ -102,6 +102,7 @@ export class AgentLoop {
       codeLens: (t) => this.codeLens(t),
       nsLens: (t) => this.nsLens(t),
       convoTurn: (id) => this.convoTurn(id),
+      convoTurnIds: () => [...this.turnRegistry.keys()],
       addStoreItem: (it) => { this.store.add(it.toContextItem()); },
       goal: (id) => this.goalRegistry.get(id),
       setGoal: (g) => this.registerGoal(g),
@@ -210,9 +211,21 @@ export class AgentLoop {
     this.store.nextTurn();
     this.turn = this.store.turn;
     this.bus.emit({ kind: "turn.started", turn: this.turn });
+    this.steerCounter = 0;  // chain ids are per-turn, counter continuous across both mint sites
     const userItem = makeTurnItem(`turn-${this.turn}-user`, "user", userMessage, this.turn);
     this.turnRegistry.set(userItem.id, userItem as unknown as TurnItem);
     this.store.add(userItem);
+
+    // Convo array interface (ADR-0002f §2 amendment, 2026-08-25): steering
+    // executed at the turn boundary is part of THIS turn's record — mint the
+    // executed chain as tool-result turn items so the conversation lens
+    // exposes prompt + chain structure.
+    for (const r of toolResults) {
+      const trId = `turn-${this.turn}-tool-${this.steerCounter++}`;
+      const trItem = makeTurnItem(trId, "tool-result", `[${r.op}] ${r.ok ? "ok" : "FAIL"}: ${r.result}`, this.turn);
+      this.turnRegistry.set(trId, trItem as unknown as TurnItem);
+      this.store.add(trItem);
+    }
 
     // Finer splits: materialize split-mode fragments (one item per range)
     // before solving — they join the snapshot as independent items.
@@ -312,6 +325,10 @@ export class AgentLoop {
     this.turnRegistry.set(modelItem.id, modelItem as unknown as TurnItem);
     this.store.add(modelItem);
 
+    // Convo array interface: model-proposed intents executed at the
+    // coordinator are part of the turn's chain — minted inside the
+    // execution loop below (results exist only after execution).
+
     // Model-proposed intents execute at the coordinator (proposer/applier split)
     if (response.intents !== undefined) {
       for (const intent of response.intents) {
@@ -322,6 +339,11 @@ export class AgentLoop {
           r = { op: intent.op, ok: false, result: String(e) };
         }
         toolResults.push(r);
+        // Convo array interface: executed model intents join this turn's chain.
+        const trId = `turn-${this.turn}-tool-${this.steerCounter++}`;
+        const trItem = makeTurnItem(trId, "tool-result", `[${r.op}] ${r.ok ? "ok" : "FAIL"}: ${r.result}`, this.turn);
+        this.turnRegistry.set(trId, trItem as unknown as TurnItem);
+        this.store.add(trItem);
         if (!r.ok) {
           // A1 (0004 §2): failures classed as error evidence at journal time.
           const errId = `err:${this.store.turn}:${intent.op}:${this.failedIntents++}`;
@@ -607,6 +629,40 @@ export class AgentLoop {
     };
   }
   private turnRegistry = new Map<string, TurnItem | ReturnType<typeof makeTurnItem>>();
+  /** Per-turn counter for steering-chain item ids (reset each turn). */
+  private steerCounter = 0;
+
+  /** Convo array interface (ADR-0002f §2 amendment, 2026-08-25): the
+   *  session's own record as a turn-indexed array — each element is one
+   *  turn: the prompt, the model's reply, and the executed reasoning/tool
+   *  chain. Projection only — verbatim truth stays in the store; lossy
+   *  representations affect render, never this view. */
+  get convo(): ConvoTurnView[] {
+    const byTurn = new Map<number, ConvoTurnView>();
+    for (const id of this.turnRegistry.keys()) {
+      const m = /^turn-(\d+)-(user|model|tool)(?:-|$)/.exec(id);
+      if (m === null) continue;
+      const n = Number(m[1]);
+      let tv = byTurn.get(n);
+      if (tv === undefined) { tv = { turn: n, prompt: undefined, reply: undefined, chain: [] }; byTurn.set(n, tv); }
+      const entry = this.convoTurn(id);
+      if (entry === undefined) continue;
+      const text = entry.verbatim();
+      if (m[2] === "user") tv.prompt = text;
+      else if (m[2] === "model") tv.reply = text;
+      else {
+        // Review M2 fix (2026-08-25): an unparseable chain row fails
+        // CONSERVATIVE — the mint format is `[op] ok|FAIL: result`, so a
+        // non-match means corruption or foreign data; never report it as
+        // success in an error-evidence system.
+        const lm = /^\[([^\]]*)\] (ok|FAIL): ([\s\S]*)$/.exec(text);
+        tv.chain.push(lm === null
+          ? { op: "(raw)", ok: false, result: text, id }
+          : { op: lm[1] ?? "(?)", ok: lm[2] === "ok", result: lm[3] ?? "", id });
+      }
+    }
+    return [...byTurn.values()].sort((a, b) => a.turn - b.turn);
+  }
 
   dirLens(target: string): DirectoryLensItem {
     const id = `lens:${target}`;
@@ -709,7 +765,22 @@ export class AgentLoop {
     = () => null;
 }
 
-export function makeTurnItem(id: string, role: "user" | "model", text: string, turn: number): ContextItem {
+/** Convo array interface element (ADR-0002f §2 amendment): one turn —
+ *  prompt, model reply, and the executed reasoning/tool chain in order. */
+export interface ConvoTurnView {
+  turn: number;
+  prompt: string | undefined;
+  reply: string | undefined;
+  chain: ConvoChainStep[];
+}
+export interface ConvoChainStep {
+  op: string;
+  ok: boolean;
+  result: string;
+  id: string;
+}
+
+export function makeTurnItem(id: string, role: "user" | "model" | "tool-result", text: string, turn: number): ContextItem {
   const line = `[${role}] ${text}`;
   // Closure state for the convoTurn host proxy (verbatim + merge slot).
   const convo = { verbatim: text, mergedInto: undefined as string | undefined };
