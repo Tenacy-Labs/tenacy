@@ -18,6 +18,7 @@ import type { PluginEvent } from "./events.ts";
 import { GoalItem, FileLensItem, DirectoryLensItem, NoticeItem, TurnItem, Lens } from "./items.ts";
 import { CodeLensItem } from "./code-lens.ts";
 import { NSLensItem, type NamespaceProducer } from "./ns-lens.ts";
+import { ExecCollection, ExecRunLens, shellRunner, type ExecRunner } from "./exec-lens.ts";
 import { executeIntent, bindHost, type SteeringIntent } from "./intents.ts";
 import { dreamPass } from "./dream.ts";
 import { TurnBoundaryWatcher, applyDeltaToLens, type LensDelta } from "./live-views.ts";
@@ -101,6 +102,7 @@ export class AgentLoop {
       dirLens: (t) => this.dirLens(t),
       codeLens: (t) => this.codeLens(t),
       nsLens: (t) => this.nsLens(t),
+      exec: () => this.exec,
       convoTurn: (id) => this.convoTurn(id),
       convoTurnIds: () => [...this.turnRegistry.keys()],
       addStoreItem: (it) => { this.store.add(it.toContextItem()); },
@@ -591,6 +593,26 @@ export class AgentLoop {
     }
     if (!(n instanceof NSLensItem)) throw new Error(`${id} is not a namespace lens`);
     return n;
+  }
+  /** Exec collection — run history + per-run lenses (Daniel ruling
+   *  2026-08-26: each run is its OWN Lens object, solver-priced
+   *  independently). The ns producer registers under "exec" so
+   *  ns.focus exec lists runs. Runner injectable for gating/tests. */
+  #execCollection: ExecCollection | null = null;
+  execRunner: ExecRunner = shellRunner;
+  get exec(): ExecCollection {
+    if (this.#execCollection === null) {
+      this.#execCollection = new ExecCollection(this.execRunner, (lens) => {
+        this.lensRegistry.set(lens.id, lens);
+        this.store.add(lens.toContextItem());
+      });
+      this.nsProducers.set("exec", () => this.exec.nsProducer());
+    }
+    return this.#execCollection;
+  }
+  execLens(_target?: string): ExecRunLens {
+    // legacy single-lens surface removed; kept as a typed throw for clarity
+    throw new Error("exec is a collection of per-run lenses (execLens removed)");
   }
   /** Namespace producer registry — injectable; default provides nothing. */
   nsProducers = new Map<string, () => NamespaceProducer | null>();
