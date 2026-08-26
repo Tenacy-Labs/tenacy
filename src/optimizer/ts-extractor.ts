@@ -24,7 +24,11 @@ export interface TsCodeSymbol extends CodeSymbol {
 
 function stripLines(text: string): string[] {
   return text.split("\n")
-    .map((l) => l.replace(/^\s*\/?\*+\/?/, "").replace(/\s*\*\/$/, "").trimEnd())
+    .map((l) => l
+      .replace(/^\s*\/?\*+\/?/, "")
+      .replace(/^\s*\/\/\s?/, "")            // line comments: strip '// ' (gate MINOR-2)
+      .replace(/\s*\*\/$/, "")
+      .trimEnd())
     .filter((l) => l.trim().length > 0);
 }
 
@@ -35,11 +39,12 @@ function parseDocLines(lines: string[]): DocHarvest | undefined {
   let returns: string | undefined;
   const content: string[] = [];
   for (const line of lines) {
-    const pm = /^@param\s+(\S+)\s*(.*)$/.exec(line);
+    const t = line.trimStart();   // stripLines leaves the space after '*' —
+    const pm = /^@[Pp]aram\s+(\S+)\s*(.*)$/.exec(t);
     if (pm !== null) { params.push(pm[2] ? `${pm[1]} — ${pm[2].trim()}` : pm[1]!); continue; }
-    const rm = /^@returns?\s+(.*)$/.exec(line);
+    const rm = /^@[Rr]eturns?\s+(.*)$/.exec(t);
     if (rm !== null) { returns = rm[1]!.trim(); continue; }
-    content.push(line.trimStart());
+    content.push(t);
   }
   return { summary: content[0], full: content.join("\n"), params, returns };
 }
@@ -58,15 +63,24 @@ function visibilityOf(mods: readonly ts.Modifier[] | undefined): Visibility {
 }
 
 /**
- * Harvest a contiguous leading comment block ending just before `pos`.
- * Returns undefined when nothing precedes the position or the block is not
- * immediately adjacent (blank line between comment and code).
+ * Harvest a contiguous leading comment block ending at (or shortly before,
+ * across blank lines) `pos`. Blank-line separation is allowed on purpose —
+ * header + blank + class is a common layout (gate MINOR-1: docstring now
+ * matches behavior).
  */
 function harvestLeadingComment(sf: ts.SourceFile, pos: number): DocHarvest | undefined {
-  const leading = sf.text.slice(0, Math.max(0, pos)).trimEnd();
-  const m = /(?:\/\*[\s\S]*?\*\/|\/\/[^\n]*)\s*$/.exec(leading);
-  if (m === null || m[0] === undefined) return undefined;
-  return parseDocLines(stripLines(m[0]));
+  // Collect ALL contiguous trailing comment blocks/lines (a multi-line //
+  // header is many single-line comments, not one block) — gate MINOR-2 fix.
+  let text = sf.text.slice(0, Math.max(0, pos)).trimEnd();
+  const blocks: string[] = [];
+  for (;;) {
+    const m = /(?:\/\*[\s\S]*?\*\/|\/\/[^\n]*)\s*$/.exec(text);
+    if (m === null || m[0] === undefined) break;
+    blocks.unshift(m[0].trimEnd());
+    text = text.slice(0, text.length - m[0].length).trimEnd();
+  }
+  if (blocks.length === 0) return undefined;
+  return parseDocLines(stripLines(blocks.join("\n")));
 }
 
 export class TsCompilerExtractor implements SymbolExtractor {
@@ -94,6 +108,7 @@ export class TsCompilerExtractor implements SymbolExtractor {
         s.doc = headerDoc;
       }
       syms.push(s);
+      if (ts.isClassDeclaration(stmt)) syms.push(...this.#members(stmt));
     }
     const total = content === "" ? 0 : content.split("\n").length;
     for (let i = 0; i < syms.length; i++) {
@@ -110,9 +125,12 @@ export class TsCompilerExtractor implements SymbolExtractor {
     else if (ts.isClassDeclaration(stmt)) { d = stmt; kind = "class"; }
     else if (ts.isInterfaceDeclaration(stmt)) { d = stmt; kind = "interface"; }
     else if (ts.isTypeAliasDeclaration(stmt)) { d = stmt; kind = "type"; }
-    else if (ts.isEnumDeclaration(stmt)) { d = stmt; kind = "const"; }
     else if (ts.isVariableStatement(stmt)) { d = stmt.declarationList.declarations[0]; kind = "const"; }
+    // enums and binding-pattern names are deliberately skipped: v1
+    // (HeuristicTsExtractor) never emitted them — emitting them would shift
+    // anchoring tables on an extractor swap (gate M3).
     if (d === undefined || kind === undefined || d.name === undefined) return undefined;
+    if (!ts.isIdentifier(d.name)) return undefined;
     const mods = ts.canHaveModifiers(stmt) ? (ts.getModifiers(stmt) ?? undefined) : undefined;
     const { line } = stmt.getSourceFile().getLineAndCharacterOfPosition(stmt.getStart());
     return {
@@ -121,6 +139,24 @@ export class TsCompilerExtractor implements SymbolExtractor {
       exported: mods?.some((m: ts.Modifier) => m.kind === ts.SyntaxKind.ExportKeyword) ?? false,
       doc: harvestDoc(stmt),
     };
+  }
+
+  /** Class members as symbols — v1 parity: methods/accessors only, identifier names. */
+  #members(cls: ts.ClassDeclaration): TsCodeSymbol[] {
+    const out: TsCodeSymbol[] = [];
+    for (const m of cls.members) {
+      if (m.name === undefined || !ts.isIdentifier(m.name)) continue;
+      if (!ts.isMethodDeclaration(m) && !ts.isGetAccessorDeclaration(m) && !ts.isSetAccessorDeclaration(m)) continue;
+      const mods = ts.canHaveModifiers(m) ? (ts.getModifiers(m) ?? undefined) : undefined;
+      const { line } = m.getSourceFile().getLineAndCharacterOfPosition(m.getStart());
+      out.push({
+        name: m.name.getText(), kind: "method", startLine: line + 1, endLine: line + 1,
+        visibility: visibilityOf(mods),
+        exported: false,
+        doc: harvestDoc(m),
+      });
+    }
+    return out;
   }
 }
 
@@ -135,6 +171,17 @@ export interface InterfaceViewOptions {
 
 const defaultView: InterfaceViewOptions = { includeProtected: true, includePrivate: false, docs: "summary" };
 
+/** Modifiers that change interface-view meaning — rendered as markers. */
+function memberModifiers(m: ts.ClassElement): string {
+  const mods = ts.canHaveModifiers(m) ? (ts.getModifiers(m) ?? []) : [];
+  const parts: string[] = [];
+  if (mods.some((x) => x.kind === ts.SyntaxKind.AbstractKeyword)) parts.push("abstract");
+  if (mods.some((x) => x.kind === ts.SyntaxKind.StaticKeyword)) parts.push("static");
+  if (mods.some((x) => x.kind === ts.SyntaxKind.AsyncKeyword)) parts.push("async");
+  if (ts.isPropertyDeclaration(m) && mods.some((x) => x.kind === ts.SyntaxKind.ReadonlyKeyword)) parts.push("readonly");
+  return parts.length > 0 ? parts.join(" ") + " " : "";
+}
+
 function signatureOf(m: ts.ClassElement): string | undefined {
   if (ts.isMethodDeclaration(m) || ts.isConstructorDeclaration(m)) {
     const params = m.parameters.map((p) => {
@@ -147,14 +194,15 @@ function signatureOf(m: ts.ClassElement): string | undefined {
     }).join(", ");
     const ret = ts.isMethodDeclaration(m) && m.type !== undefined ? `: ${m.type.getText()}` : "";
     const kw = ts.isConstructorDeclaration(m) ? "constructor" : m.name === undefined ? "" : m.name.getText();
-    return `${kw}(${params})${ret}`;
+    return `${memberModifiers(m)}${kw}(${params})${ret}`;
   }
   if (ts.isPropertyDeclaration(m)) {
     const type = m.type !== undefined ? `: ${m.type.getText()}` : "";
     const init = m.initializer !== undefined ? ` = ${m.initializer.getText()}` : "";
-    return `${m.name.getText()}${type}${init}`;
+    return `${memberModifiers(m)}${m.name.getText()}${type}${init}`;
   }
-  if (ts.isGetAccessorDeclaration(m)) return `get ${m.name.getText()}()`;
+  if (ts.isGetAccessorDeclaration(m)) return `${memberModifiers(m)}get ${m.name.getText()}()`;
+  if (ts.isSetAccessorDeclaration(m)) return `${memberModifiers(m)}set ${m.name.getText()}(${m.parameters.map((p) => p.getText()).join(", ")})`;
   return undefined;
 }
 
@@ -203,17 +251,26 @@ function the_doc_render(doc: DocHarvest, opts: InterfaceViewOptions, lines: stri
  * This is the on-demand, digest-cacheable projection — do not call it
  * per-render; the parse-only renderInterface is the cheap path.
  */
+/** Cross-safe dirname (ts.sys.getDirectoryPath is untyped). */
+function dirName(p: string): string {
+  const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
+  return i <= 0 ? "." : p.slice(0, i);
+}
+
 export function renderInterfaceResolved(
   entryPath: string,
   className: string,
   optsIn?: Partial<InterfaceViewOptions>,
 ): string {
   const opts = { ...defaultView, ...optsIn };
-  const cfg = ts.parseJsonConfigFileContent(
-    ts.readConfigFile("./tsconfig.json", ts.sys.readFile).config ?? {},
-    ts.sys,
-    ".",
-  );
+  // Discover tsconfig from the ENTRY FILE's directory (upward), never CWD —
+  // CWD-relative discovery silently built a Program over scratch files with
+  // default options when invoked from elsewhere (gate M2).
+  const configPath = ts.findConfigFile(dirName(require("node:path").resolve(entryPath)), ts.sys.fileExists, "tsconfig.json");
+  if (configPath === undefined) return `⟨no tsconfig.json found above ${entryPath}⟩`;
+  const raw = ts.readConfigFile(configPath, ts.sys.readFile);
+  if (raw.error !== undefined) return `⟨tsconfig parse error: ${ts.flattenDiagnosticMessageText(raw.error.messageText, " ")}⟩`;
+  const cfg = ts.parseJsonConfigFileContent(raw.config ?? {}, ts.sys, dirName(configPath));
   const program = ts.createProgram([entryPath, ...cfg.fileNames.filter((f) => f !== entryPath)], cfg.options);
   const checker = program.getTypeChecker();
   const sf = program.getSourceFile(entryPath);
@@ -252,13 +309,18 @@ export function renderInterfaceResolved(
   collect(classType, 0);
 
   for (const base of baseTypes) {
-    const baseSym = base.getSymbol();
-    if (baseSym === undefined) continue;
-    const baseName = baseSym.getName();
     for (const prop of checker.getPropertiesOfType(base)) {
       if (seen.has(prop.getName())) continue;
       const decl = prop.getDeclarations()?.[0];
       if (decl === undefined || !ts.isClassElement(decl)) continue;
+      // Attribute from the DECLARING class (walk decl.parent up), not the
+      // walked base type — getPropertiesOfType returns transitively-declared
+      // members, so the walked base mislabels grandparent members (gate M1).
+      let declParent = decl.parent;
+      while (declParent !== undefined && !ts.isClassLike(declParent)) declParent = declParent.parent;
+      const baseName = declParent !== undefined && ts.isClassDeclaration(declParent) && declParent.name !== undefined
+        ? declParent.name.getText()
+        : base.getSymbol()?.getName() ?? "?";
       const mods = ts.canHaveModifiers(decl) ? (ts.getModifiers(decl) ?? undefined) : undefined;
       const vis = visibilityOf(mods);
       if (vis === "private") continue;              // never crosses the class boundary
