@@ -29,7 +29,7 @@ import { executeIntent } from "../optimizer/intents.ts";
 import { INTENT_PROTOCOL_DOC, withIntentParsing } from "../optimizer/live.ts";
 import type { Provider } from "../optimizer/providers.ts";
 import type { SteeringIntent } from "../optimizer/intents.ts";
-import type { Placement } from "../optimizer/types.ts";
+import type { Placement, Block } from "../optimizer/types.ts";
 import { readFileSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -47,7 +47,11 @@ if (providerName !== undefined) {
 const model = withIntentParsing(inner.modelId, inner);
 const dir = mkdtempSync(join(tmpdir(), "agent-kernel-tui-"));
 const ledger = new Ledger(join(dir, "ledger.jsonl"));
-const agent = new AgentLoop(model, paramSetFor(inner.modelId, loadHarnessConfig()), ledger);
+const agent = new AgentLoop(model, paramSetFor(inner.modelId, loadHarnessConfig()), ledger, {
+  // Capture the exact rendered blocks — the blurbs that entered the last
+  // context window — for the sidebar's CONTEXT panel.
+  onRender: (rr) => { state.blocks = rr.blocks; },
+});
 agent.store.add(new StandingItem("identity", "identity",
   "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator. " + INTENT_PROTOCOL_DOC,
 ).toContextItem());
@@ -61,6 +65,8 @@ let lineSeq = 0;
 const state = {
   lines: [] as TurnLine[],
   placements: [] as Placement[],
+  blocks: [] as Block[],
+  expandedBlock: null as string | null,   // itemId of the expanded blurb
   renderTokens: 0,
   hitTokens: 0,
   divergence: "",
@@ -146,13 +152,30 @@ function App() {
         {/* sidebar */}
         <box width={34} flexDirection="column" border borderStyle="rounded" title=" optimizer ">
           <text fg="cyan" >RENDER {state.renderTokens}t</text>
-          {state.placements.slice(0, 12).map((p, i) => (
-            <box key={i} flexDirection="row">
-              <text fg="gray">{String(p.position).padStart(2)} {p.zone.slice(0, 7).padEnd(7)} </text>
-              <text fg="white">{p.id.slice(0, 16).padEnd(16)}</text>
-              <text fg="gray">{String(p.tokens).padStart(5)}t</text>
-            </box>
-          ))}
+          {/* Last context window: every rendered block as a top-level bullet,
+              click to expand the blurb it contributed to the context string. */}
+          <text fg="cyan">CONTEXT (last window)</text>
+          <scrollbox flexGrow={1} flexDirection="column">
+            {state.blocks.length === 0 && <text fg="gray">no turn rendered yet</text>}
+            {state.blocks.map((b) => (
+              <box key={b.digest} flexDirection="column">
+                <box
+                  flexDirection="row"
+                  onMouseDown={() => { state.expandedBlock = state.expandedBlock === b.itemId ? null : b.itemId; notify(); }}
+                >
+                  <text fg="yellow">{state.expandedBlock === b.itemId ? "▾" : "▸"}</text>
+                  <text fg="white">{b.itemId.slice(0, 16).padEnd(16)}</text>
+                  <text fg="gray">{b.zone.slice(0, 7).padEnd(7)}</text>
+                  <text fg="gray">{String(b.tokens).padStart(5)}t</text>
+                </box>
+                {state.expandedBlock === b.itemId && (
+                  <box flexDirection="row" paddingLeft={2}>
+                    <text fg="gray">{b.text.slice(0, 400)}</text>
+                  </box>
+                )}
+              </box>
+            ))}
+          </scrollbox>
           <text>{" "}</text>
           <text fg="cyan" >CACHE</text>
           <box flexDirection="row">
@@ -179,7 +202,13 @@ function App() {
           focused
           flexGrow={1}
           placeholder={state.busy ? "busy…" : "type a message; /help for commands"}
-          onSubmit={(value: unknown) => { const v = typeof value === "string" ? value : inputRef.current?.value ?? ""; void send(v); }}
+          onSubmit={(value: unknown) => {
+            const v = typeof value === "string" ? value : inputRef.current?.value ?? "";
+            void send(v).finally(() => {
+              // Clear the box after the message is sent (user feedback #1).
+              if (inputRef.current !== null) inputRef.current.value = "";
+            });
+          }}
         />
       </box>
     </box>
