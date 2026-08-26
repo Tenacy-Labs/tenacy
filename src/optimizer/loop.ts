@@ -651,9 +651,13 @@ export class AgentLoop {
       if (m[2] === "user") tv.prompt = text;
       else if (m[2] === "model") tv.reply = text;
       else {
+        // Review M2 fix (2026-08-25): an unparseable chain row fails
+        // CONSERVATIVE — the mint format is `[op] ok|FAIL: result`, so a
+        // non-match means corruption or foreign data; never report it as
+        // success in an error-evidence system.
         const lm = /^\[([^\]]*)\] (ok|FAIL): ([\s\S]*)$/.exec(text);
         tv.chain.push(lm === null
-          ? { op: "(raw)", ok: true, result: text, id }
+          ? { op: "(raw)", ok: false, result: text, id }
           : { op: lm[1] ?? "(?)", ok: lm[2] === "ok", result: lm[3] ?? "", id });
       }
     }
