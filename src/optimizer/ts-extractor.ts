@@ -28,11 +28,8 @@ function stripLines(text: string): string[] {
     .filter((l) => l.trim().length > 0);
 }
 
-function harvestDoc(node: ts.Node): DocHarvest | undefined {
-  const js = (ts as unknown as { getJSDocCommentsAndTags?: (n: ts.Node) => ts.JSDoc[] })
-    .getJSDocCommentsAndTags?.(node) ?? [];
-  if (js.length === 0) return undefined;
-  const lines = stripLines(js.map((j) => j.getText()).join("\n"));
+/** Parse stripped doc lines into summary/full/params/returns. */
+function parseDocLines(lines: string[]): DocHarvest | undefined {
   if (lines.length === 0) return undefined;
   const params: string[] = [];
   let returns: string | undefined;
@@ -42,15 +39,34 @@ function harvestDoc(node: ts.Node): DocHarvest | undefined {
     if (pm !== null) { params.push(pm[2] ? `${pm[1]} — ${pm[2].trim()}` : pm[1]!); continue; }
     const rm = /^@returns?\s+(.*)$/.exec(line);
     if (rm !== null) { returns = rm[1]!.trim(); continue; }
-    content.push(line);
+    content.push(line.trimStart());
   }
   return { summary: content[0], full: content.join("\n"), params, returns };
+}
+
+function harvestDoc(node: ts.Node): DocHarvest | undefined {
+  const js = (ts as unknown as { getJSDocCommentsAndTags?: (n: ts.Node) => ts.JSDoc[] })
+    .getJSDocCommentsAndTags?.(node) ?? [];
+  if (js.length === 0) return undefined;
+  return parseDocLines(stripLines(js.map((j) => j.getText()).join("\n")));
 }
 
 function visibilityOf(mods: readonly ts.Modifier[] | undefined): Visibility {
   if (mods?.some((m) => m.kind === ts.SyntaxKind.PrivateKeyword)) return "private";
   if (mods?.some((m) => m.kind === ts.SyntaxKind.ProtectedKeyword)) return "protected";
   return "public";
+}
+
+/**
+ * Harvest a contiguous leading comment block ending just before `pos`.
+ * Returns undefined when nothing precedes the position or the block is not
+ * immediately adjacent (blank line between comment and code).
+ */
+function harvestLeadingComment(sf: ts.SourceFile, pos: number): DocHarvest | undefined {
+  const leading = sf.text.slice(0, Math.max(0, pos)).trimEnd();
+  const m = /(?:\/\*[\s\S]*?\*\/|\/\/[^\n]*)\s*$/.exec(leading);
+  if (m === null || m[0] === undefined) return undefined;
+  return parseDocLines(stripLines(m[0]));
 }
 
 export class TsCompilerExtractor implements SymbolExtractor {
@@ -60,10 +76,24 @@ export class TsCompilerExtractor implements SymbolExtractor {
 
   extractRich(content: string): TsCodeSymbol[] {
     const sf = ts.createSourceFile("x.ts", content, ts.ScriptTarget.Latest, true);
+    // File-header doc: a leading comment block before ANY statement attaches
+    // to the first declaration, even across import statements (the common
+    // header → imports → class layout). If the block is adjacent to a
+    // statement that is not a declaration (e.g. imports), defer it.
+    const first = sf.statements[0];
+    const headerDoc = first === undefined
+      ? undefined
+      : harvestLeadingComment(sf, first.getStart(sf) - 1);
     const syms: TsCodeSymbol[] = [];
     for (const stmt of sf.statements) {
       const s = this.#decl(stmt);
-      if (s !== undefined) syms.push(s);
+      if (s === undefined) continue;
+      if (headerDoc !== undefined && s.doc === undefined && syms.length === 0) {
+        // attaches across import statements (header → imports → class is the
+        // common layout); the first DECLARATION owns the file header
+        s.doc = headerDoc;
+      }
+      syms.push(s);
     }
     const total = content === "" ? 0 : content.split("\n").length;
     for (let i = 0; i < syms.length; i++) {
@@ -107,7 +137,14 @@ const defaultView: InterfaceViewOptions = { includeProtected: true, includePriva
 
 function signatureOf(m: ts.ClassElement): string | undefined {
   if (ts.isMethodDeclaration(m) || ts.isConstructorDeclaration(m)) {
-    const params = m.parameters.map((p) => p.getText()).join(", ");
+    const params = m.parameters.map((p) => {
+      if (ts.isConstructorDeclaration(m)) {
+        // param-properties: abbreviate to bare names (+ modifiers elided)
+        const opt = p.questionToken !== undefined || (p.type !== undefined && /\bundefined\b/.test(p.type.getText())) ? "?" : "";
+        return `${p.name.getText()}${opt}`;
+      }
+      return p.getText();
+    }).join(", ");
     const ret = ts.isMethodDeclaration(m) && m.type !== undefined ? `: ${m.type.getText()}` : "";
     const kw = ts.isConstructorDeclaration(m) ? "constructor" : m.name === undefined ? "" : m.name.getText();
     return `${kw}(${params})${ret}`;
@@ -147,8 +184,92 @@ export function renderInterface(content: string, className: string, optsIn?: Par
     lines.push(`  ${marker}${sig};`);
     const doc = harvestDoc(m);
     if (doc !== undefined && opts.docs !== "none") {
-      const text = opts.docs === "full" ? doc.full ?? doc.summary : doc.summary;
-      if (text !== undefined && text.length > 0) lines.push(`    /** ${text.split("\n").join(" · ")} */`);
+      the_doc_render(doc, opts, lines);
+    }
+  }
+  lines.push("}");
+  return lines.join("\n");
+}
+
+function the_doc_render(doc: DocHarvest, opts: InterfaceViewOptions, lines: string[]): void {
+  const text = opts.docs === "full" ? doc.full ?? doc.summary : doc.summary;
+  if (text !== undefined && text.length > 0) lines.push(`    /** ${text.split("\n").join(" · ")} */`);
+}
+
+/**
+ * Checker-backed interface view: includes members INHERITED from base
+ * classes, marked `↖ inherited from <Base>`. Requires a real ts.Program
+ * (whole-project type resolution), so it takes a file PATH, not content.
+ * This is the on-demand, digest-cacheable projection — do not call it
+ * per-render; the parse-only renderInterface is the cheap path.
+ */
+export function renderInterfaceResolved(
+  entryPath: string,
+  className: string,
+  optsIn?: Partial<InterfaceViewOptions>,
+): string {
+  const opts = { ...defaultView, ...optsIn };
+  const cfg = ts.parseJsonConfigFileContent(
+    ts.readConfigFile("./tsconfig.json", ts.sys.readFile).config ?? {},
+    ts.sys,
+    ".",
+  );
+  const program = ts.createProgram([entryPath, ...cfg.fileNames.filter((f) => f !== entryPath)], cfg.options);
+  const checker = program.getTypeChecker();
+  const sf = program.getSourceFile(entryPath);
+  if (sf === undefined) return `⟨file ${entryPath} not in program⟩`;
+  const cls = sf.statements.find(
+    (s): s is ts.ClassDeclaration => ts.isClassDeclaration(s) && s.name?.getText() === className,
+  );
+  if (cls === undefined) return `⟨class ${className} not found in ${entryPath}⟩`;
+
+  const lines: string[] = [`interface ${className} {`];
+  // own members first (source order), then inherited (base-declaration order)
+  for (const m of cls.members) {
+    const mods = ts.canHaveModifiers(m) ? (ts.getModifiers(m) ?? undefined) : undefined;
+    const vis = visibilityOf(mods);
+    if (m.name === undefined || m.name.getText().startsWith("#")) continue;
+    if (vis === "private" && !opts.includePrivate) continue;
+    if (vis === "protected" && !opts.includeProtected) continue;
+    const sig = signatureOf(m);
+    if (sig === undefined) continue;
+    lines.push(`  ${vis === "protected" ? "protected " : ""}${sig};`);
+    const doc = harvestDoc(m);
+    if (doc !== undefined && opts.docs !== "none") the_doc_render(doc, opts, lines);
+  }
+
+  // inherited surface: walk base types transitively
+  const seen = new Set(cls.members.map((m) => m.name?.getText()).filter((n): n is string => n !== undefined));
+  const classType = checker.getTypeAtLocation(cls);
+  const baseTypes: ts.Type[] = [];
+  const collect = (t: ts.Type, depth: number): void => {
+    if (depth > 4) return;
+    for (const b of checker.getBaseTypes(t as ts.InterfaceType)) {
+      baseTypes.push(b);
+      collect(b, depth + 1);
+    }
+  };
+  collect(classType, 0);
+
+  for (const base of baseTypes) {
+    const baseSym = base.getSymbol();
+    if (baseSym === undefined) continue;
+    const baseName = baseSym.getName();
+    for (const prop of checker.getPropertiesOfType(base)) {
+      if (seen.has(prop.getName())) continue;
+      const decl = prop.getDeclarations()?.[0];
+      if (decl === undefined || !ts.isClassElement(decl)) continue;
+      const mods = ts.canHaveModifiers(decl) ? (ts.getModifiers(decl) ?? undefined) : undefined;
+      const vis = visibilityOf(mods);
+      if (vis === "private") continue;              // never crosses the class boundary
+      if (decl.name !== undefined && decl.name.getText().startsWith("#")) continue;
+      if (vis === "protected" && !opts.includeProtected) continue;
+      const sig = signatureOf(decl);
+      if (sig === undefined) continue;
+      seen.add(prop.getName());
+      lines.push(`  ${sig};`.replace(/^  /, `  ↖ inherited from ${baseName}: `));
+      const doc = harvestDoc(decl);
+      if (doc !== undefined && opts.docs !== "none") the_doc_render(doc, opts, lines);
     }
   }
   lines.push("}");
