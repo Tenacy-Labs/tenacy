@@ -31,7 +31,7 @@ const fieldSchema = (f: FieldT): Record<string, unknown> => {
   }
 };
 
-interface ToolSpec { op: string; desc: string; req: string[]; opt?: string[]; fields: Record<string, FieldT> }
+interface ToolSpec { op: string; desc: string; req: string[]; opt?: string[]; fields: Record<string, FieldT>; /** Not advertised to the model; coordinator/steering-side only (C1 gate). */ coordinatorOnly?: boolean }
 
 const SPECS: ToolSpec[] = [
   { op: "say", desc: "Speak a distilled statement into the conversation record", req: ["text"], fields: { text: "s" } },
@@ -68,7 +68,7 @@ const SPECS: ToolSpec[] = [
   { op: "rlm.final", desc: "Accept a child agent's final report", req: ["id"], fields: { id: "s" } },
   { op: "memory.remember", desc: "Store a semantic memory", req: ["text"], opt: ["kind", "meta"], fields: { text: "s", kind: "s", meta: "freeobj" } },
   { op: "memory.search", desc: "Search semantic memory", req: ["query"], opt: ["limit", "kind"], fields: { query: "s", limit: "n", kind: "s" } },
-  { op: "exec.run", desc: "Execute a shell command; output attaches as an exec lens", req: ["cmd"], opt: ["timeout"], fields: { cmd: "s", timeout: "n" } },
+  { op: "exec.run", desc: "Execute a shell command; output attaches as an exec lens (coordinator-only: not model-callable until the exec gate ships)", req: ["cmd"], opt: ["timeout"], fields: { cmd: "s", timeout: "n" }, coordinatorOnly: true },
   { op: "exec.list", desc: "List exec runs: id exit cmd", req: [], fields: {} },
   { op: "exec.release", desc: "Drop exec runs from context by id", req: ["ids"], fields: { ids: "n[]" } },
 ];
@@ -80,10 +80,12 @@ export function toolSummary(): Array<{ name: string; desc: string; req: string[]
   return SPECS.map((s) => ({ name: opToToolName(s.op), desc: s.desc, req: [...s.req] }));
 }
 
-/** Build the SDK ToolSet for all intent ops. Tools carry no execute. */
+/** Build the SDK ToolSet for all intent ops. Tools carry no execute.
+ *  Coordinator-only ops (exec.run) are NOT advertised to the model. */
 export function intentTools(): ToolSet {
   const out: ToolSet = {};
   for (const t of SPECS) {
+    if (t.coordinatorOnly) continue;
     const properties: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(t.fields)) properties[k] = fieldSchema(v);
     out[opToToolName(t.op)] = tool({
@@ -102,7 +104,10 @@ export function intentsFromToolCalls(calls: ReadonlyArray<{ toolName: string; in
     const op = toolNameToOp(c.toolName);
     if (!KNOWN_OPS.has(op)) continue;
     if (typeof c.input !== "object" || c.input === null) continue;
-    intents.push({ op, ...(c.input as Record<string, unknown>)} as SteeringIntent);
+    // `op` is name-derived, never input-derived: strip any smuggled key so
+    // tool input cannot redirect a call to a different (e.g. exec) op.
+    const { op: _smuggled, ...rest } = c.input as Record<string, unknown>;
+    intents.push({ ...rest, op } as SteeringIntent);
   }
   return intents;
 }

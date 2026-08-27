@@ -26,14 +26,44 @@ export interface ExecRun {
 /** Producer-injected runner: execute a command, return exit + output. */
 export type ExecRunner = (cmd: string, timeoutMs: number) => { exit: number; out: string };
 
-/** Default runner: /bin/sh -c with a hard timeout, output capped. */
+/** Default runner: DENY. Real execution requires an explicitly authorized
+ *  runner injected at a trusted boundary (owner ruling 2026-08-26: gating
+ *  wrapper is required BEFORE exec reaches non-coordinator cells). */
+export function denyRunner(_cmd: string, _timeoutMs: number): { exit: number; out: string } {
+  return { exit: 126, out: "⟨exec denied: no authorized runner installed⟩" };
+}
+
+/** Real runner: /bin/sh -c with a hard timeout, output capped. NOT the
+ *  default — inject explicitly where execution is authorized. */
 export function shellRunner(cmd: string, timeoutMs: number): { exit: number; out: string } {
+  const ms = clampTimeout(timeoutMs);
   const p = Bun.spawnSync(["/bin/sh", "-c", cmd], {
-    stdout: "pipe", stderr: "pipe", timeout: timeoutMs,
+    stdout: "pipe", stderr: "pipe", timeout: ms,
   });
-  const out = `${p.stdout.toString()}${p.stderr.toString()}`.slice(0, 20_000);
   const timedOut = p.exitCode === null;
-  return { exit: timedOut ? 124 : p.exitCode ?? -1, out: timedOut ? `${out}\n⟨timeout after ${timeoutMs}ms⟩` : out };
+  const out = timedOut
+    ? capOutput(`${p.stdout.toString()}${p.stderr.toString()}`) + `\n⟨timeout after ${ms}ms⟩`
+    : capOutput(`${p.stdout.toString()}${p.stderr.toString()}`);
+  return { exit: timedOut ? 124 : p.exitCode ?? -1, out };
+}
+
+/** Clamp model-controlled timeouts to a positive bounded range (C1: timeout 0
+ *  = no timeout in Bun; arbitrarily large values block the event loop). */
+export function clampTimeout(ms: number): number {
+  if (!Number.isFinite(ms) || ms <= 0) return 10_000;
+  return Math.min(ms, 60_000);
+}
+
+/** Capture at most 20,000 BYTES (not chars) with an honest truncation marker
+ *  (B-M2: truncation must be marked, never silently passed as complete). */
+export function capOutput(s: string): string {
+  const bytes = Buffer.byteLength(s, "utf8");
+  if (bytes <= 20_000) return s;
+  let cut = 20_000;
+  // Walk back over a possible UTF-8 sequence split mid-boundary.
+  const buf = Buffer.from(s, "utf8");
+  while (cut > 0 && ((buf[cut] ?? 0) & 0xc0) === 0x80) cut--;
+  return buf.subarray(0, cut).toString("utf8") + "\n⟨output truncated at 20000 bytes⟩";
 }
 
 /**
@@ -91,9 +121,12 @@ export class ExecCollection {
   #commits: Array<{ turn: number; path: string }> = [];
 
   constructor(
-    public runner: ExecRunner = shellRunner,
+    public runner: ExecRunner = denyRunner,
     /** Called for each new run lens (loop: registry + store add). */
     public attach: (lens: ExecRunLens) => void = () => {},
+    /** Called when a run is dropped (loop: registry remove) — keeps the
+     *  lens registry free of stale entries after exec.release. */
+    public detach: (lensId: string) => void = () => {},
   ) {}
 
   /** Execute a command; materialize + attach its per-run lens. */
@@ -126,8 +159,29 @@ export class ExecCollection {
     const before = this.runs.length;
     const drop = new Set(ids);
     this.runs = this.runs.filter((r) => !drop.has(r.id));
-    for (const id of ids) this.lenses.delete(id);
+    for (const id of ids) {
+      const l = this.lenses.get(id);
+      if (l !== undefined) this.detach(l.id);
+      this.lenses.delete(id);
+    }
     return this.runs.length < before;
+  }
+
+  /** Restore a run from a session row WITHOUT rerunning it (B-M1: run
+   *  history must survive save/restore; recoverability is rerun, restore
+   *  is replay of the immutable snapshot). Rebuilds the per-run lens,
+   *  commit entry, and id allocation head. */
+  restoreRun(run: ExecRun): ExecRunLens {
+    this.runs.push(run);
+    const lens = new ExecRunLens(run);
+    lens.lastTouchTurn = run.turn;
+    lens.createdTurn = run.turn;
+    lens.ranges = [[1, 1]];
+    this.lenses.set(run.id, lens);
+    this.#commits.push({ turn: run.turn, path: `exec/#${run.id}` });
+    this.nextId = Math.max(this.nextId, run.id + 1);
+    this.attach(lens);
+    return lens;
   }
 
   /** ns entry point: runs as value nodes + commit replay. */

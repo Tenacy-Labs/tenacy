@@ -11,7 +11,7 @@ import { opsCaps } from "./ops.ts";
 import { GoalItem, FileLensItem, DirectoryLensItem, MergeGroupItem } from "./items.ts";
 import { CodeLensItem } from "./code-lens.ts";
 import { NSLensItem } from "./ns-lens.ts";
-import { ExecCollection, ExecRunLens, type ExecRunner } from "./exec-lens.ts";
+import { ExecCollection, ExecRunLens, clampTimeout, type ExecRunner } from "./exec-lens.ts";
 
 export type SteeringIntent =
   | { op: "say"; text: string }
@@ -352,7 +352,8 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
     }
     case "exec.run": {
       if (host === null) return { op: s.op, ok: false, result: "no host bound" };
-      const lens = host.exec().run(s.cmd, turn, s.timeout ?? 10_000);
+      // Clamp model-controlled timeout (C1: 0 = no timeout in Bun).
+      const lens = host.exec().run(s.cmd, turn, clampTimeout(s.timeout ?? 10_000));
       store.touch(lens.id);
       ledger?.recordSignal({ type: "exec-run", itemId: lens.id, turn, cmd: s.cmd, exit: lens.run.exit });
       return { op: s.op, ok: true, result: `#${lens.run.id} exit=${lens.run.exit} ${s.cmd} (${lens.run.out.length}B out) — ${lens.id}` };

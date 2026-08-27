@@ -84,9 +84,12 @@ function launchProbe(): void {
     // head block (providers render tools before system) — expected-hit stops
     // under-reporting by the tool mass; believed-evicted-hit spurious fires
     // on probed turns disappear.
-    if (r.toolsCached === true) {
-      agent.cacheModel.setHeadBlock({ digest: "tool-defs-v1", tokens: r.toolTokens });
-      state.headTokens = r.toolTokens;
+    if (r.toolsCached === true && r.delta !== null) {
+      // A-M2: install the MEASURED delta (hitWithTools − hitWithout), not the
+      // chars/4 estimate — the estimate is of the SDK-side serialization,
+      // not the provider's wire rendering of tool definitions.
+      agent.cacheModel.setHeadBlock({ digest: "tool-defs-v1", tokens: r.delta });
+      state.headTokens = r.delta;
     }
     notify();
   }).catch(() => { /* probe stays null — neutral display */ });
@@ -117,16 +120,18 @@ const state = {
 type SessionState = typeof state;
 function notify(): void { state.emit(); }
 
-/** Green chevron = confirmed cached in the last request: the provider reported
- *  cacheReadTokens and this block's cumulative prefix (render order) fits
- *  within it. Yellow = not confirmed (not yet sent, or past the hit boundary). */
-function cachedPrefix(b: Block, i: number): boolean {
-  if (state.realizedHit === null) return false;
+/** Tri-state cache verdict (B-M4): the chevron must not fabricate a
+ *  negative verdict when usage is simply unreported. gray = unknown
+ *  (no realized counters yet); green = realized hit covers this block's
+ *  cumulative prefix; yellow = counters prove the block is past the
+ *  hit boundary. */
+function cachedPrefixVerdict(b: Block, i: number): "confirmed" | "not-confirmed" | "unknown" {
+  if (state.realizedHit === null) return "unknown";
   // The measured tool head consumes cached tokens before any render block.
-  if (state.realizedHit <= state.headTokens) return false;
+  if (state.realizedHit <= state.headTokens) return "not-confirmed";
   let cum = state.headTokens;
   for (let j = 0; j <= i && j < state.blocks.length; j++) cum += state.blocks[j]?.tokens ?? 0;
-  return cum <= state.realizedHit;
+  return cum <= state.realizedHit ? "confirmed" : "not-confirmed";
 }
 
 /** Startup-probe verdict for the tools entry chevron. */
@@ -242,7 +247,7 @@ function App() {
                   flexDirection="row"
                   onMouseDown={() => { state.expandedBlock = state.expandedBlock === b.itemId ? null : b.itemId; notify(); }}
                 >
-                  <text fg={cachedPrefix(b, i) ? "green" : "yellow"}>{state.expandedBlock === b.itemId ? "▾" : "▸"}</text>
+                  <text fg={cachedPrefixVerdict(b, i) === "confirmed" ? "green" : cachedPrefixVerdict(b, i) === "unknown" ? "gray" : "yellow"}>{state.expandedBlock === b.itemId ? "▾" : "▸"}</text>
                   <text fg="white">{b.itemId.slice(0, 16).padEnd(16)}</text>
                   <text fg="gray">{b.zone.slice(0, 7).padEnd(7)}</text>
                   <text fg="gray">{String(b.tokens).padStart(5)}t</text>

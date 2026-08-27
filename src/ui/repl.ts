@@ -5,9 +5,9 @@
  *
  * Boots a LIVE provider from harness config when a name is given (or when
  * harness config has keys); falls back to the mock provider for offline
- * demo. Live models are wrapped with intent parsing — ```intents fences in
- * replies are stripped from visible text and executed at the coordinator
- * (proposer/applier split).
+ * demo. Live models call native tools (```intents fences retired
+ * 2026-08-26); tool calls execute at the coordinator (proposer/applier
+ * split) and their receipts appear in context next turn.
  *
  * Human commands (local, no model call):
  *   /status              — turn, tokens, cache belief/hit, divergence

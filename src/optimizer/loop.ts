@@ -18,7 +18,7 @@ import type { PluginEvent } from "./events.ts";
 import { GoalItem, FileLensItem, DirectoryLensItem, NoticeItem, TurnItem, Lens } from "./items.ts";
 import { CodeLensItem } from "./code-lens.ts";
 import { NSLensItem, type NamespaceProducer } from "./ns-lens.ts";
-import { ExecCollection, ExecRunLens, shellRunner, type ExecRunner } from "./exec-lens.ts";
+import { ExecCollection, ExecRunLens, denyRunner, type ExecRunner, type ExecRun } from "./exec-lens.ts";
 import { executeIntent, bindHost, type SteeringIntent } from "./intents.ts";
 import { dreamPass } from "./dream.ts";
 import { TurnBoundaryWatcher, applyDeltaToLens, type LensDelta } from "./live-views.ts";
@@ -599,16 +599,29 @@ export class AgentLoop {
    *  independently). The ns producer registers under "exec" so
    *  ns.focus exec lists runs. Runner injectable for gating/tests. */
   #execCollection: ExecCollection | null = null;
-  execRunner: ExecRunner = shellRunner;
+  /** DENY by default (gate review C1): exec reaches real runners only where
+   *  a trusted boundary explicitly injects `shellRunner` (e.g. the operator
+   *  REPL/TUI coordinator), never by model-proposed intent alone. */
+  execRunner: ExecRunner = denyRunner;
   get exec(): ExecCollection {
     if (this.#execCollection === null) {
       this.#execCollection = new ExecCollection(this.execRunner, (lens) => {
         this.lensRegistry.set(lens.id, lens);
         this.store.add(lens.toContextItem());
+      }, (lensId) => {
+        this.lensRegistry.delete(lensId);
       });
       this.nsProducers.set("exec", () => this.exec.nsProducer());
     }
     return this.#execCollection;
+  }
+
+  /** Restore an exec run from a session row without rerunning it (B-M1). */
+  restoreExecRun(run: ExecRun): void {
+    const c = this.exec;  // registers ns producer + attach callbacks
+    c.restoreRun(run);
+    this.store.remove(`lens:exec#${run.id}`);  // idempotent restore (B-11 pattern)
+    this.store.add(c.lenses.get(run.id)!.toContextItem());
   }
   execLens(_target?: string): ExecRunLens {
     // legacy single-lens surface removed; kept as a typed throw for clarity
