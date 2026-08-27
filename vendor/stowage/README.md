@@ -1,5 +1,15 @@
 # @connectotron/stowage
 
+<!-- VENDOR DIVERGENCE LEDGER (agent-kernel side, added 2026-08-27 per gate
+     review A-M1) — this snapshot intentionally diverges from upstream
+     stowage main in src/cache-model.ts ONLY: the virtual head block feature
+     (head field, setHeadBlock, headBlockTokens, expectedHit head-riding,
+     update() freshness advance) exists ONLY here, pending upstream landing.
+     A vendor refresh MUST re-apply this divergence (or drop it once
+     upstream carries the feature) — do NOT silently overwrite. Recorded
+     adaptation classes from PR #25/#26 (package.json dep line, test import
+     rewrites) continue to apply. -->
+
 **The context-layout solver: what to keep, how to render it, and where it
 sits — decided jointly, priced honestly, deterministically.**
 

@@ -60,15 +60,33 @@ export interface UsageReport {
 export class CacheModel {
   private chain: BelievedBlock[] = [];
   private turn = 0;
+  /** Virtual head block — prefix tokens outside the render (tool defs).
+   *  Positioned at 0 because providers render tools before system. */
+  private head: BelievedBlock | null = null;
 
   constructor(private params: CacheModelParams) {}
 
+  /** Install/replace the virtual head (probe-measured tool-prefix tokens). */
+  setHeadBlock(head: { digest: string; tokens: number } | null): void {
+    this.head = head === null ? null : { ...head, turn: this.turn };
+  }
+
+  headBlockTokens(): number {
+    return this.head?.tokens ?? 0;
+  }
+
   /** Expected cached prefix for a candidate render chain. */
   expectedHit(blocks: Block[], wallTimeMs?: number): { hitTokens: number; price: number } {
+    // The head rides BOTH sides: it is re-sent verbatim every request, so it
+    // matches itself at position 0; render blocks then align shifted by one.
+    const chain: readonly BelievedBlock[] = this.head === null ? this.chain : [this.head, ...this.chain];
+    const cand: ReadonlyArray<{ digest: string; tokens: number }> = this.head === null
+      ? blocks
+      : [{ digest: this.head.digest, tokens: this.head.tokens }, ...blocks];
     let hit = 0;
-    for (let i = 0; i < blocks.length && i < this.chain.length; i++) {
-      const b = blocks[i]!;
-      const believed = this.chain[i]!;
+    for (let i = 0; i < cand.length && i < chain.length; i++) {
+      const b = cand[i]!;
+      const believed = chain[i]!;
       const hasWallClock = this.params.ttlMs !== undefined
         && wallTimeMs !== undefined
         && believed.wallTimeMs !== undefined;
@@ -133,6 +151,9 @@ export class CacheModel {
   /** Commit the new chain as belief (call after each model call). */
   update(blocks: Block[], wallTimeMs?: number): void {
     this.turn += 1;
+    // The head (tool defs) is re-sent verbatim each request, refreshing its
+    // provider cache entry — advance its freshness with the turn.
+    if (this.head !== null) this.head.turn = this.turn;
     this.chain = blocks.map((b) => ({
       digest: b.digest,
       tokens: b.tokens,

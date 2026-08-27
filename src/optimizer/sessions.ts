@@ -19,6 +19,7 @@ import { dirname } from "node:path";
 import type { AgentLoop } from "./loop.ts";
 import { StandingItem, GoalItem, TurnItem, FileLensItem, NoticeItem , MergeGroupItem } from "./items.ts";
 import type { ContextItem, LensState } from "./types.ts";
+import type { ExecRun } from "./exec-lens.ts";
 
 export interface SessionHeader {
   format: "agent-kernel-session";
@@ -35,7 +36,10 @@ interface TurnRow { t: "turn"; id: string; role: "user" | "model" | "tool-result
 interface LensRow { t: "lens"; id: string; target: string; tag: string; ranges: Array<[number, number]>; baseBlockTurn: number; state: string; selected?: string[]; prefixes?: string[]; projection?: string; pendingDeltas?: Array<{ turn: number; lines: number[]; snapshot: string }> }
 interface NoticeRow { t: "notice"; id: string; kind?: "notice" | "error"; text: string; resolvedTurn?: number | undefined; createdTurn?: number | undefined; lastTouchTurn?: number | undefined }
 interface MergeRow { t: "merge"; id: string; text: string; memberIds: string[]; valueMass: number; createdTurn: number }
-type Row = StandingRow | GoalRow | TurnRow | LensRow | NoticeRow | MergeRow;
+/** Exec run row (B-M1): the immutable ExecRun snapshot round-trips; restore
+ *  replays it into the collection WITHOUT rerunning the command. */
+interface ExecRow { t: "exec"; id: string; run: { id: number; cmd: string; exit: number; out: string; turn: number } }
+type Row = StandingRow | GoalRow | TurnRow | LensRow | NoticeRow | MergeRow | ExecRow;
 
 export interface SessionFile {
   header: SessionHeader;
@@ -140,6 +144,14 @@ export function saveSession(loop: AgentLoop, path: string, providerName: string)
         rows.push({ t: "merge", id: it.id, text: ci.serialize(), memberIds: [...(it.upstreams ?? [])], valueMass: gm.valueMass ?? 0, createdTurn: it.createdTurn });
         break;
       }
+      case "exec": {
+        // B-M1: exec run lenses round-trip as their immutable ExecRun
+        // snapshot — restore replays without rerunning.
+        const ex = loop.lensRegistryView().get(it.id) as { run?: ExecRun } | undefined;
+        if (ex === undefined || ex.run === undefined) break;  // orphaned — skip honestly
+        rows.push({ t: "exec", id: it.id, run: { id: ex.run.id, cmd: ex.run.cmd, exit: ex.run.exit, out: ex.run.out, turn: ex.run.turn } });
+        break;
+      }
     }
   }
   const sf: SessionFile = {
@@ -211,6 +223,11 @@ export function restoreSession(loop: AgentLoop, path: string): { header: Session
           loop.store.addRestored(g.toContextItem());
           break;
         }
+        case "exec": {
+          // B-M1: replay the immutable run snapshot — no rerun, no shell.
+          loop.restoreExecRun(r.run);
+          break;
+        }
         case "notice": {
           // B-7-adjacent fix rides with A-M5: kind round-trips (was
           // hardcoded "notice" — error evidence was reclassified on every
@@ -232,13 +249,16 @@ export function restoreSession(loop: AgentLoop, path: string): { header: Session
 
 // ── helpers ─────────────────────────────────────────────────────────────
 
-function rowType(it: ContextItem): "standing" | "goal" | "turn" | "lens" | "notice" | "merge" {
+function rowType(it: ContextItem): "standing" | "goal" | "turn" | "lens" | "notice" | "merge" | "exec" {
   if (it.kind === "identity" || it.kind === "directive") return "standing";
   if (it.kind === "goal") return "goal";
   // Review B-4: a merge group is episodic-kind with member upstreams —
   // distinguish BEFORE the generic episodic->turn fallthrough.
   if (it.kind === "episodic" && (it.upstreams?.length ?? 0) > 0 && it.id.startsWith("merge:")) return "merge";
   if (it.kind === "episodic") return "turn";
+  // Exec run lenses carry tag "exec" — distinguish before the generic lens
+  // fallthrough so the ExecRun snapshot (not a fileContent fallback) round-trips.
+  if (it.kind === "lens" && it.id.startsWith("lens:exec#")) return "exec";
   if (it.kind === "lens") return "lens";
   return "notice";
 }

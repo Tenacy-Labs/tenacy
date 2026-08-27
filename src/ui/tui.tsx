@@ -22,11 +22,13 @@ import { createCliRenderer, type InputRenderable, type ScrollBoxRenderable } fro
 import { createRoot } from "@opentui/react";
 import { AgentLoop } from "../optimizer/loop.ts";
 import { MockProvider } from "../optimizer/providers.ts";
-import { buildProvider, availableProviders, loadHarnessConfig, paramSetFor } from "../optimizer/registry.ts";
+import { buildProvider, availableProviders, loadHarnessConfig, paramSetFor, REGISTRY } from "../optimizer/registry.ts";
+import { probeToolsCache, toolTokensEstimate, type CacheProbeResult } from "../optimizer/probe.ts";
 import { Ledger } from "../optimizer/ledger.ts";
 import { StandingItem } from "../optimizer/items.ts";
 import { executeIntent } from "../optimizer/intents.ts";
-import { INTENT_PROTOCOL_DOC, withIntentParsing } from "../optimizer/live.ts";
+import { TOOL_PROTOCOL_DOC, toolSummary, intentTools } from "../optimizer/tools.ts";
+const TOOLS = toolSummary();
 import type { Provider } from "../optimizer/providers.ts";
 import type { SteeringIntent } from "../optimizer/intents.ts";
 import type { Placement, Block } from "../optimizer/types.ts";
@@ -44,7 +46,7 @@ if (providerName !== undefined) {
   const avail = availableProviders();
   inner = avail.length > 0 ? buildProvider(avail[0]!) : new MockProvider();
 }
-const model = withIntentParsing(inner.modelId, inner);
+const model = inner;
 const dir = mkdtempSync(join(tmpdir(), "agent-kernel-tui-"));
 const ledger = new Ledger(join(dir, "ledger.jsonl"));
 const agent = new AgentLoop(model, paramSetFor(inner.modelId, loadHarnessConfig()), ledger, {
@@ -53,11 +55,45 @@ const agent = new AgentLoop(model, paramSetFor(inner.modelId, loadHarnessConfig(
   onRender: (rr) => { state.blocks = rr.blocks; },
 });
 agent.store.add(new StandingItem("identity", "identity",
-  "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator. " + INTENT_PROTOCOL_DOC,
+  "You are an agent running on the agent-kernel context optimizer. Render is a projection, not an accumulator. " + TOOL_PROTOCOL_DOC,
 ).toContextItem());
 agent.fileContent = (target) => {
   try { return readFileSync(target, "utf8"); } catch { return ""; }
 };
+
+// ── startup cache probe (once per runtime) ──────────────────────────────
+// Measures whether this provider includes tool-definition tokens in the
+// cached prefix (4 tiny calls; inconclusive when counters unreported).
+const probeSpec = providerName !== undefined ? REGISTRY[providerName] : undefined;
+let probeLaunched = false;
+function launchProbe(): void {
+  if (probeLaunched || probeSpec === undefined || inner instanceof MockProvider) return;
+  probeLaunched = true;
+  const cfg = loadHarnessConfig();
+  const entry = providerName !== undefined ? cfg?.providers[providerName] : undefined;
+  const key = process.env[probeSpec.envKey] ?? entry?.apiKey ?? "";
+  if (key === "") return;
+  const model2 = process.argv[3] ?? entry?.model ?? probeSpec.defaultModel;
+  const c = { apiKey: key, model: model2, baseUrl: entry?.baseUrl };
+  const tools = intentTools();
+  const serialized = JSON.stringify(Object.entries(tools).map(([name, t]) => ({ name, ...(t as Record<string, unknown>) })));
+  const est = toolTokensEstimate(serialized.length);
+  void probeToolsCache(providerName!, probeSpec.build!(c), probeSpec.buildBare!(c), { toolTokens: est }).then((r) => {
+    state.probe = r;
+    // Measured tool-prefix tokens join the cache belief chain as a virtual
+    // head block (providers render tools before system) — expected-hit stops
+    // under-reporting by the tool mass; believed-evicted-hit spurious fires
+    // on probed turns disappear.
+    if (r.toolsCached === true && r.delta !== null) {
+      // A-M2: install the MEASURED delta (hitWithTools − hitWithout), not the
+      // chars/4 estimate — the estimate is of the SDK-side serialization,
+      // not the provider's wire rendering of tool definitions.
+      agent.cacheModel.setHeadBlock({ digest: "tool-defs-v1", tokens: r.delta });
+      state.headTokens = r.delta;
+    }
+    notify();
+  }).catch(() => { /* probe stays null — neutral display */ });
+}
 
 // ── session state shared with React tree ─────────────────────────────────
 interface TurnLine { id: number; who: "user" | "model" | "intent"; text: string; ok?: boolean; meta?: string }
@@ -67,7 +103,12 @@ const state = {
   placements: [] as Placement[],
   blocks: [] as Block[],
   expandedBlock: null as string | null,   // itemId of the expanded blurb
+  expandedTools: false,                  // tools entry expanded in CONTEXT list
+  probe: null as CacheProbeResult | null,  // once-per-runtime cache probe
+  headTokens: 0,                          // measured tool-prefix tokens (virtual head)
+  cachePrice: 0,
   renderTokens: 0,
+  realizedHit: null as number | null,   // provider-reported cached tokens last request
   hitTokens: 0,
   divergence: "",
   turn: 0,
@@ -78,6 +119,35 @@ const state = {
 };
 type SessionState = typeof state;
 function notify(): void { state.emit(); }
+
+/** Tri-state cache verdict (B-M4): the chevron must not fabricate a
+ *  negative verdict when usage is simply unreported. gray = unknown
+ *  (no realized counters yet); green = realized hit covers this block's
+ *  cumulative prefix; yellow = counters prove the block is past the
+ *  hit boundary. */
+function cachedPrefixVerdict(b: Block, i: number): "confirmed" | "not-confirmed" | "unknown" {
+  if (state.realizedHit === null) return "unknown";
+  // The measured tool head consumes cached tokens before any render block.
+  if (state.realizedHit <= state.headTokens) return "not-confirmed";
+  let cum = state.headTokens;
+  for (let j = 0; j <= i && j < state.blocks.length; j++) cum += state.blocks[j]?.tokens ?? 0;
+  return cum <= state.realizedHit ? "confirmed" : "not-confirmed";
+}
+
+/** Startup-probe verdict for the tools entry chevron. */
+function probeColor(): string {
+  if (state.probe === null) return "gray";
+  if (state.probe.toolsCached === null) return "gray";
+  if (!state.probe.toolsCached) return "yellow";
+  // Measured in the prefix; green this turn only when the provider's reported
+  // hit actually covered the head (else it expired since the probe).
+  return (state.realizedHit ?? 0) >= state.headTokens && state.headTokens > 0 ? "green" : "yellow";
+}
+function probeSuffix(): string {
+  if (state.probe === null) return " · probe pending";
+  if (state.probe.toolsCached === null) return " · probe inconclusive";
+  return state.probe.toolsCached ? " · probe: cached" : " · probe: not cached";
+}
 
 function App() {
   const [, forceRender] = useState(0);
@@ -111,6 +181,8 @@ function App() {
       state.renderTokens = out.renderTokens;
       state.hitTokens = out.cacheLedger.expected.hitTokens;
       state.divergence = String(out.cacheLedger.divergence);
+      state.cachePrice = out.cacheLedger.expected.price;
+      state.realizedHit = out.cacheLedger.realized?.hitTokens ?? null;
       state.lines.push({ id: ++lineSeq, who: "model", text: out.modelText, meta: `${out.renderTokens}t render, ${out.cacheExpectedHit}t cache-hit, ${((Date.now()-t0)/1000).toFixed(1)}s` });
       for (const tr of out.toolResults) state.lines.push({ id: ++lineSeq, who: "intent", text: `[${tr.op}] ${tr.ok ? "ok" : "FAIL"}: ${tr.result}`, ok: tr.ok });
       refreshGoals();
@@ -150,20 +222,32 @@ function App() {
           {state.busy && <text fg="cyan">…</text>}
         </scrollbox>
         {/* sidebar */}
-        <box width={34} flexDirection="column" border borderStyle="rounded" title=" optimizer ">
-          <text fg="cyan" >RENDER {state.renderTokens}t</text>
+        <box width={51} flexDirection="column" border borderStyle="rounded" title=" context optimizer ">
+          {/* header bar: last turn's context size, cache hit rate, cost */}
+          <box height={1} flexDirection="row">
+            <text bg="cyan" fg="black"> ctx </text>
+            <text fg="white">{state.renderTokens}t</text>
+            <text fg="gray"> · </text>
+            <text bg="cyan" fg="black"> hit </text>
+            <text fg="green">{state.renderTokens > 0 ? Math.round(100 * state.hitTokens / state.renderTokens) : 0}%</text>
+            <text fg="gray"> · </text>
+            <text bg="cyan" fg="black"> cost </text>
+            <text fg="white">${state.cachePrice.toFixed(4)}</text>
+            {state.divergence !== "" && state.divergence !== "none" && <text fg="yellow"> ⚠{state.divergence}</text>}
+          </box>
+          <box height={1} flexDirection="row"><text fg="gray"> </text></box>
           {/* Last context window: every rendered block as a top-level bullet,
               click to expand the blurb it contributed to the context string. */}
           <text fg="cyan">CONTEXT (last window)</text>
           <scrollbox flexGrow={1} flexDirection="column">
             {state.blocks.length === 0 && <text fg="gray">no turn rendered yet</text>}
-            {state.blocks.map((b) => (
+            {state.blocks.map((b, i) => (
               <box key={b.digest} flexDirection="column">
                 <box
                   flexDirection="row"
                   onMouseDown={() => { state.expandedBlock = state.expandedBlock === b.itemId ? null : b.itemId; notify(); }}
                 >
-                  <text fg="yellow">{state.expandedBlock === b.itemId ? "▾" : "▸"}</text>
+                  <text fg={cachedPrefixVerdict(b, i) === "confirmed" ? "green" : cachedPrefixVerdict(b, i) === "unknown" ? "gray" : "yellow"}>{state.expandedBlock === b.itemId ? "▾" : "▸"}</text>
                   <text fg="white">{b.itemId.slice(0, 16).padEnd(16)}</text>
                   <text fg="gray">{b.zone.slice(0, 7).padEnd(7)}</text>
                   <text fg="gray">{String(b.tokens).padStart(5)}t</text>
@@ -175,15 +259,29 @@ function App() {
                 )}
               </box>
             ))}
+            {/* Tool definitions — one entry in the context list (sent every turn). */}
+            <box flexDirection="column" onMouseDown={() => { state.expandedTools = !state.expandedTools; notify(); }}>
+              <box flexDirection="row">
+                {/* Probe-backed verdict: green = measured in cached prefix,
+                    yellow = measured NOT in cached prefix, gray = pending or
+                    inconclusive. Definitions ride as the API tools param. */}
+                <text fg={probeColor()}>{state.expandedTools ? "▾" : "▸"}</text>
+                <text fg="white">tools({TOOLS.length})</text>
+                <text fg="gray"> · definitions sent to model{probeSuffix()}</text>
+              </box>
+              {state.expandedTools && state.probe !== null && (
+                <box flexDirection="row" paddingLeft={2}>
+                  <text fg="gray">{state.probe.note}</text>
+                </box>
+              )}
+              {state.expandedTools && TOOLS.map((t) => (
+                <box key={t.name} flexDirection="row" paddingLeft={2}>
+                  <text fg="white">{t.name.padEnd(18)}</text>
+                  <text fg="gray">{t.desc}</text>
+                </box>
+              ))}
+            </box>
           </scrollbox>
-          <text>{" "}</text>
-          <text fg="cyan" >CACHE</text>
-          <box flexDirection="row">
-            <text fg="gray">expected hit </text><text fg="green">{state.hitTokens}t</text>
-          </box>
-          <box flexDirection="row">
-            <text fg="gray">divergence  </text><text fg={state.divergence === "none" ? "green" : "yellow"}>{state.divergence}</text>
-          </box>
           <text>{" "}</text>
           <text fg="cyan" >GOALS</text>
           {state.goals.length === 0 && <text fg="gray">none</text>}
@@ -254,3 +352,4 @@ export function shutdown(): void {
 }
 process.on("SIGINT", () => shutdown());
 process.on("SIGTERM", () => shutdown());
+launchProbe();

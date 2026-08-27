@@ -18,7 +18,7 @@ import { executeIntent, type SteeringIntent } from "../../src/optimizer/intents.
 import { paramSetV1 } from "../../src/optimizer/params.ts";
 import { StandingItem } from "../../src/optimizer/items.ts";
 import { buildProvider, loadHarnessConfig, paramSetFor } from "../../src/optimizer/registry.ts";
-import { withIntentParsing, INTENT_PROTOCOL_DOC } from "../../src/optimizer/live.ts";
+import { TOOL_PROTOCOL_DOC } from "../../src/optimizer/tools.ts";
 import type { RenderResult } from "../../src/optimizer/types.ts";
 type RenderResultLike = RenderResult;
 import { readFileSync, appendFileSync, writeFileSync, readdirSync, mkdirSync } from "node:fs";
@@ -73,7 +73,7 @@ function newLoop(): { loop: AgentLoop; engine: TurnBoundaryWatcher } {
   if (LIVE) {
     const cfg = loadHarnessConfig();
     if (cfg === null) throw new Error("live mode requires agents/config.json (contextWindow + provider)");
-    const provider = withIntentParsing("zai", buildProvider("zai", {}));
+    const provider = buildProvider("zai", {});
     const ps = paramSetFor(provider.modelId, cfg);
     budgetState.lambda = ps.budgetLambda;
     loop = new AgentLoop(provider, ps, null, hooks);
@@ -94,7 +94,7 @@ function newLoop(): { loop: AgentLoop; engine: TurnBoundaryWatcher } {
     } catch { return ""; }
   };
   loop.store.add(new StandingItem("identity", "identity",
-    "You are running the agent-kernel pressure corpus. " + INTENT_PROTOCOL_DOC +
+    "You are running the agent-kernel pressure corpus. " + TOOL_PROTOCOL_DOC +
     " Work under a tight token budget: expand only the ranges you need, distill what matters into your replies, release ranges when done. " +
     "When your accumulated notes grow long, consolidate them with convo.merge (merge older turns into one summary turn) so findings survive.").toContextItem());
   return { loop, engine };

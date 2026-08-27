@@ -1,6 +1,6 @@
 /**
  * Live task runner — one real agentic task through the full stack:
- * config-loaded provider → rendered zones → live model → intent protocol
+ * config-loaded provider → rendered zones → live model → native tool calls
  * → coordinator-verified goal completion → journaled ledger.
  *
  *   bun src/analysis/task.ts <provider> [model]
@@ -18,7 +18,7 @@ import { paramSetFor } from "../optimizer/harness-config.ts";
 import { loadHarnessConfig } from "../optimizer/harness-config.ts";
 import { buildProvider } from "../optimizer/registry.ts";
 import { StandingItem } from "../optimizer/items.ts";
-import { INTENT_PROTOCOL_DOC, withIntentParsing } from "../optimizer/live.ts";
+import { TOOL_PROTOCOL_DOC } from "../optimizer/tools.ts";
 import type { ModelResponse } from "../optimizer/providers.ts";
 import type { Provider } from "../optimizer/providers.ts";
 import type { SteeringIntent } from "../optimizer/intents.ts";
@@ -42,12 +42,11 @@ async function main(): Promise<void> {
   const provider = modelOverride !== undefined
     ? buildProvider(name, { model: modelOverride })
     : buildProvider(name);
-  const parsed: Provider = withIntentParsing(provider.modelId, provider);
-  const ledgerPath = "/tmp/agent-kernel-live-task.jsonl";
+    const ledgerPath = "/tmp/agent-kernel-live-task.jsonl";
   const ledger = new Ledger(ledgerPath);
-  const loop = new AgentLoop(parsed, paramSetFor(provider.modelId, loadHarnessConfig()), ledger);
+  const loop = new AgentLoop(provider, paramSetFor(provider.modelId, loadHarnessConfig()), ledger);
   loop.store.add(new StandingItem("identity", "identity",
-    "You are a meticulous file-reading agent. " + INTENT_PROTOCOL_DOC).toContextItem());
+    "You are a meticulous file-reading agent. " + TOOL_PROTOCOL_DOC).toContextItem());
   loop.fileContent = () => NOTES;
 
   // Choreography: intents execute AFTER the reply that proposes them, so
