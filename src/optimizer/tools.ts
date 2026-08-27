@@ -16,7 +16,7 @@ import type { SteeringIntent } from "./intents.ts";
 export const opToToolName = (op: string): string => op.replace(/\./g, "_");
 export const toolNameToOp = (name: string): string => name.replace(/_/g, ".");
 
-type FieldT = "s" | "n" | "s[]" | "patch" | "subgoals" | "freeobj" | { e: readonly string[] };
+type FieldT = "s" | "n" | "s[]" | "n[]" | "patch" | "subgoals" | "freeobj" | { e: readonly string[] };
 
 const fieldSchema = (f: FieldT): Record<string, unknown> => {
   if (typeof f === "object") return { type: "string", enum: [...f.e] };
@@ -24,6 +24,7 @@ const fieldSchema = (f: FieldT): Record<string, unknown> => {
     case "s": return { type: "string" };
     case "n": return { type: "number" };
     case "s[]": return { type: "array", items: { type: "string" } };
+    case "n[]": return { type: "array", items: { type: "number" } };
     case "patch": return { type: "array", items: { type: "object", properties: { from: { type: "string" }, to: { type: "string" } }, required: ["from", "to"], additionalProperties: false } };
     case "subgoals": return { type: "array", items: { type: "object", properties: { id: { type: "string" }, text: { type: "string" } }, required: ["id", "text"], additionalProperties: false } };
     case "freeobj": return { type: "object" };
@@ -67,6 +68,9 @@ const SPECS: ToolSpec[] = [
   { op: "rlm.final", desc: "Accept a child agent's final report", req: ["id"], fields: { id: "s" } },
   { op: "memory.remember", desc: "Store a semantic memory", req: ["text"], opt: ["kind", "meta"], fields: { text: "s", kind: "s", meta: "freeobj" } },
   { op: "memory.search", desc: "Search semantic memory", req: ["query"], opt: ["limit", "kind"], fields: { query: "s", limit: "n", kind: "s" } },
+  { op: "exec.run", desc: "Execute a shell command; output attaches as an exec lens", req: ["cmd"], opt: ["timeout"], fields: { cmd: "s", timeout: "n" } },
+  { op: "exec.list", desc: "List exec runs: id exit cmd", req: [], fields: {} },
+  { op: "exec.release", desc: "Drop exec runs from context by id", req: ["ids"], fields: { ids: "n[]" } },
 ];
 
 const KNOWN_OPS = new Set(SPECS.map((s) => s.op));

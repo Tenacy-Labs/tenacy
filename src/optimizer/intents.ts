@@ -11,6 +11,7 @@ import { opsCaps } from "./ops.ts";
 import { GoalItem, FileLensItem, DirectoryLensItem, MergeGroupItem } from "./items.ts";
 import { CodeLensItem } from "./code-lens.ts";
 import { NSLensItem } from "./ns-lens.ts";
+import { ExecCollection, ExecRunLens, type ExecRunner } from "./exec-lens.ts";
 
 export type SteeringIntent =
   | { op: "say"; text: string }
@@ -46,7 +47,10 @@ export type SteeringIntent =
   | { op: "rlm.status"; id?: string }
   | { op: "rlm.final"; id: string }
   | { op: "memory.remember"; text: string; kind?: MemoryKind; meta?: Record<string, unknown> }
-  | { op: "memory.search"; query: string; limit?: number; kind?: MemoryKind };
+  | { op: "memory.search"; query: string; limit?: number; kind?: MemoryKind }
+  | { op: "exec.run"; cmd: string; timeout?: number }
+  | { op: "exec.list" }
+  | { op: "exec.release"; ids: number[] };
 
 export type IntentResult = { op: string; ok: boolean; result: string };
 
@@ -64,6 +68,8 @@ export interface IntentHost {
   dirLens(target: string): DirectoryLensItem;
   codeLens(target: string): CodeLensItem;
   nsLens(target: string): NSLensItem;
+  /** Exec collection: run history; each run's lens attaches separately. */
+  exec(): { run(cmd: string, turn: number, timeoutMs?: number): ExecRunLens; listingLines(): string[]; structureText(): string; drop(ids: number[]): boolean };
   convoTurn(id: string): { id: string; summary?: string | undefined; mergedInto?: string | undefined; verbatim(): string; markReexpanded(): void } | undefined;
   convoTurnIds(): string[];
   goal(id: string): GoalItem | undefined;
@@ -343,6 +349,26 @@ export function executeIntent(s: SteeringIntent, store: ContextStore, ledger: Le
         op: s.op, ok: true,
         result: hits.map((h) => `mem:${h.row.id} [${h.row.kind}] (${h.source} ${h.score.toFixed(2)}) ${h.row.text}`).join("\n"),
       };
+    }
+    case "exec.run": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const lens = host.exec().run(s.cmd, turn, s.timeout ?? 10_000);
+      store.touch(lens.id);
+      ledger?.recordSignal({ type: "exec-run", itemId: lens.id, turn, cmd: s.cmd, exit: lens.run.exit });
+      return { op: s.op, ok: true, result: `#${lens.run.id} exit=${lens.run.exit} ${s.cmd} (${lens.run.out.length}B out) — ${lens.id}` };
+    }
+    case "exec.list": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const c = host.exec();
+      const lines = c.listingLines();
+      return { op: s.op, ok: true, result: lines.length === 0 ? "no runs yet" : c.structureText() };
+    }
+    case "exec.release": {
+      if (host === null) return { op: s.op, ok: false, result: "no host bound" };
+      const c = host.exec();
+      const dropped = c.drop(s.ids);
+      for (const id of s.ids) store.remove(`lens:exec#${id}`);
+      return { op: s.op, ok: true, result: dropped ? `dropped ${s.ids.join(",")}` : `no such runs: ${s.ids.join(",")}` };
     }
     case "goals.update": {
       if (host === null) return { op: s.op, ok: false, result: "no host bound" };
