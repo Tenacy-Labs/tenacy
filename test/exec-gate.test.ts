@@ -12,6 +12,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { gateRunner, denyRunner, shellRunner, type ExecRunner } from "../src/optimizer/exec-lens.ts";
+import { intentTools, toolNameToOp } from "../src/optimizer/tools.ts";
 import { AgentLoop } from "../src/optimizer/loop.ts";
 import { MockProvider, ScriptedProvider } from "../src/optimizer/providers.ts";
 import { paramSetV1 } from "../src/optimizer/params.ts";
@@ -41,9 +42,14 @@ describe("gateRunner", () => {
     expect(g.remaining()).toBe(0);
   });
 
-  test("fractional/negative uses clamp honestly", () => {
+  test("fractional/negative/non-finite uses clamp honestly (fail closed)", () => {
     expect(gateRunner(shellRunner, 2.9).grant.uses).toBe(2);
     expect(gateRunner(shellRunner, -5).grant.uses).toBe(0);
+    // PR34 gate review MAJOR: NaN/Infinity must DENY, never authorize forever
+    expect(gateRunner(shellRunner, Number.NaN).grant.uses).toBe(0);
+    expect(gateRunner(shellRunner, Number.POSITIVE_INFINITY).grant.uses).toBe(0);
+    expect(gateRunner(shellRunner, Number.NaN).runner("x", 1000).exit).toBe(126);
+    expect(gateRunner(shellRunner, Number.POSITIVE_INFINITY).runner("x", 1000).exit).toBe(126);
   });
 });
 
@@ -116,11 +122,13 @@ describe("model channel E2E (the attack path)", () => {
   });
 
   test("no intent shape can mint a grant", () => {
-    // The grant type is opaque; grep-level assertion: grantExec appears on
-    // AgentLoop only, not in the intent union.
     const loop = mkLoop();
+    // Real pins, not a typeof no-op (PR34 gate review test-honesty note):
+    // exec.run absent from the model-visible ToolSet; an un-granted loop
+    // denies even operator-side direct .run().
+    const tools = intentTools();
+    expect(Object.keys(tools).some((n) => toolNameToOp(n) === "exec.run")).toBe(false);
     expect(typeof loop.grantExec).toBe("function");
-    // denyRunner direct: an un-granted loop denies even operator-side .run()
     expect(loop.exec.run("x", 1).run.exit).toBe(126);
   });
 });

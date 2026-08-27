@@ -33,8 +33,12 @@ export interface ExecGrant {
 }
 
 export function gateRunner(authorized: ExecRunner, uses = 1): { grant: ExecGrant; runner: ExecRunner; remaining(): number } {
-  let remaining = Math.max(0, Math.floor(uses));
-  const grant: ExecGrant = Object.freeze({ uses: Math.max(0, Math.floor(uses)) });
+  // FAIL CLOSED on non-finite N (PR34 gate review): Math.max(0, Math.floor(NaN))
+  // is NaN, and NaN <= 0 is false — an unsanitized Infinity/NaN at a future
+  // trusted boundary must deny, never authorize forever.
+  const n = Number.isFinite(uses) ? Math.max(0, Math.floor(uses)) : 0;
+  let remaining = n;
+  const grant: ExecGrant = Object.freeze({ uses: n });
   const runner: ExecRunner = (cmd, timeoutMs) => {
     if (remaining <= 0) return denyRunner(cmd, timeoutMs);
     remaining--;
