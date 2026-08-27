@@ -38,6 +38,7 @@ import { Ledger } from "../optimizer/ledger.ts";
 import { StandingItem } from "../optimizer/items.ts";
 import { executeIntent } from "../optimizer/intents.ts";
 import { TOOL_PROTOCOL_DOC } from "../optimizer/tools.ts";
+import { gateRunner, shellRunner, denyRunner, type ExecGrant, type ExecRunner } from "../optimizer/exec-lens.ts";
 import { ZONE_ORDER } from "../optimizer/types.ts";
 import type { Provider, ModelResponse } from "../optimizer/providers.ts";
 import type { Block } from "../optimizer/types.ts";
@@ -73,6 +74,11 @@ const dir = mkdtempSync(join(tmpdir(), "agent-kernel-"));
 const ledgerPath = join(dir, "ledger.jsonl");
 const ledger = new Ledger(ledgerPath);
 const agent = new AgentLoop(model, paramSetFor(inner.modelId, loadHarnessConfig()), ledger);
+
+// Exec gate state (operator-only): the REPL holds the live gate so /exec can
+// report remaining uses; the capability itself never leaves operator code.
+let execGate: { grant: ExecGrant; runner: ExecRunner; remaining(): number } | null = null;
+let execGrantTotal = 0;
 // Roadmap (ops.* + memory): host-side capabilities, bound at boot. The model
 // reaches memory/rlm ONLY through ops intents; credentials and handles stay
 // here. rlm children get the live provider factory when available.
@@ -220,7 +226,7 @@ async function command(line: string): Promise<void> {
   const cmd = parts[0];
   switch (cmd) {
     case "/help":
-      console.log("local: /status /context [zone] /why <id> /inspect [filter] /search <re> /goal <text> /file <path> <a-b> /release <path> <a-b> /promote <id> /demote <id> /watch <id> <mode> /provider [name] [model] /save [name] /resume <name> /sessions /mem [query|add <text>] /ledger /quit");
+      console.log("local: /status /context [zone] /why <id> /inspect [filter] /search <re> /goal <text> /file <path> <a-b> /release <path> <a-b> /promote <id> /demote <id> /watch <id> <mode> /exec [N] /provider [name] [model] /save [name] /resume <name> /sessions /mem [query|add <text>] /ledger /quit");
       break;
     case "/status": {
       if (lastOutcome === null) { console.log("no turns yet"); break; }
@@ -257,6 +263,33 @@ async function command(line: string): Promise<void> {
       } catch {
         console.log(`ledger: ${ledgerPath} (not yet flushed)`);
       }
+      break;
+    }
+    case "/exec": {
+      // Operator-only exec gate (owner ruling 2026-08-26). Usage:
+      //   /exec            — show grant status
+      //   /exec N          — authorize the NEXT N model-proposed commands
+      //   /exec 0          — revoke any open grant
+      // The model channel can never mint a grant; it can only spend one.
+      const arg = parts[1];
+      if (arg === undefined) {
+        const rem = execGate?.remaining() ?? 0;
+        const tot = execGrantTotal;
+        console.log(rem > 0 ? `exec grant OPEN: ${rem}/${tot} uses remaining` : "exec: DENIED (no open grant — /exec N to authorize)");
+        break;
+      }
+      const n = Math.max(0, Math.floor(Number(arg)));
+      if (!Number.isFinite(n)) { console.log("usage: /exec [N]"); break; }
+      if (n === 0) {
+        execGate = null; execGrantTotal = 0;
+        agent.grantExec(gateRunner(denyRunner, 0));
+        console.log("exec grant REVOKED");
+        break;
+      }
+      const gate = gateRunner(shellRunner, n);
+      execGate = gate; execGrantTotal = n;
+      agent.grantExec(gate);
+      console.log(`exec grant OPEN: ${n} use${n === 1 ? "" : "s"} — model-proposed exec.run will execute; the window closes when spent`);
       break;
     }
     case "/provider": {

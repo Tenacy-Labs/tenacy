@@ -18,7 +18,7 @@ import type { PluginEvent } from "./events.ts";
 import { GoalItem, FileLensItem, DirectoryLensItem, NoticeItem, TurnItem, Lens } from "./items.ts";
 import { CodeLensItem } from "./code-lens.ts";
 import { NSLensItem, type NamespaceProducer } from "./ns-lens.ts";
-import { ExecCollection, ExecRunLens, denyRunner, type ExecRunner, type ExecRun } from "./exec-lens.ts";
+import { ExecCollection, ExecRunLens, denyRunner, type ExecRunner, type ExecRun, type ExecGrant } from "./exec-lens.ts";
 import { executeIntent, bindHost, type SteeringIntent } from "./intents.ts";
 import { dreamPass } from "./dream.ts";
 import { TurnBoundaryWatcher, applyDeltaToLens, type LensDelta } from "./live-views.ts";
@@ -612,8 +612,33 @@ export class AgentLoop {
         this.lensRegistry.delete(lensId);
       });
       this.nsProducers.set("exec", () => this.exec.nsProducer());
+      // Replays runs carried over from a pre-grant collection so history
+      // survives the runner swap (grantExec). Remove-then-add: the prior
+      // collection's store items still hold these ids (B-11 pattern).
+      const pend = this.#pendingExecRestores;
+      this.#pendingExecRestores = [];
+      for (const r of pend) {
+        this.store.remove(`lens:exec#${r.id}`);
+        this.#execCollection.restoreRun(r);
+      }
     }
     return this.#execCollection;
+  }
+
+  /** Runs carried across a grantExec runner swap. */
+  #pendingExecRestores: ExecRun[] = [];
+
+  /** Mint an exec grant — OPERATOR ONLY (never reachable from model tool
+   *  calls). Swaps the exec collection to the gate's authorized runner,
+   *  preserving run history and id continuity. A closed gate (uses 0)
+   *  degrades to deny and revokes any prior authorization. */
+  grantExec(gate: { grant: ExecGrant; runner: ExecRunner }): void {
+    void gate.grant;  // capability object; the runner closure is what enforces
+    const old = this.#execCollection;
+    this.#pendingExecRestores = old === null ? [] : old.runs.map((r) => ({ ...r }));
+    this.#execCollection = null;  // force fresh collection on next exec access
+    this.execRunner = gate.runner;
+    void this.exec;  // instantiate now: re-registers ns producer + attach
   }
 
   /** Restore an exec run from a session row without rerunning it (B-M1). */

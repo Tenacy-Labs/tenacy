@@ -25,6 +25,28 @@ export interface ExecRun {
 
 /** Producer-injected runner: execute a command, return exit + output. */
 export type ExecRunner = (cmd: string, timeoutMs: number) => { exit: number; out: string };
+/** A bounded authorization for the real runner. Minted ONLY at trusted
+ *  boundaries (operator command surfaces); the model channel never sees one.
+ *  N uses then reverts to deny — a forgotten window cannot outlive its task. */
+export interface ExecGrant {
+  readonly uses: number;
+}
+
+export function gateRunner(authorized: ExecRunner, uses = 1): { grant: ExecGrant; runner: ExecRunner; remaining(): number } {
+  // FAIL CLOSED on non-finite N (PR34 gate review): Math.max(0, Math.floor(NaN))
+  // is NaN, and NaN <= 0 is false — an unsanitized Infinity/NaN at a future
+  // trusted boundary must deny, never authorize forever.
+  const n = Number.isFinite(uses) ? Math.max(0, Math.floor(uses)) : 0;
+  let remaining = n;
+  const grant: ExecGrant = Object.freeze({ uses: n });
+  const runner: ExecRunner = (cmd, timeoutMs) => {
+    if (remaining <= 0) return denyRunner(cmd, timeoutMs);
+    remaining--;
+    return authorized(cmd, timeoutMs);
+  };
+  return { grant, runner, remaining: () => remaining };
+}
+
 
 /** Default runner: DENY. Real execution requires an explicitly authorized
  *  runner injected at a trusted boundary (owner ruling 2026-08-26: gating
