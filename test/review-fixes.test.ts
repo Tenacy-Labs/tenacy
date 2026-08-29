@@ -1,7 +1,8 @@
 /**
  * Review-fix regression tests (2026-08-22 three-reviewer gate).
  *
- * Every test here encodes a finding from CODE_REVIEW_{A,B,C}.md and is
+ * Every test here encodes a finding from the 2026-08-22 three-reviewer
+ * review gate (records since removed; git history has them) and is
  * written to FAIL on the pre-fix code (discriminating — verified by
  * construction against the reported probes).
  */

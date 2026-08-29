@@ -1,5 +1,6 @@
 node_modules/
 *.tmp
+*.log
 .DS_Store
 
 # agent harness local config (keys) — never commit
@@ -8,4 +9,3 @@ test/tmp-cw/
 .agent-kernel/
 bench/corpus/dumps/
 bench/corpus/fixtures/thrash.log
-vendor/knapsack/native/target/
