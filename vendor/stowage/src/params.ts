@@ -69,7 +69,7 @@ export interface ParamSet {
    * "exact-mckp" — DEFAULT: relief is formulated as a pure MCKP (one
    * choice per droppable item: keep at current tokens, tombstone to its
    * zeroValue handle, or evict freeing all tokens) and solved exactly
-   * through @connectotron/knapsack (Pareto → LP bounds → fathoming →
+   * through @tenacy-labs/knapsack (Pareto → LP bounds → fathoming →
    * DP). Dominates density by construction: greedy is a feasible point
    * of the same MCKP.
    * "density" — the superseded v1.1 relief (sequential worst utility-
@@ -147,7 +147,7 @@ export function paramSetV1(modelId: string): ParamSet {
     // WITHOUT relief flapping (re-entry needs to re-clear the bar).
     reservationPrice: 0.002,
     // ADR-0005 §7 v1.2 (ruled 2026-08-22): exact-MCKP relief through
-    // @connectotron/knapsack is the default; density stays selectable.
+    // @tenacy-labs/knapsack is the default; density stays selectable.
     reliefMode: "exact-mckp",
     // Future-utility capture (2026-08-22 multi-period pass). Defaults are
     // the sweep's tuned argmin-achieving set — see ADR-0006 for the grid.

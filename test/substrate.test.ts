@@ -18,7 +18,7 @@ import type { PluginEvent } from "../src/optimizer/events.ts";
 import type { IntentSink } from "../src/optimizer/handles.ts";
 import { AgentLoop } from "../src/optimizer/loop.ts";
 import type { Provider } from "../src/optimizer/providers.ts";
-import type { ParamSet } from "@connectotron/stowage";
+import type { ParamSet } from "@tenacy-labs/stowage";
 
 function sinkSpy() {
   const calls: Array<Record<string, unknown>> = [];

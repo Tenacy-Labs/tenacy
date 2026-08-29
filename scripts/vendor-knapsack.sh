@@ -1,5 +1,5 @@
 #!/bin/sh
-# Sync the vendored @connectotron/knapsack from the pinned tag.
+# Sync the vendored @tenacy-labs/knapsack from the pinned tag.
 #
 # The library is a private org repo; bun's github:/git+https dependency
 # forms normalize to the credential-less tarball API (404 on private
@@ -32,7 +32,7 @@ mkdir -p vendor/knapsack
 git -C "$SRC" archive "$TAG" | tar -x -C vendor/knapsack
 
 # Update package.json pin + reinstall.
-bun remove @connectotron/knapsack >/dev/null 2>&1 || true
+bun remove @tenacy-labs/knapsack >/dev/null 2>&1 || true
 bun add "file:vendor/knapsack" >/dev/null
 
 echo "vendored $TAG -> vendor/knapsack ($(git -C "$SRC" rev-parse "$TAG" | head -c 7))"

@@ -17,7 +17,7 @@ import { effectiveDeltaT } from "./churn.ts";
 import { suffixMassAfter } from "./suffix.ts";
 import { sharedBillSurcharge } from "./suffix.ts";
 import { blockDigest } from "./cache-model.ts";
-import { solve as solveMckp } from "@connectotron/knapsack";
+import { solve as solveMckp } from "@tenacy-labs/knapsack";
 import { normalizeSequenceOrder, planSequenceMoves } from "./sequence-position.ts";
 
 export interface Incumbent {
@@ -606,7 +606,7 @@ function worstDensityDroppable(chosen: { item: ContextItem; option: RenderOption
 /**
  * Exact MCKP budget relief (knapsack-swap Stage 2, flag `reliefMode:
  * "exact-mckp"`). Formulates relief as a pure MCKP and solves it exactly
- * through @connectotron/knapsack:
+ * through @tenacy-labs/knapsack:
  *
  *   groups   = droppable items (ALWAYS_HELD exempt)
  *   options  = keep (weight: current tokens, profit: utility)

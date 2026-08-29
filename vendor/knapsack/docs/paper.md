@@ -1,6 +1,6 @@
 # Exact Multiple-Choice Knapsack Solving for Latency-Budgeted Context Selection
 
-**A component paper for `@connectotron/knapsack` v0.1.0**
+**A component paper for `@tenacy-labs/knapsack` v0.1.0**
 Connectotron · August 2026
 
 ---

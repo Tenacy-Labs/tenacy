@@ -18,7 +18,7 @@ semantics, ledger); stowage is the HOW.
 
 1. **Scope:** joint representation × position × timing optimization for
    context layouts, as a price-coupled decomposition:
-   - representation → exact MCKP (dependency: `@connectotron/knapsack`)
+   - representation → exact MCKP (dependency: `@tenacy-labs/knapsack`)
    - position → tree-metric moves, prefix-sum pricing, greedy tree-shaping
    - timing → threshold policies with accumulated evidence (anti-Zeno)
 2. **Not in scope:** option surfaces, value/rot semantics, ledger

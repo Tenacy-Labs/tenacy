@@ -1,5 +1,5 @@
 /**
- * @connectotron/knapsack — exact multiple-choice knapsack (MCKP) solver.
+ * @tenacy-labs/knapsack — exact multiple-choice knapsack (MCKP) solver.
  *
  * Pure functions, integer arithmetic for all bounds and pruning decisions,
  * deterministic output (no locale collation, no float ordering anywhere).
