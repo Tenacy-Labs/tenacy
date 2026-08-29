@@ -1,4 +1,4 @@
-# @connectotron/knapsack
+# @tenacy-labs/knapsack
 
 Exact **multiple-choice knapsack problem (MCKP)** solver in pure TypeScript.
 Zero dependencies, integer-exact bounds, deterministic output, built for
@@ -24,7 +24,7 @@ weight = tokens, C = the turn budget, profit = utility.
 ## API
 
 ```ts
-import { solve } from "@connectotron/knapsack";
+import { solve } from "@tenacy-labs/knapsack";
 
 const result = solve({
   groups: [

@@ -1,4 +1,4 @@
-# @connectotron/stowage
+# @tenacy-labs/stowage
 
 <!-- VENDOR DIVERGENCE LEDGER (agent-kernel side, added 2026-08-27 per gate
      review A-M1) — this snapshot intentionally diverges from upstream
@@ -27,7 +27,7 @@ mathematical characters:
 
 | Axis | Subproblem | Mechanism |
 |---|---|---|
-| Representation | pick one render option per item | exact MCKP via `@connectotron/knapsack` |
+| Representation | pick one render option per item | exact MCKP via `@tenacy-labs/knapsack` |
 | Position | where each block sits in the sequence | tree-metric moves, prefix-sum priced, greedy tree-shaping |
 | Timing | when to move / fuse / restructure | threshold policies with accumulated evidence (anti-Zeno) |
 
@@ -113,7 +113,7 @@ dylib provenance: `vendor/knapsack/native/prebuilt/PROVENANCE.md`.
 **v0.1.0 — solver ported, sequence axis landed.** The full ex-agent-kernel
 solve core (selection, suffix pricing, horizons, evidence, cache model,
 params, contract types — ~1,500 lines) runs here, byte-identical, over the
-vendored `@connectotron/knapsack`; agent-kernel consumes it via
+vendored `@tenacy-labs/knapsack`; agent-kernel consumes it via
 `file:vendor/stowage` re-export shims (its 869-test suite remains the
 port's acceptance test).
 

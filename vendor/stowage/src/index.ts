@@ -1,5 +1,5 @@
 /**
- * @connectotron/stowage — the context-layout solver.
+ * @tenacy-labs/stowage — the context-layout solver.
  *
  * Barrel over the ported solver surface (ex-agent-kernel optimizer core).
  * Consumers import from the package root; module paths are internal.

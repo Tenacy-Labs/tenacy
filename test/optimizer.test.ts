@@ -74,7 +74,7 @@ describe("solver", () => {
 
   test("exact-MCKP relief (flag): keeps >= utility than density under identical pressure", () => {
     // Knapsack-swap Stage 2: same discriminating setup as the density test,
-    // but relief runs through @connectotron/knapsack. In an instance where
+    // but relief runs through @tenacy-labs/knapsack. In an instance where
     // density's greedy sequence is suboptimal, exact retains strictly more
     // utility; never less. This test asserts the floor: exact >= density,
     // budget respected, and the known-optimal answer on the fat/tiny shape

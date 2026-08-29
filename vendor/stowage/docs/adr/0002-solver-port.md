@@ -18,7 +18,7 @@ solve moves here.
    same-directory references):** `solver.ts`, `suffix.ts`, `horizon.ts`,
    `churn.ts`, `evidence.ts`, `cache-model.ts`, `params.ts`,
    `types.ts`. ~1,500 lines.
-2. **Dependency edge:** stowage → `@connectotron/knapsack`
+2. **Dependency edge:** stowage → `@tenacy-labs/knapsack`
    (`file:vendor/knapsack`, the kernel's pin v0.1.1). knapsack stays
    pure integer MCKP; stowage never imports kernel code (acyclic).
 3. **Kernel seam:** agent-kernel vendors stowage (`file:vendor/stowage`)

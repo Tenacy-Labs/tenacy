@@ -20,23 +20,23 @@ import { readFileSync } from "node:fs";
 describe("seam tripwires (dependency doctrine, ruling 2026-08-24)", () => {
   it("kernel declares stowage via workspace protocol (and never knapsack directly)", () => {
     const pkg = JSON.parse(readFileSync("package.json", "utf8"));
-    expect(pkg.dependencies?.["@connectotron/stowage"]).toBe("workspace:*");
+    expect(pkg.dependencies?.["@tenacy-labs/stowage"]).toBe("workspace:*");
     // Topology: knapsack is reached ONLY through stowage.
-    expect(pkg.dependencies?.["@connectotron/knapsack"]).toBeUndefined();
-    expect(pkg.devDependencies?.["@connectotron/knapsack"]).toBeUndefined();
+    expect(pkg.dependencies?.["@tenacy-labs/knapsack"]).toBeUndefined();
+    expect(pkg.devDependencies?.["@tenacy-labs/knapsack"]).toBeUndefined();
     expect(JSON.stringify(pkg.workspaces)).toContain("vendor/stowage");
   });
 
   it("package specifier resolves INTO the vendored tree (single module graph)", () => {
     // M1's successor: the specifier may resolve now — but only to the
     // vendored source, never to a second copy from a registry.
-    const url = import.meta.resolve("@connectotron/stowage");
+    const url = import.meta.resolve("@tenacy-labs/stowage");
     expect(url).toContain("vendor/stowage");
   });
 
   it("lock records workspace links, not registry copies", () => {
     const lock = readFileSync("bun.lock", "utf8");
-    expect(lock).toContain("@connectotron/stowage@workspace:vendor/stowage");
+    expect(lock).toContain("@tenacy-labs/stowage@workspace:vendor/stowage");
     // No registry version of either package may ever appear.
     expect(lock).not.toMatch(/@connectotron\/(stowage|knapsack)@\^?\d/);
   });
