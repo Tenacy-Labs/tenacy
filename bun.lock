@@ -9,7 +9,7 @@
         "@ai-sdk/xai": "^4.0.42",
         "@opentui/core": "^0.5.6",
         "@opentui/react": "^0.5.6",
-        "@tenacy-labs/stowage": "github:Tenacy-Labs/stowage#v0.3.0",
+        "@tenacy-labs/stowage": "github:Tenacy-Labs/stowage#v0.3.1",
         "ai": "^7.0.74",
         "react": "^19",
       },
@@ -57,9 +57,9 @@
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
-    "@tenacy-labs/knapsack": ["@tenacy-labs/knapsack@github:Tenacy-Labs/knapsack#03f72bc", {}, "Tenacy-Labs-knapsack-03f72bc"],
+    "@tenacy-labs/knapsack": ["@tenacy-labs/knapsack@github:Tenacy-Labs/knapsack#d61ddf0", {}, "Tenacy-Labs-knapsack-d61ddf0"],
 
-    "@tenacy-labs/stowage": ["@tenacy-labs/stowage@github:Tenacy-Labs/stowage#a875897", { "dependencies": { "@tenacy-labs/knapsack": "github:Tenacy-Labs/knapsack#v0.3.0" } }, "Tenacy-Labs-stowage-a875897"],
+    "@tenacy-labs/stowage": ["@tenacy-labs/stowage@github:Tenacy-Labs/stowage#9df7002", { "dependencies": { "@tenacy-labs/knapsack": "github:Tenacy-Labs/knapsack#v0.3.1" } }, "Tenacy-Labs-stowage-9df7002"],
 
     "@types/bun": ["@types/bun@1.4.0", "", { "dependencies": { "bun-types": "1.4.0" } }, "sha512-K+lZULY23vRgK/CfTjFIV+tyifaNdSMlPh9j+6mQ/cLfpOznLyAuzgV/JQysyECpkBQLVMSyvjlr2fBUSA9wFQ=="],
 
