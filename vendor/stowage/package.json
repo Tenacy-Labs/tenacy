@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Context-layout solver \u2014 joint representation \u00d7 position \u00d7 timing optimization for LLM context windows (price-coupled decomposition over @tenacy-labs/knapsack)",
-  "license": "UNLICENSED",
+  "license": "Apache-2.0",
   "type": "module",
   "repository": {
     "type": "git",
