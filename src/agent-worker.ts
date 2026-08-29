@@ -22,6 +22,21 @@ import { dirname } from "node:path";
 import { Kernel } from "./kernel.ts";
 
 const port = parentPort!;
+
+// Crash containment, deterministic (2026-08-29). Bun 1.2.5 workers make
+// process.exit ASYNCHRONOUS — the call returns, the worker dies later — so a
+// cell ending in process.exit raced: its turn_result(ok) beat the exit event
+// and the crash surfaced only as a lifecycle flip. Intercept the call at the
+// worker boundary: record the intent, throw to unwind the cell, report the
+// turn as a crash, then exit for real (realExit's own deferral is harmless —
+// nothing executable follows). A cell that catches the throw still gets the
+// crash verdict: the request, once made, is irrevocable.
+const realExit = process.exit.bind(process);
+let cellExitCode: number | null = null;
+process.exit = ((code?: number) => {
+  cellExitCode = code ?? 0;
+  throw new Error(`process.exit(${code ?? 0}) — cell requested worker death`);
+}) as typeof process.exit;
 const inbox: any[] = [];
 
 // Per-agent kernel state dir: state/<agentId>/journal.jsonl + snapshot.json
@@ -79,7 +94,7 @@ port.on("message", (m: any) => {
     // Graceful stop = hibernation entry: state is already snapshotted every
     // turn; exiting here leaves a revivable snapshot on disk.
     send({ kind: "lifecycle", state: "stopped", agentId, detail: "graceful" });
-    process.exit(0);
+    realExit(0);
   }
   if (m.__turn) {
     // A turn = drain interrupts first (safe point), then run the cell.
@@ -87,6 +102,13 @@ port.on("message", (m: any) => {
     send({ kind: "turn_start", agentId });
     // Coordinator-gated turn: JS was type-checked + transpiled on the main thread.
     const r = k.evalCompiled(m.__turn.src ?? "", m.__turn.js);
+    if (cellExitCode !== null) {
+      const code = cellExitCode;
+      cellExitCode = null;
+      send({ kind: "turn_result", agentId, ok: false, phase: "crash", error: `cell called process.exit(${code})` });
+      realExit(code);
+      return;
+    }
     send({ kind: "turn_result", agentId, ok: r.ok, value: r.value, error: r.error });
   }
   if (m.__final) {

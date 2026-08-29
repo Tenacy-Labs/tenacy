@@ -11,6 +11,7 @@
  * The runner is producer-supplied (same doctrine as fileContent/dirListing):
  * the default shells out; tests inject a deterministic fake.
  */
+import { rmSync } from "node:fs";
 import { Lens } from "./lens.ts";
 import type { NamespaceNode, NamespaceProducer } from "./ns-lens.ts";
 
@@ -55,17 +56,52 @@ export function denyRunner(_cmd: string, _timeoutMs: number): { exit: number; ou
   return { exit: 126, out: "⟨exec denied: no authorized runner installed⟩" };
 }
 
+let execSeq = 0;
+
 /** Real runner: /bin/sh -c with a hard timeout, output capped. NOT the
- *  default — inject explicitly where execution is authorized. */
+ * default — inject explicitly where execution is authorized.
+ *
+ * The deadline is enforced by a SHELL-SIDE WATCHDOG, not the runtime:
+ * Bun 1.2.5/darwin silently ignores the `timeout` option of both spawn and
+ * spawnSync (verified 2026-08-29: `sleep 2` + timeout 300 → 2016ms, exit 0),
+ * which blocked the event loop for the full clamp ceiling and reported the
+ * which blocked the event loop for the full clamp ceiling and reported the
+ * timed-out command as successful. The wrapper backgrounds the command with
+ * its output redirected to a FILE — a backgrounded group's children survive
+ * the subshell's death and would otherwise hold the inherited stdout pipe,
+ * and spawnSync returns on pipe EOF, not process exit — then runs a killer
+ * subshell (TERM at the deadline, KILL 200ms later) and decides by a MARKER
+ * FILE the killer stamps BEFORE its first signal: race-free whatever the
+ * reaping order. Exit contract: 124 on timeout (GNU-timeout convention),
+ * otherwise the command's own exit code. Note: a gated (model-controlled)
+ * command could in principle rm the marker and downgrade 124 to its own
+ * signal exit — a dishonest exit code, never a lost deadline: the killer
+ * still kills. */
 export function shellRunner(cmd: string, timeoutMs: number): { exit: number; out: string } {
   const ms = clampTimeout(timeoutMs);
-  const p = Bun.spawnSync(["/bin/sh", "-c", cmd], {
-    stdout: "pipe", stderr: "pipe", timeout: ms,
-  });
-  const timedOut = p.exitCode === null;
+  const sec = Math.max(0.001, ms / 1000).toFixed(3);
+  const stem = `/tmp/.agent-kernel-exec-${process.pid}-${execSeq++}`;
+  const marker = `${stem}.fired`;
+  const outfile = `${stem}.out`;
+  const wrapped =
+    `{ ${cmd}; } > '${outfile}' 2>&1 & __cmd=$!; ` +
+    `( sleep ${sec}; : > '${marker}'; kill -TERM $__cmd 2>/dev/null; sleep 0.2; kill -KILL $__cmd 2>/dev/null ) >/dev/null 2>&1 & __killer=$!; ` +
+    `wait $__cmd; __rc=$?; ` +
+    `kill $__killer 2>/dev/null; wait $__killer 2>/dev/null; ` +
+    `cat '${outfile}'; rm -f '${outfile}'; ` +
+    `if [ -f '${marker}' ]; then rm -f '${marker}'; exit 124; fi; ` +
+    `exit $__rc`;
+  const p = Bun.spawnSync(["/bin/sh", "-c", wrapped], { stdout: "pipe", stderr: "pipe" });
+  rmSync(marker, { force: true });   // boundary: stamped after the check — the decision already left with the shell
+  rmSync(outfile, { force: true });  // orphaned descendant still appending — the snapshot we catted is the verdict
+  const timedOut = p.exitCode === 124;
+  // The shell's own "Terminated: 15 / Killed: 9" job notice for OUR kill is
+  // machinery noise, not command output — strip it on the timeout path.
+  const raw = p.stdout.toString() + p.stderr.toString()
+    .replace(/^sh: line \d+: \d+ (?:Terminated|Killed): \d+.*$\n?/gm, "");
   const out = timedOut
-    ? capOutput(`${p.stdout.toString()}${p.stderr.toString()}`) + `\n⟨timeout after ${ms}ms⟩`
-    : capOutput(`${p.stdout.toString()}${p.stderr.toString()}`);
+    ? capOutput(raw.trimStart()) + `\n⟨timeout after ${ms}ms⟩`
+    : capOutput(raw);
   return { exit: timedOut ? 124 : p.exitCode ?? -1, out };
 }
 
