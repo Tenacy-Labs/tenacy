@@ -1,8 +1,10 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "dependencies": {
+        "@agentclientprotocol/sdk": "2.0.2",
         "@ai-sdk/anthropic": "^4.0.40",
         "@ai-sdk/openai": "^4.0.45",
         "@ai-sdk/openai-compatible": "^3.0.34",
@@ -21,6 +23,8 @@
     },
   },
   "packages": {
+    "@agentclientprotocol/sdk": ["@agentclientprotocol/sdk@2.0.2", "", { "peerDependencies": { "zod": "^3.25.76 || ^4.0.0" } }, "sha512-jLywRB42hZMRMc4aUgt0uRjkY9FQnMdybv4XgLl+ddi75QuJn8Vbl0+CHcVHJDC0+WDfi1KQXRWtHaR5vp6gHw=="],
+
     "@ai-sdk/anthropic": ["@ai-sdk/anthropic@4.0.45", "", { "dependencies": { "@ai-sdk/provider": "4.0.8", "@ai-sdk/provider-utils": "5.0.33" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-2h1WYU1VdfkI6CU3mLes7Vh4Ua3jq5LDE1ciMgUymLNS7ZbtqhgVzBBPhnOdg83lnkYTAOeApCgkGOdwJHxdkA=="],
 
     "@ai-sdk/gateway": ["@ai-sdk/gateway@4.0.68", "", { "dependencies": { "@ai-sdk/provider": "4.0.8", "@ai-sdk/provider-utils": "5.0.33", "@vercel/oidc": "3.2.0" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-XKvZv6HFoMOWK64zXMaQatk4SxBzBDkGg7enXPWsCkxqPP4zDhFewOoBKasf3FPnZP9ceE+Yj3BgW925blAWtw=="],
@@ -57,9 +61,9 @@
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
-    "@tenacy-labs/knapsack": ["@tenacy-labs/knapsack@github:Tenacy-Labs/knapsack#d61ddf0", {}, "Tenacy-Labs-knapsack-d61ddf0"],
+    "@tenacy-labs/knapsack": ["@tenacy-labs/knapsack@github:Tenacy-Labs/knapsack#d61ddf0", {}, "Tenacy-Labs-knapsack-d61ddf0", "sha512-EWDmaTDRXpQtI62w5wb3ocgWjo02DNUL4bMj7WrmVl6hQ9DuiRJrBywWeBvs2UM36eqY2Sb9MPxckv06l00Ogw=="],
 
-    "@tenacy-labs/stowage": ["@tenacy-labs/stowage@github:Tenacy-Labs/stowage#9df7002", { "dependencies": { "@tenacy-labs/knapsack": "github:Tenacy-Labs/knapsack#v0.3.1" } }, "Tenacy-Labs-stowage-9df7002"],
+    "@tenacy-labs/stowage": ["@tenacy-labs/stowage@github:Tenacy-Labs/stowage#9df7002", { "dependencies": { "@tenacy-labs/knapsack": "github:Tenacy-Labs/knapsack#v0.3.1" } }, "Tenacy-Labs-stowage-9df7002", "sha512-/lulH2U8QRvH2/oS/2scrorkBuzMPncs6V9GL7NnOFZmHgt7ax/4kWTiiwOvIQqRkqSSVg/Sm9dfULZZ1KEr2w=="],
 
     "@types/bun": ["@types/bun@1.4.0", "", { "dependencies": { "bun-types": "1.4.0" } }, "sha512-K+lZULY23vRgK/CfTjFIV+tyifaNdSMlPh9j+6mQ/cLfpOznLyAuzgV/JQysyECpkBQLVMSyvjlr2fBUSA9wFQ=="],
 
