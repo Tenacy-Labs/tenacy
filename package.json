@@ -1,12 +1,13 @@
 {
   "dependencies": {
+    "@agentclientprotocol/sdk": "2.0.2",
     "@ai-sdk/anthropic": "^4.0.40",
     "@ai-sdk/openai": "^4.0.45",
     "@ai-sdk/openai-compatible": "^3.0.34",
     "@ai-sdk/xai": "^4.0.42",
-    "@tenacy-labs/stowage": "github:Tenacy-Labs/stowage#v0.3.1",
     "@opentui/core": "^0.5.6",
     "@opentui/react": "^0.5.6",
+    "@tenacy-labs/stowage": "github:Tenacy-Labs/stowage#v0.3.1",
     "ai": "^7.0.74",
     "react": "^19"
   },

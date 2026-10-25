@@ -74,3 +74,8 @@ Rust/deno_core graduation path (kept open as the insurance policy). See
 `docs/design.md` and `docs/adr/`.
 
 Private repository of the Connectotron organization.
+
+### Agent Client Protocol
+
+Use the [ACP stdio channel](docs/acp.md) to connect other agent clients:
+`bun src/acp/stdio.ts mock`, or replace `mock` with a configured live provider.

@@ -74,3 +74,6 @@ cli-synthetic: ## Synthetic generator validation
 
 clean: ## Remove transient artifacts (dumps kept)
 	rm -f /tmp/agent-kernel-live-task.jsonl
+
+acp: ## ACP stdio channel: make acp P=mock (or P=zai M=glm-5.2)
+	@$(BUN) src/acp/stdio.ts $(if $(P),$(P),mock) $(M)
